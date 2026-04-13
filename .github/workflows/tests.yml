@@ -73,7 +73,7 @@ jobs:
         echo "$HOME/bin" >> $GITHUB_PATH
         echo "Created conda wrapper at $HOME/bin/conda"
         
-    - name: Install cson_forge
+    - name: Install cstar_forge
       shell: bash -l {0}
       working-directory: ${{ github.workspace }}
       run: |

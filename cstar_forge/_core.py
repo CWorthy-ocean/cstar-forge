@@ -33,7 +33,7 @@ from cstar.applications.roms_marbl.app import RomsMarblRunner
 from cstar.applications.core import RunnerRequest
 from . import config
 from . import source_data
-from . import models as cson_models
+from . import models as forge_models
 from . import input_data
 from .settings import render_roms_settings
 from .util import compute_timestep_from_cfl, roms_tools_default_nesting_period_seconds
@@ -228,7 +228,7 @@ class CstarSpecBuilder(BaseModel):
     grid_kwargs: Dict[str, Any]
     grid_kwargs_parent: Optional[Dict[str, Any]] = Field(default=None, validate_default=False)
     grid_kwargs_child: Optional[Dict[str, Any]] = Field(default=None, validate_default=False)
-    open_boundaries: cson_models.OpenBoundaries
+    open_boundaries: forge_models.OpenBoundaries
     partitioning: cstar_models.PartitioningParameterSet
     start_date: datetime = Field(alias="start_time")
     end_date: datetime = Field(alias="end_time")
@@ -285,7 +285,7 @@ class CstarSpecBuilder(BaseModel):
         validate_default=False,
         exclude=True
     )
-    _model_spec: Optional[cson_models.ModelSpec] = PrivateAttr(default=None)
+    _model_spec: Optional[forge_models.ModelSpec] = PrivateAttr(default=None)
     _datasets: Optional[Dict[str, Union[xr.Dataset, List[xr.Dataset]]]] = PrivateAttr(default=None)
     _stage: Optional[str] = PrivateAttr(default=None)
     _cstar_simulation: Optional[Any] = PrivateAttr(default=None)
@@ -939,7 +939,7 @@ class CstarSpecBuilder(BaseModel):
     
     def _load_model_spec(self):
         """Load ModelSpec from models.yml."""
-        self._model_spec = cson_models.load_models_yaml(
+        self._model_spec = forge_models.load_models_yaml(
             config.paths.models_yaml,
             self.model_name
         )
@@ -2579,7 +2579,7 @@ class CstarSpecBuilder(BaseModel):
                 warnings.filterwarnings('ignore', category=UserWarning, module='pydantic')
                 warnings.filterwarnings('ignore', message='.*Pydantic.*', category=UserWarning)
                 warnings.filterwarnings('ignore', message='.*serialization.*', category=UserWarning)
-                instance._model_spec = cson_models.ModelSpec.model_construct(**model_spec_dict)
+                instance._model_spec = forge_models.ModelSpec.model_construct(**model_spec_dict)
         
         # Restore _stage
         if "_stage" in private_attrs:
@@ -2620,7 +2620,7 @@ class CstarSpecEngine:
     **Usage:**
     
     ```python
-    from cson_forge import CstarSpecEngine
+    from cstar_forge import CstarSpecEngine
     
     # Load and execute workflow for a domain
     engine = CstarSpecEngine(domains_file="domains.yml")
@@ -2795,7 +2795,7 @@ class CstarSpecEngine:
         
         # Convert open_boundaries dict to OpenBoundaries model
         if "open_boundaries" in config_dict:
-            config_dict["open_boundaries"] = cson_models.OpenBoundaries(**config_dict["open_boundaries"])
+            config_dict["open_boundaries"] = forge_models.OpenBoundaries(**config_dict["open_boundaries"])
         
         # Convert partitioning dict to PartitioningParameterSet
         if "partitioning" in config_dict:
