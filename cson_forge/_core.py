@@ -2256,14 +2256,16 @@ class CstarSpecBuilder(BaseModel):
 
         return
 
-    def prep_cstar_environment(self,
-                               account_key: Optional[str] = None,
-                               queue_name: Optional[str] = None,
-                               walltime: str | None = None,
-                               clobber: bool = True,
-                               on_compute_node: bool = False,
-                               n_procs_available: int = 0,
-                               ):
+    @staticmethod
+    def prep_cstar_environment(
+            account_key: Optional[str] = None,
+            queue_name: Optional[str] = None,
+            walltime: str | None = None,
+            clobber: bool = True,
+            on_compute_node: bool = False,
+            n_procs_available: int = 0,
+        ):
+
         """
         Configure the appropriate settings for the C-Star executable.
 
@@ -2301,7 +2303,6 @@ class CstarSpecBuilder(BaseModel):
             bin_dir = Path(sys.executable).parent
             _current_path = os.environ["PATH"]
             os.environ["PATH"] = str(bin_dir) + os.pathsep + _current_path
-
 
 
     def run(
