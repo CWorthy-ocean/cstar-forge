@@ -89,7 +89,7 @@ compile_time:
     sss_tname: sss_time
     interp_frc: 1
   tides:
-    ntides: 10
+    ntides: 15
     bry_tides: true
     pot_tides: true
     ana_tides: false

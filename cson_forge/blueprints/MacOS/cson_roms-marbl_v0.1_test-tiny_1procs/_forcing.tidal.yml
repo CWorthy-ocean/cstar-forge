@@ -1,5 +1,5 @@
 ---
-roms_tools_version: 3.6.1.dev15+g349d53f65
+roms_tools_version: 3.6.1.dev17+g97b5fe39e
 ---
 Grid:
   nx: 6
@@ -28,5 +28,5 @@ TidalForcing:
       h: /Users/eilerman/cson-forge-data/source-data/TPXO/TPXO10.v2/h_tpxo10.v2.nc
       u: /Users/eilerman/cson-forge-data/source-data/TPXO/TPXO10.v2/u_tpxo10.v2.nc
   ntides: 15
-  model_reference_date: '2012-01-01T00:00:00'
+  model_reference_date: '2000-01-01T00:00:00'
   bypass_validation: false

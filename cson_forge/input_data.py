@@ -1081,7 +1081,7 @@ class RomsMarblInputData(InputData):
             print(f"   ↪ Reusing existing file: {output_path}")
             paths = [str(output_path)]
         else:
-            paths = [cdr.save(output_path)]
+            paths = cdr.save(output_path)
 
         # Normalize output paths to absolute strings so downstream template
         # settings can reliably embed full file locations.
