@@ -1077,11 +1077,11 @@ class RomsMarblInputData(InputData):
 
         cdr = rt.CDRForcing(**input_args)
         output_path = self._forcing_filename(CDR_FORCING_NETCDF_STEM)
-        # if self._should_reuse_existing_output(output_path):
-        #     print(f"   ↪ Reusing existing file: {output_path}")
-        #     paths = [str(output_path)]
-        # else:
-        paths = cdr.save(output_path)
+        if self._should_reuse_existing_output(output_path):
+            print(f"   ↪ Reusing existing file: {output_path}")
+            paths = [str(output_path)]
+        else:
+            paths = [cdr.save(output_path)]
 
         # Normalize output paths to absolute strings so downstream template
         # settings can reliably embed full file locations.

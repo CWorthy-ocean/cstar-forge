@@ -40,7 +40,11 @@ from .util import compute_timestep_from_cfl
 import roms_tools as rt
 
 def _schedule_coroutine(coro):
-    """Schedule a coroutine on the running loop, returns a Task."""
+    """
+    Schedule a coroutine on the running loop, returns a Task.
+
+    This is needed for seamless execution of async co-routines (like running a cstar worker) from Jupyter notebooks.
+    """
     try:
         loop = asyncio.get_running_loop()
         return loop.create_task(coro)
@@ -1673,9 +1677,9 @@ class CstarSpecBuilder(BaseModel):
         postconfig_path = self.path_blueprint(stage=BlueprintStage.POSTCONFIG)
         force_regenerate = False
         if postconfig_path.exists() and not clobber:
-            make_new_blueprint = False # self._prompt_yes_no(
-            #     f"POSTCONFIG blueprint already exists at {postconfig_path}. Create a new blueprint?"
-            # )
+            make_new_blueprint = self._prompt_yes_no(
+                f"POSTCONFIG blueprint already exists at {postconfig_path}. Create a new blueprint?"
+            )
             if make_new_blueprint:
                 self._delete_blueprint_and_settings(postconfig_path)
                 force_regenerate = True
@@ -2261,8 +2265,20 @@ class CstarSpecBuilder(BaseModel):
                                n_procs_available: int = 0,
                                ):
         """
-        TODO
+        Configure the appropriate settings for the C-Star executable.
+
+        Parameters
+        ----------
+        account_key: Account name for slurm jobs. Defaults to machine config if None.
+        queue_name: Queue name for slurm jobs. Defaults to machine config if None.
+        walltime: Max wall time for slurm jobs. Defaults to 6 hours.
+        clobber: Whether to clear the working directory for this simulation before running. Defaults to True. If False,
+            C-star will fail if files exist already.
+        on_compute_node: Whether to run ROMS on the current node. Defaults to False (will submit slurm jobs if on HPC).
+        n_procs_available: How many processors to utilize for joining operations. If 0, auto-detect. If you leave it 0
+            and you're on a shared or login node, you're probably going to use too many and get booted.
         """
+
 
         account_key = account_key or config.machine_config.account
         queue_name = queue_name or config.machine_config.queues.get("default")
@@ -2288,11 +2304,11 @@ class CstarSpecBuilder(BaseModel):
 
 
 
-    async def run(
+    def run(
         self,
     ):
         """
-        TODO
+        Run C-Star for this Builder's BUILD blueprint
         """
 
         self.prep_cstar_environment()
