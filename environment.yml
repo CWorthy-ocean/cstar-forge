@@ -1,4 +1,4 @@
-name: cstar-forge-0
+name: cson-forge-v0
 channels:
   - conda-forge
   - nodefaults
