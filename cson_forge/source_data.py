@@ -70,14 +70,6 @@ SRTM15_URL = f"https://topex.ucsd.edu/pub/srtm15_plus/SRTM15_{SRTM15_VERSION}.nc
 # constants: GLORYS
 # -----------------------------------------
 
-# GLORYS dataset key: set based on system type
-# - "MacOS" (local-client) → "GLORYS_REGIONAL" (regional subset)
-# - "hpc" systems (anvil, perlmutter, etc.) → "GLORYS_GLOBAL" (full dataset)
-if config.system == "MacOS":
-    glorys_dataset_key: str = "GLORYS_REGIONAL"
-else:
-    glorys_dataset_key: str = "GLORYS_GLOBAL" 
-
 glorys_dataset_id: str = "cmems_mod_glo_phy_my_0.083deg_P1D-m"
 
 # -----------------------------------------
@@ -88,8 +80,8 @@ glorys_dataset_id: str = "cmems_mod_glo_phy_my_0.083deg_P1D-m"
 SOURCE_ALIAS: Dict[str, str] = {
     # ERA5 surface forcing
     "ERA5": "ERA5",
-    # GLORYS
-    "GLORYS": glorys_dataset_key,
+    # GLORYS defaults to regional when only the logical name is known (see SourceSpec.glorys_layout)
+    "GLORYS": "GLORYS_REGIONAL",
     "GLORYS_GLOBAL": "GLORYS_GLOBAL",
     "GLORYS_REGIONAL": "GLORYS_REGIONAL",
     # UNIFIED biogeochemistry
@@ -212,15 +204,30 @@ class SourceData:
     # Helpers for model.py (logical source → path)
     # -----------------------------------------
 
-    def dataset_key_for_source(self, logical_name: str) -> str:
+    def dataset_key_for_source(
+        self,
+        logical_name: str,
+        glorys_layout: Optional[str] = None,
+    ) -> str:
         """
         Given a logical source name (e.g. "GLORYS", "UNIFIED"), return the
-        dataset key (e.g. "GLORYS_REGIONAL", "UNIFIED_BGC") used in
-        DATASET_REGISTRY and `self.paths`.
+        dataset key (e.g. "GLORYS_GLOBAL", "GLORYS_REGIONAL", "UNIFIED_BGC")
+        used in `self.paths`.
+
+        For logical "GLORYS", pass ``glorys_layout`` from SourceSpec
+        (``"global"`` or ``"regional"``). If omitted, defaults to regional.
         """
+        u = logical_name.upper()
+        if u == "GLORYS":
+            layout = (glorys_layout or "regional").lower()
+            return "GLORYS_GLOBAL" if layout == "global" else "GLORYS_REGIONAL"
         return map_source_to_dataset_key(logical_name)
 
-    def path_for_source(self, logical_name: str) -> Path:
+    def path_for_source(
+        self,
+        logical_name: str,
+        glorys_layout: Optional[str] = None,
+    ) -> Path:
         """
         Return the prepared file path associated with a logical source name.
 
@@ -228,6 +235,8 @@ class SourceData:
         ----------
         logical_name : str
             Logical source name, e.g. "GLORYS", "UNIFIED", "DAI".
+        glorys_layout : str, optional
+            For ``GLORYS`` only: ``"global"`` or ``"regional"`` (default regional).
 
         Returns
         -------
@@ -241,7 +250,7 @@ class SourceData:
             not been prepared (i.e., `prepare_all()` has not been called
             or the dataset was omitted).
         """
-        key = self.dataset_key_for_source(logical_name)
+        key = self.dataset_key_for_source(logical_name, glorys_layout=glorys_layout)
         try:
             return self.paths[key]            
         except KeyError:

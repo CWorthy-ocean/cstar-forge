@@ -80,8 +80,5 @@ dependencies:
   - zarr
   # Ensure ROMS-Tools runtime deps resolve from conda-forge first.
   - roms-tools>=3.4.0,<4
-  - pip:
-    # roms-tools from GitHub: use branch (e.g. @main) or commit hash (e.g. @abc123f)
-    - git+https://github.com/CWorthy-ocean/roms-tools.git@main
-    # cstar-ocean from GitHub: use branch (e.g. @main) or commit hash (e.g. @abc123f)
-    - git+https://github.com/CWorthy-ocean/C-Star.git@main
+  # roms-tools and cstar-ocean from GitHub are installed by dev-setup.sh (or CI) via pip
+  # after the conda env is created; see --roms-tools-ref / --c-star-ref in dev-setup.sh.

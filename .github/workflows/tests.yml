@@ -79,7 +79,11 @@ jobs:
       run: |
         eval "$(micromamba shell hook --shell bash)"
         micromamba activate "$CONDA_ENV_NAME"
-        # C-Star and roms-tools come from environment.yml (pip section)
+        # roms-tools and C-Star: same as dev-setup.sh (not in environment.yml)
+        ROMS_TOOLS_GIT_REF="${ROMS_TOOLS_GIT_REF:-main}"
+        C_STAR_GIT_REF="${C_STAR_GIT_REF:-main}"
+        pip install "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
+        pip install "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
         pip install -e .
         
     - name: Run tests

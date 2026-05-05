@@ -6,6 +6,9 @@
 #   ./dev-setup.sh --clean       # Remove and rebuild the environment
 #   ./dev-setup.sh --batch      # Run without user prompts (for CI/automation)
 #   ./dev-setup.sh --clean --batch  # Clean rebuild without prompts
+#   ./dev-setup.sh --roms-tools-ref abc1234   # pip install roms-tools from that git ref
+#   ./dev-setup.sh --c-star-ref main          # pip install C-Star from that git ref
+#   (refs are branch names or full commit hashes; default for both is main)
 #
 # Package Manager:
 #   Uses micromamba if available, then mamba, then conda.
@@ -18,13 +21,42 @@ set -e  # Exit on error
 # Parse command line arguments
 CLEAN_MODE=false
 BATCH_MODE=false
-for arg in "$@"; do
-  case "$arg" in
+# Git refs for pip installs (branch name or commit hash; passed to pip VCS URL @REF)
+ROMS_TOOLS_GIT_REF="main"
+C_STAR_GIT_REF="main"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     --clean)
       CLEAN_MODE=true
+      shift
       ;;
     --batch|-f|--force)
       BATCH_MODE=true
+      shift
+      ;;
+    --roms-tools-ref=*)
+      ROMS_TOOLS_GIT_REF="${1#*=}"
+      shift
+      ;;
+    --roms-tools-ref)
+      if [[ $# -lt 2 ]]; then echo "Error: --roms-tools-ref requires a value" >&2; exit 1; fi
+      ROMS_TOOLS_GIT_REF="$2"
+      shift 2
+      ;;
+    --c-star-ref=*)
+      C_STAR_GIT_REF="${1#*=}"
+      shift
+      ;;
+    --c-star-ref)
+      if [[ $# -lt 2 ]]; then echo "Error: --c-star-ref requires a value" >&2; exit 1; fi
+      C_STAR_GIT_REF="$2"
+      shift 2
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      echo "Usage: $0 [--clean] [--batch] [--roms-tools-ref REF] [--c-star-ref REF]" >&2
+      exit 1
       ;;
   esac
 done
@@ -119,6 +151,8 @@ fi
 echo ""
 echo "  Environment:"
 echo "    • Environment Name: $KERNEL_NAME"
+echo "    • roms-tools (pip): git ref $ROMS_TOOLS_GIT_REF"
+echo "    • C-Star (pip):   git ref $C_STAR_GIT_REF"
 if [[ ${#LOCAL_PYTHON_PACKAGES[@]} -eq 1 ]] && [[ "${LOCAL_PYTHON_PACKAGES[0]}" == "." ]]; then
   echo "    • Python Package:   cson-forge (from current directory)"
 else
@@ -343,6 +377,31 @@ if [[ "$INSTALL_FORTRAN_LIBS" == "true" ]]; then
 else
   echo "Skipping compiler/library installation."
 fi
+
+#--------------------------------------------------------
+# Pip install roms-tools and C-Star from GitHub (not in environment.yml)
+#--------------------------------------------------------
+# Ensure environment is active
+if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
+  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
+    if [[ "$MICROMAMBA_CMD" != "micromamba" ]]; then
+      alias micromamba="$MICROMAMBA_CMD"
+    fi
+    micromamba activate "$KERNEL_NAME"
+  fi
+else
+  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "$KERNEL_NAME"
+  fi
+fi
+
+echo "Installing roms-tools and cstar-ocean from GitHub via pip..."
+echo "  roms-tools @ ${ROMS_TOOLS_GIT_REF}"
+pip install "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
+echo "  C-Star @ ${C_STAR_GIT_REF}"
+pip install "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
+echo "✓ roms-tools and C-Star pip installs completed."
 
 #--------------------------------------------------------
 # Local Python package setup
