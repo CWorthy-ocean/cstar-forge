@@ -2318,16 +2318,18 @@ class CstarSpecBuilder(BaseModel):
 
         self.prep_cstar_environment()
 
-        request = XRunnerRequest(uri=self.path_blueprint(stage=BlueprintStage.BUILD), bp_type=RomsMarblBlueprint, name=self.casename)
+        request = XRunnerRequest(uri=str(self.path_blueprint(stage=BlueprintStage.BUILD)), bp_type=RomsMarblBlueprint, name=self.casename)
         service_cfg = get_service_config(log_level="INFO")
         job_cfg = get_job_config()
         runner = execute_runner(job_cfg, service_cfg, request)
-        task = _schedule_coroutine(runner)
-        task.add_done_callback(lambda t: print(t.result()))
+        task_or_result = _schedule_coroutine(runner)
+        if hasattr(task_or_result, "add_done_callback"):
+            task_or_result.add_done_callback(lambda t: print(t.result()))
 
         # Persist blueprint to file
         self._stage = BlueprintStage.RUN
         self.persist()
+        return task_or_result
 
 
     def set_blueprint_state(self, state: str) -> None:
