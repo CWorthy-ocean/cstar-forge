@@ -2214,6 +2214,10 @@ class CstarSpecBuilder(BaseModel):
             n_tracers = self._model_spec.settings.properties.n_tracers
         else:
             raise ValueError("Model spec must have settings.properties.n_tracers")
+
+        # Ensure build output directories exist before rendering templates.
+        self.compile_time_code_dir.mkdir(parents=True, exist_ok=True)
+        self.run_time_code_dir.mkdir(parents=True, exist_ok=True)
         
         compile_time_code = render_roms_settings(
             template_files=self._model_spec.templates.compile_time.filter.files,
