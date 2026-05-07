@@ -50,7 +50,7 @@ class DataPaths:
 class MachineConfig:
     """
     Machine-specific configuration loaded from machines.yml.
-    
+
     Attributes
     ----------
     account : str, optional
@@ -95,7 +95,7 @@ def _detect_system() -> str:
     system = platform.system().lower()
     if system == "darwin":
         return "MacOS"
-    
+
     host = _get_hostname()
     if "anvil" in host:
         return "RCAC_anvil"
@@ -185,7 +185,7 @@ def get_data_paths() -> DataPaths:
     Return canonical data and project paths adapted to the system we're running on.
     """
     env = os.environ
-    home = Path(env.get("HOME", str(Path.home())))
+    home = Path(env.get("SCRATCH", str(Path.home())))
     system_tag = _detect_system()
 
     layout_fn = SYSTEM_LAYOUT_REGISTRY.get(
@@ -225,14 +225,14 @@ def get_data_paths() -> DataPaths:
 def load_machine_config(system_tag: str, machines_yaml_path: Path) -> MachineConfig:
     """
     Load machine-specific configuration from machines.yml.
-    
+
     Parameters
     ----------
     system_tag : str
         System tag (e.g., "NERSC_perlmutter", "RCAC_anvil").
     machines_yaml_path : Path
         Path to the machines.yml file.
-    
+
     Returns
     -------
     MachineConfig
@@ -241,13 +241,13 @@ def load_machine_config(system_tag: str, machines_yaml_path: Path) -> MachineCon
     """
     if not machines_yaml_path.exists():
         return MachineConfig()
-    
+
     try:
         with machines_yaml_path.open("r") as f:
             machines_data = yaml.safe_load(f) or {}
-        
+
         machine_data = machines_data.get(system_tag, {})
-        
+
         return MachineConfig(
             account=machine_data.get("account"),
             pes_per_node=machine_data.get("pes_per_node"),
@@ -272,12 +272,12 @@ class ClusterType:
 def _default_cluster_type(system_tag: str) -> str:
     """
     Return the default cluster type based on the system tag.
-    
+
     Parameters
     ----------
     system_tag : str
         System tag (e.g., "MacOS", "NERSC_perlmutter").
-    
+
     Returns
     -------
     str
@@ -306,14 +306,14 @@ class EnvironmentInfo:
     conda_prefix: Optional[str]
     kernel_name: Optional[str]
     kernel_version: Optional[str]
-    
+
     @property
     def env_info(self) -> str:
         """Formatted conda/micromamba environment information."""
         if self.conda_env:
             return f"{self.conda_env} ({self.conda_prefix})"
         return "Not in conda/micromamba environment"
-    
+
     @property
     def kernel_spec(self) -> str:
         """Formatted kernel information."""
@@ -327,7 +327,7 @@ class EnvironmentInfo:
 def get_environment_info() -> EnvironmentInfo:
     """
     Collect and return information about the execution environment and machine.
-    
+
     Returns:
         EnvironmentInfo: Dataclass containing machine and environment details.
     """
@@ -335,11 +335,11 @@ def get_environment_info() -> EnvironmentInfo:
     hostname = socket.gethostname() or platform.node() or os.environ.get("HOSTNAME", "unknown")
     system_tag = _detect_system()
     os_info = f"{platform.system()} {platform.release()} ({platform.machine()})"
-    
+
     # Get environment information
     python_version = sys.version.split()[0]
     python_executable = sys.executable
-    
+
     # Try to get kernel information
     kernel_name = None
     kernel_version = None
@@ -361,18 +361,18 @@ def get_environment_info() -> EnvironmentInfo:
             kernel_version = None
     except Exception:
         pass
-    
+
     # Try to get conda/micromamba environment
     conda_env = os.environ.get("CONDA_DEFAULT_ENV", None)
     conda_prefix = None
     if conda_env:
         conda_prefix = os.environ.get("CONDA_PREFIX", os.environ.get("MAMBA_ROOT_PREFIX", None))
-    
+
     # Import the class from the current module to ensure it's accessible
     # This handles autoreload issues where the class might not be in scope
     current_module = sys.modules[__name__]
     EnvironmentInfo = getattr(current_module, 'EnvironmentInfo')
-    
+
     return EnvironmentInfo(
         hostname=hostname,
         system_tag=system_tag,
