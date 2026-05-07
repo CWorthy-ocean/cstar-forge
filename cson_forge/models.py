@@ -674,7 +674,7 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
         
         # Set commit or branch - CodeRepository validation will ensure exactly one is provided
         if commit is not None and commit:
-            repo_kwargs["commit"] = commit
+            repo_kwargs["commit"] = str(commit)
         elif branch is not None and branch:
             repo_kwargs["branch"] = branch
         else:
@@ -730,7 +730,7 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
             if "branch" in compile_time_dict:
                 compile_time_repo_kwargs["branch"] = compile_time_dict["branch"]
             elif "commit" in compile_time_dict:
-                compile_time_repo_kwargs["commit"] = compile_time_dict["commit"]
+                compile_time_repo_kwargs["commit"] = str(compile_time_dict["commit"])
                 compile_time_repo_kwargs.pop("branch")
             
             compile_time_repo = CodeRepository(**compile_time_repo_kwargs)
@@ -759,7 +759,7 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
             if "branch" in run_time_dict:
                 run_time_repo_kwargs["branch"] = run_time_dict["branch"]
             elif "commit" in run_time_dict:
-                run_time_repo_kwargs["commit"] = run_time_dict["commit"]
+                run_time_repo_kwargs["commit"] = str(run_time_dict["commit"])
                 run_time_repo_kwargs.pop("branch")
             
             run_time_repo = CodeRepository(**run_time_repo_kwargs)
