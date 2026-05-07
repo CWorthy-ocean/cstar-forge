@@ -100,15 +100,13 @@ def render_roms_settings(
             f"Template path is not a directory: {template_dir}"
         )
     
-    # Ensure output directory is empty or doesn't exist
-    if not code_output_dir.exists():
-        raise FileNotFoundError(
-            f"Output directory does not exist: {code_output_dir}"
-        )
-    if not code_output_dir.is_dir():
+    # Ensure output directory exists (create it if needed).
+    # Keep a hard error when the path exists but is not a directory.
+    if code_output_dir.exists() and not code_output_dir.is_dir():
         raise ValueError(
             f"Output path is not a directory: {code_output_dir}"
         )
+    code_output_dir.mkdir(parents=True, exist_ok=True)
         
     # Validate that every .j2 template has a corresponding settings_dict entry
     # and that every settings_dict entry has a corresponding .j2 template
