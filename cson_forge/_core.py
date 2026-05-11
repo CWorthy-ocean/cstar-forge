@@ -36,7 +36,7 @@ from . import source_data
 from . import models as cson_models
 from . import input_data
 from .settings import ROMSTemplateRenderer, render_roms_settings
-from .util import compute_timestep_from_cfl
+from .util import compute_timestep_from_cfl, roms_tools_default_nesting_period_seconds
 import roms_tools as rt
 
 def _schedule_coroutine(coro):
@@ -1896,7 +1896,7 @@ class CstarSpecBuilder(BaseModel):
         # Initialize from defaults (deep copy to avoid modifying the original)
         self._settings_compile_time = copy.deepcopy(self._model_spec.settings.compile_time.settings_dict)
         if self.grid_child is not None:
-            period_default = inspect.signature(rt.make_nesting_info).parameters['period'].default
+            period_default = roms_tools_default_nesting_period_seconds()
             if "metadata" in self.grid_kwargs_child:
                if "period" in self.grid_kwargs_child["metadata"]:
                   self._settings_compile_time["extract_data"]["extract_period"] = self.grid_kwargs_child["metadata"]["period"]

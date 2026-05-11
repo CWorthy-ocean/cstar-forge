@@ -23,6 +23,7 @@ from roms_tools import Grid
 from . import config
 from . import models as cson_models
 from . import source_data
+from .util import roms_tools_nesting_writer
 import roms_tools as rt
 
 # Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name must contain the
@@ -600,7 +601,12 @@ class RomsMarblInputData(InputData):
             if self._should_reuse_existing_output(out_path_nesting):
                 print(f"   ↪ Reusing existing file: {out_path_nesting}")
             else:
-                rt.make_nesting_info(self.grid, self.grid_child, out_path_nesting, **(self.metadata_child or {}))
+                roms_tools_nesting_writer()(
+                    self.grid,
+                    self.grid_child,
+                    out_path_nesting,
+                    **(self.metadata_child or {}),
+                )
             self.blueprint_elements.nesting_info = cstar_models.Dataset(
                 data=[cstar_models.Resource(location=str(out_path_nesting), partitioned=False)]
             )
