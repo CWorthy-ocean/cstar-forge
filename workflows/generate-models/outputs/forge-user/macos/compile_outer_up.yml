@@ -1,0 +1,20 @@
+cdr_output:
+  do_cdr: true
+  do_avg: true
+  monthly_averages: false
+  output_period: 3600
+  nrpf: 24
+
+upscale_output:
+  do_upscale: false
+  nrpf_uscl: 24
+  output_period_uscl: 3600
+  uscl_prec: 'nf90_double'
+
+cdr_frc:
+  cdr_source: true
+  cdr_file: 'cdr.nc'
+  forcing_depth_profiles: true
+  forcing_parameterized: false
+  relocate_to_wet_pts : true
+  nz_chd: 10

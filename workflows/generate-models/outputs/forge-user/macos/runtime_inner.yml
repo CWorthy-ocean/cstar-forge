@@ -1,0 +1,6 @@
+roms.in:
+  time_stepping:
+    ntimes: 10000
+    dt: 30  # seconds
+    ndtfast: 60
+    ninfo: 1

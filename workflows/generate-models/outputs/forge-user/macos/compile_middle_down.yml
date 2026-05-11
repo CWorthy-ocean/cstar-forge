@@ -1,0 +1,12 @@
+cdr_output:
+  do_cdr: false
+  do_avg: true
+  monthly_averages: false
+  output_period: 3600
+  nrpf: 24
+
+upscale_output:
+  do_upscale: false
+  nrpf_uscl: 24
+  output_period_uscl: 3600
+  uscl_prec: 'nf90_double'
