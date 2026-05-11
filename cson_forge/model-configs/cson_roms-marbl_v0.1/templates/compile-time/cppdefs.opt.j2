@@ -83,7 +83,8 @@
 
 ! Enable special forcing for marine CO2 removal
 ! Usage notes: Required inputs and fields are specified in cdr_frc.opt.
-{% if cppdefs.cdr_forcing|default(false) %}#define CDR_FORCING
+! #define when cppdefs.cdr_forcing is true OR cdr_frc.cdr_source is true (YAML may set only the latter).
+{% if cppdefs.cdr_forcing|default(false) or (cdr_frc|default({})).cdr_source|default(false) %}#define CDR_FORCING
 {% else %}#undef CDR_FORCING
 {% endif %}
 
