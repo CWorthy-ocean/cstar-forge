@@ -2286,8 +2286,10 @@ class CstarSpecBuilder(BaseModel):
         """
 
 
-        account_key = account_key or config.machine_config.account
-        queue_name = queue_name or config.machine_config.queues.get("default")
+        mc = config.machine_config
+        queues = mc.queues or {}
+        account_key = account_key or mc.account or ""
+        queue_name = queue_name or queues.get("default") or ""
         walltime = walltime or "6:00:00"
         os.environ["CSTAR_CLOBBER_WORKING_DIR"] = "1" if clobber else "0"
         os.environ["CSTAR_IN_ACTIVE_ALLOCATION"] = "1" if on_compute_node else "0"
