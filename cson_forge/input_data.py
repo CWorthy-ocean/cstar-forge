@@ -708,10 +708,10 @@ class RomsMarblInputData(InputData):
                 f"Missing required 'type' key in input_args for '{key}'. "
                 f"Expected 'type' to be 'physics' or 'bgc'."
             )
-        if type not in {"physics", "bgc"}:
+        if type not in {"physics", "bgc", "restoring"}:
             raise ValueError(
                 f"Invalid 'type' value '{type}' in input_args for '{key}'. "
-                f"Expected 'type' to be 'physics' or 'bgc'."
+                f"Expected 'type' to be 'physics', 'bgc', or 'restoring'."
             )
 
         yaml_path = self._yaml_filename(f"{key}-{type}")
@@ -823,7 +823,7 @@ class RomsMarblInputData(InputData):
         if type is None:
             raise ValueError(
                 f"Missing required 'type' key in input_args for '{key}'. "
-                f"Expected 'type' to be 'physics' or 'bgc'."
+                f"Expected 'type' to be 'physics', 'bgc', or 'restoring'."
             )
         if type not in {"physics", "bgc"}:
             raise ValueError(

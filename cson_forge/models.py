@@ -95,7 +95,7 @@ class SurfaceForcingItem(BaseModel):
     type: str = Field(pattern="^(physics|bgc|restoring)$")
     correct_radiation: bool = Field(default=False, validate_default=False)
     coarse_grid_mode: Optional[str] = Field(default="auto", validate_default=False)
-    restoring_forces: Optional[list] = Field(default="auto", validate_default=False)
+    restoring_forces: Optional[list] = Field(default=None, validate_default=False)
 
 
 class BoundaryForcingItem(BaseModel):
