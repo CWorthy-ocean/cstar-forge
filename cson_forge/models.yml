@@ -73,7 +73,7 @@ cson_roms-marbl_v0.1:
         - source:
             name: WOA
             climatology: true
-            restoring_forces: ['sss']
+          restoring_forces: ['sss']
           type: restoring
           coarse_grid_mode: "never"
 
@@ -165,7 +165,7 @@ cson_roms-no-bgc_v0.1:
         - source:
             name: WOA
             climatology: true
-            restoring_forces: ['sss']
+          restoring_forces: ['sss']
           type: restoring
           coarse_grid_mode: "never"
 
