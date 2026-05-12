@@ -8,7 +8,7 @@ configurations.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, PrivateAttr, model_validator
@@ -29,12 +29,25 @@ class SourceSpec(BaseModel):
         Name of the source (e.g., "GLORYS", "ERA5", "UNIFIED").
     climatology : bool, optional
         Whether to use climatology data. Default is False.
+    glorys_layout : str, optional
+        When ``name`` is ``GLORYS``, selects GLORYS_GLOBAL vs GLORYS_REGIONAL
+        preparation and paths. If omitted, defaults to ``regional``.
     """
     
     model_config = ConfigDict(extra="forbid")
     
     name: str
     climatology: bool = Field(default=False, validate_default=False)
+    glorys_layout: Optional[Literal["global", "regional"]] = Field(
+        default=None,
+        validate_default=False,
+    )
+
+    @model_validator(mode="after")
+    def _glorys_layout_only_for_glorys(self) -> "SourceSpec":
+        if self.glorys_layout is not None and self.name.upper() != "GLORYS":
+            raise ValueError("glorys_layout is only valid when name is GLORYS")
+        return self
 
 
 class GridInput(BaseModel):
@@ -567,7 +580,13 @@ def _dataset_keys_from_inputs(inputs: ModelInputs) -> set[str]:
         if not name:
             return
         try:
-            dataset_key = source_data.map_source_to_dataset_key(name)
+            if name.upper() == "GLORYS":
+                layout = source_spec.glorys_layout or "regional"
+                dataset_key = (
+                    "GLORYS_GLOBAL" if layout == "global" else "GLORYS_REGIONAL"
+                )
+            else:
+                dataset_key = source_data.map_source_to_dataset_key(name)
             if dataset_key in source_data.DATASET_REGISTRY:
                 dataset_keys.add(dataset_key)
         except (AttributeError, ImportError) as e:

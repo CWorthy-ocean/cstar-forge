@@ -508,8 +508,14 @@ class RomsMarblInputData(InputData):
         else:
             raise TypeError(f"Unsupported source block type: {type(block)}")
         
+        glorys_layout = (
+            out.get("glorys_layout") if name.upper() == "GLORYS" else None
+        )
+        
         # Get the mapped dataset key to check if it's streamable
-        dataset_key = self.source_data.dataset_key_for_source(name)
+        dataset_key = self.source_data.dataset_key_for_source(
+            name, glorys_layout=glorys_layout
+        )
         
         # If streamable and no path was explicitly provided in YAML, don't add path field
         if dataset_key in source_data.STREAMABLE_SOURCES:
@@ -517,7 +523,7 @@ class RomsMarblInputData(InputData):
                 return out
             return out
         
-        path = self.source_data.path_for_source(name)
+        path = self.source_data.path_for_source(name, glorys_layout=glorys_layout)
         if path is not None:
             out.setdefault("path", path)
         return out

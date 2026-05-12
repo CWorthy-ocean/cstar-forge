@@ -132,7 +132,7 @@ def main(start_date, end_date, test=False):
     # workers cause HDF5 file-locking conflicts (BlockingIOError errno 11).
     client = Client(n_workers=1, threads_per_worker=1)
     src = cson_forge.source_data.SourceData(
-        datasets=["GLORYS"],
+        datasets=["GLORYS_GLOBAL"],
         clobber=False,
         start_time=start_date,
         end_time=end_date,
