@@ -165,7 +165,8 @@
 
 ! Apply restoring to sea surface salinity
 ! Usage notes: None
-#undef SFLX_CORR
+{% if cppdefs.sal_restore %}#define SFLX_CORR
+{% endif %}
 
 ! Apply a correction to the wind stress to bring it closer to observations
 ! Usage notes: Only used in conjunction with the BULK_FORCING module. Requires additional fields in the input file.

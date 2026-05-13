@@ -739,6 +739,9 @@ class RomsMarblInputData(InputData):
                         stacklevel=2,
                     )
         else:
+            if input_args["type"] == "restoring":
+                if "sss" in input_args["restoring_forces"]:
+                    self._settings_compile_time["cppdefs"]["sal_restore"] = True
             frc = rt.SurfaceForcing(grid=self.grid, **input_args)
             paths = frc.save(output_path)
             try:
