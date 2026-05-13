@@ -764,7 +764,9 @@ class CstarSpecBuilder(BaseModel):
                 UserWarning,
                 stacklevel=2
             )
-    
+        else:
+            self._apply_cdr_forcing_arg_to_cdr_output()
+
     def path_blueprint(self, stage: Optional[str] = None, run_params: Optional[cstar_models.RuntimeParameterSet] = None) -> Path:
         """
         Return the path to the blueprint file for a given stage.
@@ -1879,6 +1881,23 @@ class CstarSpecBuilder(BaseModel):
         for path in self._override_paths:
             self._merge_settings_override_file(path, kind)
 
+    def _apply_cdr_forcing_arg_to_cdr_output(self) -> None:
+        """If ``CDR_forcing`` was passed to the builder, force ``cdr_output.do_cdr`` on.
+
+        Keeps compile-time templates consistent even when ``cdr_forcing`` is an empty
+        dict (so input generation's CDR handler returns early) or when sidecar /
+        ``configure_build`` merges set ``do_cdr`` to false.
+        """
+        if self.cdr_forcing is None:
+            return
+        if not getattr(self, "_settings_compile_time", None):
+            return
+        cdr_output = self._settings_compile_time.setdefault("cdr_output", {})
+        if not isinstance(cdr_output, dict):
+            self._settings_compile_time["cdr_output"] = {"do_cdr": True}
+        else:
+            cdr_output["do_cdr"] = True
+
     def _init_settings_compile_time(self) -> None:
         """
         Initialize compile-time settings dictionary from model defaults.
@@ -1903,9 +1922,10 @@ class CstarSpecBuilder(BaseModel):
                else:
                   self._settings_compile_time["extract_data"]["extract_period"] = period_default
             else:
-               self._settings_compile_time["extract_data"]["extract_period"] = period_default
+                self._settings_compile_time["extract_data"]["extract_period"] = period_default
 
         self._merge_settings_override_files("compile")
+        self._apply_cdr_forcing_arg_to_cdr_output()
 
     def _init_settings_run_time(self, dt: Optional[float] = None) -> None:
         """
@@ -1976,8 +1996,9 @@ class CstarSpecBuilder(BaseModel):
             `_settings_compile_time` (unknown setting key).
         """
         if not settings_compile_time:
+            self._apply_cdr_forcing_arg_to_cdr_output()
             return
-        
+
         for key, value in settings_compile_time.items():
             if key in self._settings_compile_time:
                 if isinstance(self._settings_compile_time[key], dict) and isinstance(value, dict):
@@ -1994,7 +2015,9 @@ class CstarSpecBuilder(BaseModel):
                     f"Unknown compile-time setting key: '{key}'. "
                     f"Valid keys are: {sorted(self._settings_compile_time.keys())}"
                 )
-    
+
+        self._apply_cdr_forcing_arg_to_cdr_output()
+
     def _update_settings_run_time(self, settings_run_time: Dict[str, Any]) -> None:
         """
         Update run-time settings by recursively merging nested dictionaries.
@@ -2195,8 +2218,7 @@ class CstarSpecBuilder(BaseModel):
         # Update settings with user-provided overrides (deep merge to preserve existing settings)
         self._update_settings_compile_time(compile_time_settings)
         self._update_settings_run_time(run_time_settings)
-
-
+        self._apply_cdr_forcing_arg_to_cdr_output()
 
         # Ensure ntimes is an integer (don't recalculate, just ensure type is correct)
         if "roms.in" in self._settings_run_time and "time_stepping" in self._settings_run_time["roms.in"]:
