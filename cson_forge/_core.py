@@ -36,7 +36,7 @@ from . import source_data
 from . import models as cson_models
 from . import input_data
 from .settings import ROMSTemplateRenderer, render_roms_settings
-from .util import compute_timestep_from_cfl
+from .util import compute_timestep_from_cfl, roms_tools_default_nesting_period_seconds
 import roms_tools as rt
 
 def _schedule_coroutine(coro):
@@ -1896,7 +1896,7 @@ class CstarSpecBuilder(BaseModel):
         # Initialize from defaults (deep copy to avoid modifying the original)
         self._settings_compile_time = copy.deepcopy(self._model_spec.settings.compile_time.settings_dict)
         if self.grid_child is not None:
-            period_default = inspect.signature(rt.make_nesting_info).parameters['period'].default
+            period_default = roms_tools_default_nesting_period_seconds()
             if "metadata" in self.grid_kwargs_child:
                if "period" in self.grid_kwargs_child["metadata"]:
                   self._settings_compile_time["extract_data"]["extract_period"] = self.grid_kwargs_child["metadata"]["period"]
@@ -2214,6 +2214,10 @@ class CstarSpecBuilder(BaseModel):
             n_tracers = self._model_spec.settings.properties.n_tracers
         else:
             raise ValueError("Model spec must have settings.properties.n_tracers")
+
+        # Ensure build output directories exist before rendering templates.
+        self.compile_time_code_dir.mkdir(parents=True, exist_ok=True)
+        self.run_time_code_dir.mkdir(parents=True, exist_ok=True)
         
         compile_time_code = render_roms_settings(
             template_files=self._model_spec.templates.compile_time.filter.files,
@@ -2282,8 +2286,10 @@ class CstarSpecBuilder(BaseModel):
         """
 
 
-        account_key = account_key or config.machine_config.account
-        queue_name = queue_name or config.machine_config.queues.get("default")
+        mc = config.machine_config
+        queues = mc.queues or {}
+        account_key = account_key or mc.account or ""
+        queue_name = queue_name or queues.get("default") or ""
         walltime = walltime or "6:00:00"
         os.environ["CSTAR_CLOBBER_WORKING_DIR"] = "1" if clobber else "0"
         os.environ["CSTAR_IN_ACTIVE_ALLOCATION"] = "1" if on_compute_node else "0"
@@ -2314,16 +2320,18 @@ class CstarSpecBuilder(BaseModel):
 
         self.prep_cstar_environment()
 
-        request = XRunnerRequest(uri=self.path_blueprint(stage=BlueprintStage.BUILD), bp_type=RomsMarblBlueprint, name=self.casename)
+        request = XRunnerRequest(uri=str(self.path_blueprint(stage=BlueprintStage.BUILD)), bp_type=RomsMarblBlueprint, name=self.casename)
         service_cfg = get_service_config(log_level="INFO")
         job_cfg = get_job_config()
         runner = execute_runner(job_cfg, service_cfg, request)
-        task = _schedule_coroutine(runner)
-        task.add_done_callback(lambda t: print(t.result()))
+        task_or_result = _schedule_coroutine(runner)
+        if hasattr(task_or_result, "add_done_callback"):
+            task_or_result.add_done_callback(lambda t: print(t.result()))
 
         # Persist blueprint to file
         self._stage = BlueprintStage.RUN
         self.persist()
+        return task_or_result
 
 
     def set_blueprint_state(self, state: str) -> None:
