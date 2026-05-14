@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Literal, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, PrivateAttr, model_validator
 
-import cstar.orchestration.models as models
-from cstar.orchestration.models import CodeRepository, ROMSCompositeCodeRepository
+import cstar.applications.roms_marbl.models as models
+from cstar.applications.roms_marbl.models import CodeRepository, ROMSCompositeCodeRepository
 from . import config
 
         
