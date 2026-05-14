@@ -18,7 +18,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 import xarray as xr
 
-from . import cstar_compat as cstar_models
+import cstar.orchestration.models as cstar_models
 from roms_tools import Grid
 
 from . import config
