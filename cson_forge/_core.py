@@ -2307,10 +2307,14 @@ class CstarSpecBuilder(BaseModel):
             cstar_exe = bin_dir / "cstar"
             assert cstar_exe.is_file()
 
+            new_link = Path.cwd() / "cstar"
+            if new_link.exists():
+                new_link.unlink()
+
             # make symlink in current dir to correct cstar
-            os.symlink("cstar", cstar_exe)
-            # _current_path = os.environ["PATH"]
-            # os.environ["PATH"] = str(bin_dir) + os.pathsep + _current_path
+            os.symlink(cstar_exe, new_link)
+            _current_path = os.environ["PATH"]
+            os.environ["PATH"] = str(Path.cwd()) + os.pathsep + _current_path
 
 
     async def run(
