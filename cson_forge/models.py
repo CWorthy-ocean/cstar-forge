@@ -14,7 +14,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, PrivateAttr, model_validator
 
 import cstar.orchestration.models as models
-from cstar.orchestration.models import CodeRepository, ROMSCompositeCodeRepository
+
+from .cstar_compat import CodeRepository, ROMSCompositeCodeRepository
 from . import config
 
         
