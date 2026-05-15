@@ -55,8 +55,7 @@ class BlueprintCatalog:
         return row.squeeze()
 
 
-
-    def search(self, substring: str, column: str = None) -> CstarSpecBuilder:
+    def search(self, substring: str, column: str = None) -> pd.DataFrame:
         if column:
             if column not in self.df.columns:
                 raise ValueError(f"Column {column} not found in dataframe")
