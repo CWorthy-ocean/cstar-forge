@@ -608,6 +608,9 @@ class RomsMarblInputData(InputData):
             if self._should_reuse_existing_output(out_path_nesting):
                 print(f"   ↪ Reusing existing file: {out_path_nesting}")
             else:
+                # This section of code is needed when doing nesting with BGC.  ROMS_Tools has a flag called "include_bgc" which
+                # defaults to false when we are making child boundary conditions, but it needs to be set to true in order to
+                # save the BGC variables.
                 nesting_writer = roms_tools_nesting_writer()
                 nesting_kwargs = dict(self.metadata_child or {})
                 has_marbl = (
