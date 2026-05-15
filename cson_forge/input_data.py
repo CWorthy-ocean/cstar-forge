@@ -7,6 +7,7 @@ the ROMS-MARBL specific implementation.
 """
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -607,11 +608,25 @@ class RomsMarblInputData(InputData):
             if self._should_reuse_existing_output(out_path_nesting):
                 print(f"   ↪ Reusing existing file: {out_path_nesting}")
             else:
-                roms_tools_nesting_writer()(
+                # This section of code is needed when doing nesting with BGC.  ROMS_Tools has a flag called "include_bgc" which
+                # defaults to false when we are making child boundary conditions, but it needs to be set to true in order to
+                # save the BGC variables.
+                nesting_writer = roms_tools_nesting_writer()
+                nesting_kwargs = dict(self.metadata_child or {})
+                has_marbl = (
+                    self.model_spec.settings.properties is not None
+                    and self.model_spec.settings.properties.marbl
+                )
+                if has_marbl and "include_bgc" in inspect.signature(
+                    nesting_writer
+                ).parameters:
+                    # ROMS-Tools: include_bgc=True sets output_vars to include "bgc" on nesting.nc.
+                    nesting_kwargs.setdefault("include_bgc", True)
+                nesting_writer(
                     self.grid,
                     self.grid_child,
                     out_path_nesting,
-                    **(self.metadata_child or {}),
+                    **nesting_kwargs,
                 )
             self.blueprint_elements.nesting_info = cstar_models.Dataset(
                 data=[cstar_models.Resource(location=str(out_path_nesting), partitioned=False)]
@@ -915,8 +930,17 @@ class RomsMarblInputData(InputData):
             print(f"   ↪ Reusing existing file(s): {', '.join(existing_paths)}")
             paths = existing_paths
             with yaml_path.open() as f:
-                tide_yaml = yaml.load(f, Loader=yaml.SafeLoader)
-            ntides = tide_yaml["TidalForcing"]["ntides"]
+                # roms_tools may emit multi-document YAML (e.g. version header + Grid/TidalForcing).
+                ntides = None
+                for doc in yaml.safe_load_all(f):
+                    if doc and isinstance(doc, dict) and "TidalForcing" in doc:
+                        ntides = doc["TidalForcing"].get("ntides")
+                        break
+                if ntides is None:
+                    raise ValueError(
+                        f"No TidalForcing.ntides found in YAML (expected multi-document "
+                        f"roms_tools output): {yaml_path}"
+                    )
         elif existing_paths:
             print(f"   ↪ Reusing existing file(s): {', '.join(existing_paths)}")
             paths = existing_paths
