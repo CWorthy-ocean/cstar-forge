@@ -6,12 +6,13 @@ blueprints directory.
 """
 
 from pathlib import Path
+import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 import yaml
 import pandas as pd
+from pandas import Series
 
-from . import config
-import roms_tools as rt
+from . import config, CstarSpecBuilder
 
 
 class BlueprintCatalog:
@@ -34,8 +35,51 @@ class BlueprintCatalog:
         if blueprints_dir is None:
             blueprints_dir = config.paths.blueprints
         self.blueprints_dir = Path(blueprints_dir)
-    
-    def find_blueprint_files(self, stage: Optional[str] = None) -> List[Path]:
+        self._df = None
+
+    @property
+    def df(self) -> pd.DataFrame:
+        if self._df is None:
+            self._df = self.load()
+        return self._df
+
+    def select(self, **kwargs) -> Series:
+        if index_val := kwargs.get("index"):
+            kwarg_string = f"index == {index_val}"
+        else:
+            kwarg_string = " and ".join([f"{k}=='{v}'" for k, v in kwargs.items()])
+        row = self.df.query(kwarg_string)
+        if len(row) != 1:
+            raise ValueError(f"Expected exactly 1 row, but found {len(row)}: \n{row}")
+
+        return row.squeeze()
+
+
+
+    def search(self, substring: str, column: str = None) -> CstarSpecBuilder:
+        if column:
+            if column not in self.df.columns:
+                raise ValueError(f"Column {column} not found in dataframe")
+            return self.df[self.df[column].str.contains(substring, case=False)]
+
+        # search all columns
+        return self.df[self.df.apply(lambda row: row.astype(str).str.contains(substring).any(), axis=1)]
+
+    def run(self, **kwargs):
+
+        row = self.select(**kwargs)
+        bp_path = Path(row["blueprint_path"])
+
+        CstarSpecBuilder.prep_cstar_environment()
+
+        run_cmd = f"cstar blueprint run {str(bp_path)}"
+
+        print(f"Running {run_cmd}")
+        subprocess.run(run_cmd.split(), text=True, check=True)
+
+
+
+    def find_blueprint_files(self, stage: Optional[str] = "build") -> List[Path]:
         """
         Recursively find all blueprint files in the blueprints directory.
         
@@ -160,7 +204,7 @@ class BlueprintCatalog:
         
         return None, None
     
-    def load(self, stage: Optional[str] = "postconfig") -> pd.DataFrame:
+    def load(self, stage: Optional[str] = "build") -> pd.DataFrame:
         """
         Load all blueprints and return a pandas DataFrame with all data.
         
