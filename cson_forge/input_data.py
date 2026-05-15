@@ -720,10 +720,10 @@ class RomsMarblInputData(InputData):
                 f"Missing required 'type' key in input_args for '{key}'. "
                 f"Expected 'type' to be 'physics' or 'bgc'."
             )
-        if type not in {"physics", "bgc"}:
+        if type not in {"physics", "bgc", "restoring"}:
             raise ValueError(
                 f"Invalid 'type' value '{type}' in input_args for '{key}'. "
-                f"Expected 'type' to be 'physics' or 'bgc'."
+                f"Expected 'type' to be 'physics', 'bgc', or 'restoring'."
             )
 
         yaml_path = self._yaml_filename(f"{key}-{type}")
@@ -751,6 +751,9 @@ class RomsMarblInputData(InputData):
                         stacklevel=2,
                     )
         else:
+            if input_args["type"] == "restoring":
+                if "sss" in input_args["restoring_forces"]:
+                    self._settings_compile_time["cppdefs"]["sal_restore"] = True
             frc = rt.SurfaceForcing(grid=self.grid, **input_args)
             paths = frc.save(output_path)
             try:
@@ -835,7 +838,7 @@ class RomsMarblInputData(InputData):
         if type is None:
             raise ValueError(
                 f"Missing required 'type' key in input_args for '{key}'. "
-                f"Expected 'type' to be 'physics' or 'bgc'."
+                f"Expected 'type' to be 'physics', 'bgc', or 'restoring'."
             )
         if type not in {"physics", "bgc"}:
             raise ValueError(
