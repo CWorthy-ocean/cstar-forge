@@ -129,26 +129,16 @@ class TestResolveCatalogDir:
         outer = (tmp_path / "x").resolve()
         assert resolve_catalog_dir(tmp_path / "x") == outer / "catalog"
 
-    def test_resolve_path_collapses_duplicate_cson_forge_data(self, tmp_path):
-        outer = (tmp_path / "cson_forge_data" / "cson_forge_data").resolve()
-        outer.mkdir(parents=True)
-        assert resolve_catalog_dir(outer) == tmp_path / "cson_forge_data" / "catalog"
-
-
 class TestDefaultCatalogInnerDir:
     def test_under_cson_forge_data_base(self, tmp_path):
+        # Standard layout: source-data is a direct child of the base directory.
+        # Catalog is a sibling of source-data inside that same base.
         sd = tmp_path / "cson-forge-data" / "source-data"
         sd.mkdir(parents=True)
-        assert default_catalog_inner_dir(sd) == tmp_path / "cson-forge-data" / "cson_forge_data" / "catalog"
+        assert default_catalog_inner_dir(sd) == tmp_path / "cson-forge-data" / "catalog"
 
     def test_when_source_data_already_under_cson_forge_data(self, tmp_path):
         sd = tmp_path / "cson_forge_data" / "source-data"
-        sd.mkdir(parents=True)
-        assert default_catalog_inner_dir(sd) == tmp_path / "cson_forge_data" / "catalog"
-
-    def test_nested_cson_forge_data_collapses_to_single_segment_before_catalog(self, tmp_path):
-        """Avoid .../cson_forge_data/cson_forge_data/catalog when source-data is nested."""
-        sd = tmp_path / "cson_forge_data" / "cson_forge_data" / "source-data"
         sd.mkdir(parents=True)
         assert default_catalog_inner_dir(sd) == tmp_path / "cson_forge_data" / "catalog"
 

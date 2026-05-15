@@ -59,7 +59,7 @@ def resolve_catalog_dir(catalog_root: Optional[Union[str, Path]]) -> Path:
     if isinstance(catalog_root, str) and catalog_root.strip().lower() == "local":
         return config.paths.here / "catalog"
     outer = Path(catalog_root).expanduser().resolve()
-    return config.collapse_consecutive_cson_forge_data(outer / "catalog")
+    return outer / "catalog"
 
 
 def _schedule_coroutine(coro):
