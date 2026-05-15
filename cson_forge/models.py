@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Literal, Optional
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, PrivateAttr, model_validator
 
-import cstar.orchestration.models as models
-from cstar.orchestration.models import CodeRepository, ROMSCompositeCodeRepository
+import cstar.applications.roms_marbl.models as models
+from cstar.applications.roms_marbl.models import CodeRepository, ROMSCompositeCodeRepository
 from . import config
 
         
@@ -92,20 +92,23 @@ class SurfaceForcingItem(BaseModel):
     source : SourceSpec
         Source specification for this forcing item.
     type : str
-        Type of forcing: "physics" or "bgc".
+        Type of forcing: "physics", "bgc", or "restoring".
     correct_radiation : bool, optional
         Whether to correct radiation. Default is False.
     coarse_grid_mode : Optional[str], optional
         Coarse grid mode for interpolation. Default is "auto".
         Common values: "auto", "always", "never".
+    restoring_forces: Optional[list], optional
+        List of variables to create restoring forces data for.
     """
     
     model_config = ConfigDict(extra="forbid")
     
     source: SourceSpec
-    type: str = Field(pattern="^(physics|bgc)$")
+    type: str = Field(pattern="^(physics|bgc|restoring)$")
     correct_radiation: bool = Field(default=False, validate_default=False)
     coarse_grid_mode: Optional[str] = Field(default="auto", validate_default=False)
+    restoring_forces: Optional[list] = Field(default=None, validate_default=False)
 
 
 class BoundaryForcingItem(BaseModel):

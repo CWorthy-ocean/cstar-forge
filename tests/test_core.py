@@ -25,7 +25,8 @@ import xarray as xr
 import yaml
 from pydantic import ValidationError
 
-import cstar.orchestration.models as cstar_models
+import cstar.applications.roms_marbl.models as cstar_models
+from cstar.orchestration.models import Resource
 from cson_forge._core import CstarSpecBuilder
 from cson_forge import models as cson_models
 from cson_forge.config import DataPaths
@@ -38,7 +39,7 @@ def _create_empty_dataset(tmp_path):
     placeholder_file = tmp_path / "placeholder.nc"
     placeholder_file.touch()
     return cstar_models.Dataset(
-        data=[cstar_models.Resource(location=str(placeholder_file), partitioned=False)]
+        data=[Resource(location=str(placeholder_file), partitioned=False)]
     )
 
 
@@ -632,10 +633,10 @@ class TestCstarSpecBuilderProperties:
                 
                 # Set blueprint with data
                 builder.blueprint.grid = cstar_models.Dataset(
-                    data=[cstar_models.Resource(location=str(grid_file), partitioned=False)]
+                    data=[Resource(location=str(grid_file), partitioned=False)]
                 )
                 builder.blueprint.initial_conditions = cstar_models.Dataset(
-                    data=[cstar_models.Resource(location=str(ic_file), partitioned=False)]
+                    data=[Resource(location=str(ic_file), partitioned=False)]
                 )
                 
                 with patch("cson_forge._core.xr.open_dataset") as mock_open:
@@ -790,7 +791,7 @@ class TestCstarSpecBuilderGetDs:
                 
                 # Create a blueprint with grid dataset
                 grid_dataset = cstar_models.Dataset(
-                    data=[cstar_models.Resource(location=str(test_file), partitioned=False)]
+                    data=[Resource(location=str(test_file), partitioned=False)]
                 )
                 blueprint = cstar_models.RomsMarblBlueprint(
                     name="test",
@@ -800,14 +801,14 @@ class TestCstarSpecBuilderGetDs:
                     code=mock_model_spec.code,
                     grid=grid_dataset,
                     initial_conditions=cstar_models.Dataset(
-                        data=[cstar_models.Resource(location=str(ic_file), partitioned=False)]
+                        data=[Resource(location=str(ic_file), partitioned=False)]
                     ),
                     forcing=cstar_models.ForcingConfiguration(
                         boundary=cstar_models.Dataset(
-                            data=[cstar_models.Resource(location=str(boundary_file), partitioned=False)]
+                            data=[Resource(location=str(boundary_file), partitioned=False)]
                         ),
                         surface=cstar_models.Dataset(
-                            data=[cstar_models.Resource(location=str(surface_file), partitioned=False)]
+                            data=[Resource(location=str(surface_file), partitioned=False)]
                         ),
                     ),
                     partitioning=minimal_cstar_spec_builder_args["partitioning"],
@@ -873,7 +874,7 @@ class TestCstarSpecBuilderGetDs:
                 boundary_file.touch()
                 
                 surface_dataset = cstar_models.Dataset(
-                    data=[cstar_models.Resource(location=str(test_file), partitioned=False)]
+                    data=[Resource(location=str(test_file), partitioned=False)]
                 )
                 blueprint = cstar_models.RomsMarblBlueprint(
                     name="test",
@@ -882,14 +883,14 @@ class TestCstarSpecBuilderGetDs:
                     valid_end_date=datetime(2012, 1, 2),
                     code=mock_model_spec.code,
                     grid=cstar_models.Dataset(
-                        data=[cstar_models.Resource(location=str(grid_file), partitioned=False)]
+                        data=[Resource(location=str(grid_file), partitioned=False)]
                     ),
                     initial_conditions=cstar_models.Dataset(
-                        data=[cstar_models.Resource(location=str(ic_file), partitioned=False)]
+                        data=[Resource(location=str(ic_file), partitioned=False)]
                     ),
                     forcing=cstar_models.ForcingConfiguration(
                         boundary=cstar_models.Dataset(
-                            data=[cstar_models.Resource(location=str(boundary_file), partitioned=False)]
+                            data=[Resource(location=str(boundary_file), partitioned=False)]
                         ),
                         surface=surface_dataset,
                     ),
@@ -994,17 +995,17 @@ class TestCstarSpecBuilderGenerateInputs:
                         valid_end_date=datetime(2012, 1, 2),
                         code=mock_model_spec.code,
                         grid=cstar_models.Dataset(
-                            data=[cstar_models.Resource(location=str(grid_file), partitioned=False)]
+                            data=[Resource(location=str(grid_file), partitioned=False)]
                         ),
                         initial_conditions=cstar_models.Dataset(
-                            data=[cstar_models.Resource(location=str(ic_file), partitioned=False)]
+                            data=[Resource(location=str(ic_file), partitioned=False)]
                         ),
                         forcing=cstar_models.ForcingConfiguration(
                             boundary=cstar_models.Dataset(
-                            data=[cstar_models.Resource(location=str(boundary_file), partitioned=False)]
+                            data=[Resource(location=str(boundary_file), partitioned=False)]
                         ),
                         surface=cstar_models.Dataset(
-                            data=[cstar_models.Resource(location=str(surface_file), partitioned=False)]
+                            data=[Resource(location=str(surface_file), partitioned=False)]
                         ),
                         ),
                         partitioning=minimal_cstar_spec_builder_args["partitioning"],
@@ -1765,7 +1766,7 @@ class TestCstarSpecBuilderFileBlueprintDataMatch:
                     valid_end_date=builder.end_date,
                     code=mock_model_spec.code,
                     grid=cstar_models.Dataset(
-                        data=[cstar_models.Resource(location=str(grid_file), partitioned=False)]
+                        data=[Resource(location=str(grid_file), partitioned=False)]
                     ),
                     initial_conditions=_create_empty_dataset(tmp_path),
                     forcing=cstar_models.ForcingConfiguration(
@@ -2102,7 +2103,7 @@ class TestCstarSpecBuilderGenerateInputsComprehensive:
         nesting_file = tmp_path / "nesting.nc"
         nesting_file.touch()
         nesting_dataset = cstar_models.Dataset(
-            data=[cstar_models.Resource(location=str(nesting_file), partitioned=False)]
+            data=[Resource(location=str(nesting_file), partitioned=False)]
         )
 
         mock_blueprint_elements = MagicMock()
@@ -2199,7 +2200,7 @@ class TestCstarSpecBuilderGetDsComprehensive:
                 # which might allow multiple, or if not, we'll test with multiple calls
                 # Actually, let's test with a single resource but verify it returns a list
                 boundary_dataset = cstar_models.Dataset(
-                    data=[cstar_models.Resource(location=str(test_file1), partitioned=False)]
+                    data=[Resource(location=str(test_file1), partitioned=False)]
                 )
                 # Create a second boundary dataset separately to test multiple resources
                 # by creating two separate boundary forcings - but that won't work with get_ds
@@ -2249,11 +2250,11 @@ class TestCstarSpecBuilderGetDsComprehensive:
                 mock_grid.return_value = _create_grid_mock()
                 
                 # Dataset with no location resources - use model_construct to bypass validation
-                from cstar.orchestration.models import Dataset as CstarDataset
+                from cstar.applications.roms_marbl.models import Dataset as CstarDataset
                 placeholder_file = tmp_path / "placeholder_grid.nc"
                 placeholder_file.touch()
                 grid_dataset = cstar_models.Dataset(
-                    data=[cstar_models.Resource(location=str(placeholder_file), partitioned=False)]
+                    data=[Resource(location=str(placeholder_file), partitioned=False)]
                 )
                 blueprint = cstar_models.RomsMarblBlueprint(
                     name="test",
@@ -2299,7 +2300,7 @@ class TestCstarSpecBuilderGetDsComprehensive:
                 
                 grid_dataset = cstar_models.Dataset(
                     data=[
-                        cstar_models.Resource(location=str(test_file), partitioned=False)
+                        Resource(location=str(test_file), partitioned=False)
                         # Note: Cannot create Resource with None location - validation will fail
                     ]
                 )

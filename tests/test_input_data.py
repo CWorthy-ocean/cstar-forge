@@ -21,8 +21,8 @@ import pytest
 import xarray as xr
 import numpy as np
 
-import cstar.orchestration.models as cstar_models
-from cson_forge import input_data
+import cstar.applications.roms_marbl.models as cstar_models
+from cstar.orchestration.models import Resource
 from cson_forge.input_data import (
     InputData,
     RomsMarblInputData,
@@ -1409,7 +1409,7 @@ class TestRomsMarblInputDataGenerateAll:
         surface_file = tmp_path / "surface.nc"
         surface_file.touch()
         sample_roms_marbl_input_data.blueprint_elements.forcing.surface.data.append(
-            cstar_models.Resource(location=str(surface_file), partitioned=False)
+            Resource(location=str(surface_file), partitioned=False)
         )
         
         with patch('cson_forge.input_data.config.paths', _create_mock_paths(tmp_path)):
@@ -1446,7 +1446,7 @@ class TestRomsMarblInputDataPartitionFiles:
         # Create a resource with a file
         surface_file = tmp_path / "surface.nc"
         surface_file.touch()
-        resource = cstar_models.Resource(
+        resource = Resource(
             location=str(surface_file),
             partitioned=False
         )
@@ -1493,7 +1493,7 @@ class TestRomsMarblInputDataPartitionFiles:
         # Create resource with a valid location first, then test skipping None in the logic
         surface_file = tmp_path / "surface.nc"
         surface_file.touch()
-        resource = cstar_models.Resource(location=str(surface_file), partitioned=False)
+        resource = Resource(location=str(surface_file), partitioned=False)
         sample_roms_marbl_input_data.blueprint_elements.forcing.surface.data.append(resource)
         
         # Mock partition_netcdf to return valid paths
@@ -1516,7 +1516,7 @@ class TestRomsMarblInputDataPartitionFiles:
         # Create a resource
         surface_file = tmp_path / "surface.nc"
         surface_file.touch()
-        original_resource = cstar_models.Resource(
+        original_resource = Resource(
             location=str(surface_file),
             partitioned=False
         )
@@ -1548,7 +1548,7 @@ class TestRomsMarblInputDataPartitionFiles:
                     resource_dict = resource.model_dump()
                     resource_dict["location"] = str(p_path)  # Convert to str for Pydantic validation
                     resource_dict["partitioned"] = True
-                    new_resources.append(cstar_models.Resource(**resource_dict))
+                    new_resources.append(Resource(**resource_dict))
             dataset.data = new_resources
             
             # Should have 3 resources now

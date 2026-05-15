@@ -72,6 +72,15 @@ SRTM15_URL = f"https://topex.ucsd.edu/pub/srtm15_plus/SRTM15_{SRTM15_VERSION}.nc
 
 glorys_dataset_id: str = "cmems_mod_glo_phy_my_0.083deg_P1D-m"
 
+
+# -----------------------------------------
+# Constants (WOA versioning)
+# -----------------------------------------
+
+WOA_FILENAMES: List[str] = [f"woa*_decav_s{month:02d}_*.nc" for month in range(1, 13)]
+WOA_DOWNLOAD_URL = f"https://www.ncei.noaa.gov/data/oceans/woa/WOA18/DATA/salinity/netcdf/decav/0.25/"
+
+
 # -----------------------------------------
 # Logical source-name → dataset key mapping
 # -----------------------------------------
@@ -91,6 +100,8 @@ SOURCE_ALIAS: Dict[str, str] = {
     "SRTM15": f"SRTM15_{SRTM15_VERSION}".upper(),
     # TPXO tidal data (user-provided)
     "TPXO": "TPXO",
+    # WOA salinity data (user-provided)
+    "WOA": "WOA",
     # Rivers, etc. (placeholder – add real dataset handlers as needed)
     "DAI": "DAI",  # expected to correspond to a DAI dataset if/when added
 }
@@ -487,50 +498,115 @@ def _prepare_era5(self: SourceData) -> Path:
 def _prepare_tpxo(self: SourceData) -> Path:
     """
     Verify that the user has provided TPXO tidal data files.
-    
+
     This is a USER_DATASET that must be downloaded by the user.
     The handler checks that all required files exist at the expected location:
     - config.paths.source_data / "TPXO/TPXO10.v2/grid_tpxo10v2.nc"
     - config.paths.source_data / "TPXO/TPXO10.v2/h_tpxo10.v2.nc"
     - config.paths.source_data / "TPXO/TPXO10.v2/u_tpxo10.v2.nc"
-    
+
     Returns
     -------
     Path
         Base directory path to the TPXO dataset.
-        
+
     Raises
     ------
     FileNotFoundError
         If the TPXO directory or any required files are missing.
     """
     tpxo_path = config.paths.source_data / "TPXO" / "TPXO10.v2"
-    
+
     tpxo_dict = {
         "grid": tpxo_path / "grid_tpxo10v2.nc",
         "h": tpxo_path / "h_tpxo10.v2.nc",
         "u": tpxo_path / "u_tpxo10.v2.nc",
     }
-    
+
     # Check that the base directory exists
     if not tpxo_path.exists():
         raise FileNotFoundError(
             f"TPXO dataset directory not found at: {tpxo_path}\n"
             f"Please download TPXO data and place it in the expected location."
         )
-    
+
     # Check that all required files exist
     missing_files = []
     for key, file_path in tpxo_dict.items():
         if not file_path.exists():
             missing_files.append(f"  - {key}: {file_path}")
-    
+
     if missing_files:
         raise FileNotFoundError(
             f"TPXO dataset is incomplete. Missing files:\n" + "\n".join(missing_files) + "\n"
             f"Please ensure all TPXO files are present in: {tpxo_path}"
         )
-    
+
     print(f"✔️  TPXO dataset verified at: {tpxo_path}")
     self.paths["TPXO"] = tpxo_path
     return tpxo_dict
+
+# ---------------------------
+# WOA handler (user-provided dataset)
+# ---------------------------
+
+
+@register_dataset("WOA")
+def _prepare_woa(self: SourceData) -> Path:
+    """
+    Verify that the user has provided 12 monthly WOA climatology files (s01..s12).
+
+    This is a USER_DATASET that must be downloaded by the user from either:
+        https://www.ncei.noaa.gov/data/oceans/woa/WOA18/DATA/salinity/netcdf/decav/0.25/
+        https://www.ncei.noaa.gov/data/oceans/woa/WOA23/DATA/salinity/netcdf/decav/0.25/
+
+    Expected layout:
+        config.paths.source_data / "WOA" / "woa{YY}_decav_s{MM}_{gr}.nc"
+        for MM in 01..12. YY is atlas year (18, 23). gr is grid resolution - 04 is quarter deg.
+
+    Returns
+    -------
+    Path
+        Base directory path to the TPXO dataset.
+
+    Raises
+    ------
+    FileNotFoundError
+        If the WOA directory or any of the 12 monthly files are missing.
+    """
+    woa_path = config.paths.source_data / "WOA"
+
+    woa_dict = {
+        f"s{m:02d}": woa_path / f"woa*_decav_s{m:02d}_*.nc"
+        for m in range(1, 13)
+    }
+
+    # Check that the base directory exists
+    if not woa_path.exists():
+        raise FileNotFoundError(
+            f"WOA dataset directory not found at: {woa_path}\n"
+            f"Please download 12 WOA data files and place them in {woa_path}.\n"
+            f"2018 WOA data can be downloaded from: {WOA_DOWNLOAD_URL}."
+        )
+
+    # Check that all required files exist
+    # Check that all required files exist (resolving globs)
+    missing_files = []
+    resolved: Dict[str, Path] = {}
+    for key, file_path in woa_dict.items():
+        matches = list(file_path.parent.glob(file_path.name))
+        if not matches:
+            missing_files.append(f" - {key}: {file_path}")
+        else:
+            resolved[key] = matches[0]
+
+    if missing_files:
+        raise FileNotFoundError(
+            f"WOA dataset is incomplete. Missing files:\n" + "\n".join(missing_files) + "\n"
+
+        )
+
+    #import pdb;pdb.set_trace()
+    print(f"✔️  WOA dataset verified at: {woa_path}")
+    self.paths["WOA"] = woa_path
+    return woa_path / "woa*_decav_s*.nc"

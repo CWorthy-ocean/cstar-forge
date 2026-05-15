@@ -7,6 +7,7 @@ the ROMS-MARBL specific implementation.
 """
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -17,8 +18,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 import xarray as xr
 
-import cstar.orchestration.models as cstar_models
-from roms_tools import Grid
+import cstar.applications.roms_marbl.models as cstar_models
+from cstar.orchestration.models import Resource
 
 from . import config
 from . import models as cson_models
@@ -607,18 +608,32 @@ class RomsMarblInputData(InputData):
             if self._should_reuse_existing_output(out_path_nesting):
                 print(f"   ↪ Reusing existing file: {out_path_nesting}")
             else:
-                roms_tools_nesting_writer()(
+                # This section of code is needed when doing nesting with BGC.  ROMS_Tools has a flag called "include_bgc" which
+                # defaults to false when we are making child boundary conditions, but it needs to be set to true in order to
+                # save the BGC variables.
+                nesting_writer = roms_tools_nesting_writer()
+                nesting_kwargs = dict(self.metadata_child or {})
+                has_marbl = (
+                    self.model_spec.settings.properties is not None
+                    and self.model_spec.settings.properties.marbl
+                )
+                if has_marbl and "include_bgc" in inspect.signature(
+                    nesting_writer
+                ).parameters:
+                    # ROMS-Tools: include_bgc=True sets output_vars to include "bgc" on nesting.nc.
+                    nesting_kwargs.setdefault("include_bgc", True)
+                nesting_writer(
                     self.grid,
                     self.grid_child,
                     out_path_nesting,
-                    **(self.metadata_child or {}),
+                    **nesting_kwargs,
                 )
             self.blueprint_elements.nesting_info = cstar_models.Dataset(
-                data=[cstar_models.Resource(location=str(out_path_nesting), partitioned=False)]
+                data=[Resource(location=str(out_path_nesting), partitioned=False)]
             )
 
         # Append Resource directly to blueprint_elements.grid
-        resource = cstar_models.Resource(location=str(out_path), partitioned=False)
+        resource = Resource(location=str(out_path), partitioned=False)
         self.blueprint_elements.grid.data.append(resource)
 
         self._settings_run_time["roms.in"]["grid"] = dict(
@@ -691,10 +706,10 @@ class RomsMarblInputData(InputData):
         # Append Resources directly to blueprint_elements.initial_conditions
         if isinstance(paths, (list, tuple)):
             for path in paths:
-                resource = cstar_models.Resource(location=path, partitioned=False)
+                resource = Resource(location=path, partitioned=False)
                 self.blueprint_elements.initial_conditions.data.append(resource)
         else:
-            resource = cstar_models.Resource(location=paths, partitioned=False)
+            resource = Resource(location=paths, partitioned=False)
             self.blueprint_elements.initial_conditions.data.append(resource)
 
         self._settings_run_time["roms.in"]["initial"] = dict(
@@ -720,10 +735,10 @@ class RomsMarblInputData(InputData):
                 f"Missing required 'type' key in input_args for '{key}'. "
                 f"Expected 'type' to be 'physics' or 'bgc'."
             )
-        if type not in {"physics", "bgc"}:
+        if type not in {"physics", "bgc", "restoring"}:
             raise ValueError(
                 f"Invalid 'type' value '{type}' in input_args for '{key}'. "
-                f"Expected 'type' to be 'physics' or 'bgc'."
+                f"Expected 'type' to be 'physics', 'bgc', or 'restoring'."
             )
 
         yaml_path = self._yaml_filename(f"{key}-{type}")
@@ -751,6 +766,9 @@ class RomsMarblInputData(InputData):
                         stacklevel=2,
                     )
         else:
+            if input_args["type"] == "restoring":
+                if "sss" in input_args["restoring_forces"]:
+                    self._settings_compile_time["cppdefs"]["sal_restore"] = True
             frc = rt.SurfaceForcing(grid=self.grid, **input_args)
             paths = frc.save(output_path)
             try:
@@ -765,10 +783,10 @@ class RomsMarblInputData(InputData):
         # Append Resources directly to blueprint_elements.forcing[subkey]
         if isinstance(paths, (list, tuple)):
             for path in paths:
-                resource = cstar_models.Resource(location=path, partitioned=False)
+                resource = Resource(location=path, partitioned=False)
                 getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
         else:
-            resource = cstar_models.Resource(location=paths, partitioned=False)
+            resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
 
         # TODO: Update self._settings_compile_time with related forcing parameter sets and cppdefs for surface forcing
@@ -835,7 +853,7 @@ class RomsMarblInputData(InputData):
         if type is None:
             raise ValueError(
                 f"Missing required 'type' key in input_args for '{key}'. "
-                f"Expected 'type' to be 'physics' or 'bgc'."
+                f"Expected 'type' to be 'physics', 'bgc', or 'restoring'."
             )
         if type not in {"physics", "bgc"}:
             raise ValueError(
@@ -880,10 +898,10 @@ class RomsMarblInputData(InputData):
         # Append Resources directly to blueprint_elements.forcing[subkey]
         if isinstance(paths, (list, tuple)):
             for path in paths:
-                resource = cstar_models.Resource(location=path, partitioned=False)
+                resource = Resource(location=path, partitioned=False)
                 getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
         else:
-            resource = cstar_models.Resource(location=paths, partitioned=False)
+            resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
 
         # TODO: Update self._settings_compile_time with related forcing parameter sets and cppdefs
@@ -912,8 +930,17 @@ class RomsMarblInputData(InputData):
             print(f"   ↪ Reusing existing file(s): {', '.join(existing_paths)}")
             paths = existing_paths
             with yaml_path.open() as f:
-                tide_yaml = yaml.load(f, Loader=yaml.SafeLoader)
-            ntides = tide_yaml["TidalForcing"]["ntides"]
+                # roms_tools may emit multi-document YAML (e.g. version header + Grid/TidalForcing).
+                ntides = None
+                for doc in yaml.safe_load_all(f):
+                    if doc and isinstance(doc, dict) and "TidalForcing" in doc:
+                        ntides = doc["TidalForcing"].get("ntides")
+                        break
+                if ntides is None:
+                    raise ValueError(
+                        f"No TidalForcing.ntides found in YAML (expected multi-document "
+                        f"roms_tools output): {yaml_path}"
+                    )
         elif existing_paths:
             print(f"   ↪ Reusing existing file(s): {', '.join(existing_paths)}")
             paths = existing_paths
@@ -947,10 +974,10 @@ class RomsMarblInputData(InputData):
         # Append Resources directly to blueprint_elements.forcing[subkey]
         if isinstance(paths, (list, tuple)):
             for path in paths:
-                resource = cstar_models.Resource(location=path, partitioned=False)
+                resource = Resource(location=path, partitioned=False)
                 getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
         else:
-            resource = cstar_models.Resource(location=paths, partitioned=False)
+            resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
         
         # Update settings_dict with tidal forcing parameters
@@ -1005,7 +1032,7 @@ class RomsMarblInputData(InputData):
                 paths[0] if isinstance(paths, (list, tuple)) else paths
             )
             for path in paths:
-                resource = cstar_models.Resource(location=path, partitioned=False)
+                resource = Resource(location=path, partitioned=False)
                 getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
             return
 
@@ -1047,10 +1074,10 @@ class RomsMarblInputData(InputData):
         # Append Resources directly to blueprint_elements.forcing[subkey]
         if isinstance(paths, (list, tuple)):
             for path in paths:
-                resource = cstar_models.Resource(location=path, partitioned=False)
+                resource = Resource(location=path, partitioned=False)
                 getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
         else:
-            resource = cstar_models.Resource(location=paths, partitioned=False)
+            resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
 
         # updates settings_dict
@@ -1112,7 +1139,7 @@ class RomsMarblInputData(InputData):
         cdr.to_yaml(yaml_path)
         # Append Resources directly to blueprint_elements.cdr_forcing
         for path in paths:
-            resource = cstar_models.Resource(location=path, partitioned=False)
+            resource = Resource(location=path, partitioned=False)
             self.blueprint_elements.cdr_forcing.data.append(resource)
 
         self._settings_compile_time["cppdefs"]["cdr_forcing"] = True
@@ -1181,13 +1208,13 @@ class RomsMarblInputData(InputData):
                         resource_dict = resource.model_dump()
                         resource_dict["location"] = partitioned_path
                         resource_dict["partitioned"] = True
-                        new_resources.append(cstar_models.Resource(**resource_dict))
+                        new_resources.append(Resource(**resource_dict))
                 else:
                     # If it returns a single path (shouldn't happen, but handle it)
                     resource_dict = resource.model_dump()
                     resource_dict["location"] = partitioned_paths
                     resource_dict["partitioned"] = True
-                    new_resources.append(cstar_models.Resource(**resource_dict))
+                    new_resources.append(Resource(**resource_dict))
             # Replace all resources in the dataset with the new partitioned resources
             dataset.data = new_resources
 

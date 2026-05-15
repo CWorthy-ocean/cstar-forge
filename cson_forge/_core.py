@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import inspect
 import os
 import sys
 import time
 import warnings
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict as dataclass_asdict
 from datetime import datetime
 import shutil
@@ -21,21 +19,23 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import xarray as xr
 import yaml
+from cstar.orchestration.models import Resource
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
-import cstar.orchestration.models as cstar_models
+import cstar.applications.roms_marbl.models as cstar_models
 from cstar.orchestration.serialization import deserialize
 from cstar.roms import ROMSSimulation
 from cstar.execution.handler import ExecutionStatus
-from cstar.entrypoint.config import JobConfig, ServiceConfiguration, get_job_config, get_service_config
-from cstar.entrypoint.xrunner import XRunnerRequest
-from cstar.entrypoint.worker.worker import SimulationRunner, execute_runner
-from cstar.orchestration.models import RomsMarblBlueprint
+from cstar.entrypoint.config import get_job_config, get_service_config
+
+from cstar.applications.roms_marbl.models import RomsMarblBlueprint
+from cstar.applications.roms_marbl.app import RomsMarblRunner
+from cstar.applications.core import RunnerRequest
 from . import config
 from . import source_data
 from . import models as cson_models
 from . import input_data
-from .settings import ROMSTemplateRenderer, render_roms_settings
+from .settings import render_roms_settings
 from .util import compute_timestep_from_cfl, roms_tools_default_nesting_period_seconds
 import roms_tools as rt
 
@@ -1064,7 +1064,7 @@ class CstarSpecBuilder(BaseModel):
         self._init_settings_run_time()
                     
         # Create placeholder Resource objects to satisfy validation requirements
-        placeholder_resource = cstar_models.Resource.model_construct(
+        placeholder_resource = Resource.model_construct(
             location=None,
             partitioned=False
         )
@@ -1648,6 +1648,7 @@ class CstarSpecBuilder(BaseModel):
         use_dask: bool = True,
         partition_files: bool = False,
         test: bool = False,
+        prompt_if_files_exist: bool = True,
     ) -> cstar_models.RomsMarblBlueprint:
         """
         Generate ROMS input files and advance blueprint to POSTCONFIG stage.
@@ -1720,7 +1721,7 @@ class CstarSpecBuilder(BaseModel):
         if postconfig_path.exists() and not clobber:
             make_new_blueprint = self._prompt_yes_no(
                 f"POSTCONFIG blueprint already exists at {postconfig_path}. Create a new blueprint?"
-            )
+            ) if prompt_if_files_exist else False
             if make_new_blueprint:
                 self._delete_blueprint_and_settings(postconfig_path)
                 force_regenerate = True
@@ -2308,7 +2309,7 @@ class CstarSpecBuilder(BaseModel):
             walltime: str | None = None,
             clobber: bool = True,
             on_compute_node: bool = False,
-            n_procs_available: int = 0,
+            n_procs_available: int | None = None,
         ):
 
         """
@@ -2323,36 +2324,53 @@ class CstarSpecBuilder(BaseModel):
             C-star will fail if files exist already.
         on_compute_node: Whether to run ROMS on the current node. Defaults to False (will submit slurm jobs if on HPC).
         n_procs_available: How many processors to utilize for joining operations. If 0, auto-detect. If you leave it 0
-            and you're on a shared or login node, you're probably going to use too many and get booted.
+            and you're on a shared or login node, you're probably going to use too many and get booted. If None, don't
+            change it (e.g. you have set it externally)
         """
 
 
         mc = config.machine_config
         queues = mc.queues or {}
-        account_key = account_key or mc.account or ""
-        queue_name = queue_name or queues.get("default") or ""
-        walltime = walltime or "6:00:00"
-        os.environ["CSTAR_CLOBBER_WORKING_DIR"] = "1" if clobber else "0"
-        os.environ["CSTAR_IN_ACTIVE_ALLOCATION"] = "1" if on_compute_node else "0"
+
+        # precedence: passed variable > pre-existing env-var setting > internal machine config > some default
+        account_key = account_key or os.getenv("CSTAR_SLURM_ACCOUNT") or mc.account or ""
+        queue_name = queue_name or os.getenv("CSTAR_SLURM_QUEUE") or queues.get("default") or ""
+        walltime = walltime or os.getenv("CSTAR_SLURM_WALLTIME") or "6:00:00"
+        clobber = "1" if clobber else os.getenv("CSTAR_CLOBBER_WORKING_DIR", "0")
+        in_active_alloc = "1" if on_compute_node else os.getenv("CSTAR_IN_ACTIVE_ALLOCATION", "0")
+
+        # set everything
+        os.environ["CSTAR_CLOBBER_WORKING_DIR"] = clobber
+        os.environ["CSTAR_IN_ACTIVE_ALLOCATION"] = in_active_alloc
         os.environ["CSTAR_SLURM_ACCOUNT"] = account_key
         os.environ["CSTAR_SLURM_QUEUE"] = queue_name
         os.environ["CSTAR_SLURM_WALLTIME"] = walltime
 
         if n_procs_available:
             os.environ["CSTAR_NPROCS_POST"] = str(n_procs_available)
-        else:
+        elif n_procs_available == 0:
             if os.getenv("CSTAR_NPROCS_POST"):
                 del os.environ["CSTAR_NPROCS_POST"]
+        #implicit: elif n_procs_available is None, do nothing
 
         if config.system == "RCAC_anvil":
             # find the right conda path to this environment and put it in the front of the path
             # otherwise, it might find the wrong cstar executable
             bin_dir = Path(sys.executable).parent
+            cstar_exe = bin_dir / "cstar"
+            assert cstar_exe.is_file()
+
+            new_link = Path.cwd() / "cstar"
+            if new_link.exists():
+                new_link.unlink()
+
+            # make symlink in current dir to correct cstar
+            os.symlink(cstar_exe, new_link)
             _current_path = os.environ["PATH"]
-            os.environ["PATH"] = str(bin_dir) + os.pathsep + _current_path
+            os.environ["PATH"] = str(Path.cwd()) + os.pathsep + _current_path
 
 
-    def run(
+    async def run(
         self,
     ):
         """
@@ -2361,18 +2379,16 @@ class CstarSpecBuilder(BaseModel):
 
         self.prep_cstar_environment()
 
-        request = XRunnerRequest(uri=str(self.path_blueprint(stage=BlueprintStage.BUILD)), bp_type=RomsMarblBlueprint, name=self.casename)
+        request = RunnerRequest(uri=str(self.path_blueprint(stage=BlueprintStage.BUILD)), bp_type=RomsMarblBlueprint, name=self.casename)
         service_cfg = get_service_config(log_level="INFO")
         job_cfg = get_job_config()
-        runner = execute_runner(job_cfg, service_cfg, request)
-        task_or_result = _schedule_coroutine(runner)
-        if hasattr(task_or_result, "add_done_callback"):
-            task_or_result.add_done_callback(lambda t: print(t.result()))
+        runner = RomsMarblRunner(request=request, service_cfg=service_cfg, job_cfg=job_cfg)
+        await runner.execute()
 
         # Persist blueprint to file
         self._stage = BlueprintStage.RUN
         self.persist()
-        return task_or_result
+
 
 
     def set_blueprint_state(self, state: str) -> None:
@@ -2382,7 +2398,7 @@ class CstarSpecBuilder(BaseModel):
         Parameters
         ----------
         state : str
-            The new state for the blueprint. Must be a valid BlueprintState value from cstar.orchestration.models.
+            The new state for the blueprint. Must be a valid BlueprintState value from cstar.applications.roms_marbl.models.
             Common values include "notset", "draft", "configured", "ready", etc.
             See cstar_models.BlueprintState for the complete list of valid values.
         
@@ -2396,7 +2412,7 @@ class CstarSpecBuilder(BaseModel):
         
         # Validate state if BlueprintState is available
         try:
-            from cstar.orchestration.models import BlueprintState
+            from cstar.applications.roms_marbl.models import BlueprintState
             # Try to validate the state value
             if hasattr(BlueprintState, '__members__'):
                 valid_states = set(BlueprintState.__members__.values())
