@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import os
 import platform
@@ -30,7 +30,10 @@ class DataPaths:
     - source_data
     - input_data
     - scratch
-    - blueprints
+    - catalog (root for generated blueprints and rendered build trees; inner directory
+      that directly contains ``blueprints`` and ``builds`` subdirectories)
+    - blueprints (under ``catalog / "blueprints"`` by default)
+    - builds (under ``catalog / "builds"`` by default)
     - models_yaml
     - builds_yaml
     """
@@ -40,7 +43,9 @@ class DataPaths:
     source_data: Path
     input_data: Path
     scratch: Path
+    catalog: Path
     blueprints: Path
+    builds: Path
     models_yaml: Path
     builds_yaml: Path
     machines_yaml: Path
@@ -180,6 +185,16 @@ def _layout_unknown(home: Path, env: dict) -> Tuple[Path, Path, Path]:
 # Path factory
 # --------------------------------------------------------
 
+def default_catalog_inner_dir(source_data: Path) -> Path:
+    """
+    Default inner *catalog* directory: the folder that directly contains ``blueprints/`` and ``builds/``.
+
+    The catalog lives alongside ``source-data`` inside the base data directory, e.g.
+    ``~/cson-forge-data/catalog/{blueprints,builds}``.
+    """
+    return source_data.parent.resolve() / "catalog"
+
+
 def get_data_paths() -> DataPaths:
     """
     Return canonical data and project paths adapted to the system we're running on.
@@ -196,13 +211,16 @@ def get_data_paths() -> DataPaths:
 
     here = Path(__file__).resolve().parent
     model_configs = here / "model-configs"
-    blueprints_dir = here / "blueprints"
+    # Inner catalog dir: .../cson_forge_data/catalog/{blueprints,builds}
+    catalog = default_catalog_inner_dir(source_data)
+    blueprints_dir = catalog / "blueprints"
+    builds_dir = catalog / "builds"
     models_yaml = here / "models.yml"
     builds_yaml = here / "builds.yml"
     machines_yaml = here / "machines.yml"
 
     # ensure everything exists
-    for p in (source_data, input_data, scratch, blueprints_dir, model_configs):
+    for p in (source_data, input_data, scratch, catalog, blueprints_dir, builds_dir, model_configs):
         _ensure_dir(p)
 
     return DataPaths(
@@ -211,10 +229,31 @@ def get_data_paths() -> DataPaths:
         source_data=source_data,
         input_data=input_data,
         scratch=scratch,
+        catalog=catalog,
         blueprints=blueprints_dir,
+        builds=builds_dir,
         models_yaml=models_yaml,
         builds_yaml=builds_yaml,
         machines_yaml=machines_yaml,
+    )
+
+
+def with_catalog(paths: DataPaths, catalog: Path) -> DataPaths:
+    """
+    Return a copy of *paths* with ``catalog``, ``blueprints``, and ``builds`` rooted under *catalog*.
+
+    ``blueprints`` and ``builds`` are set to ``catalog / "blueprints"`` and ``catalog / "builds"``
+    respectively. Other fields (``here``, data roots, YAML paths) are unchanged.
+
+    Intended for relocating the on-disk catalog without editing ``get_data_paths``;
+    assign the result to ``cson_forge.config.paths`` (and create directories as needed).
+    """
+    catalog = Path(catalog)
+    return replace(
+        paths,
+        catalog=catalog,
+        blueprints=catalog / "blueprints",
+        builds=catalog / "builds",
     )
 
 
