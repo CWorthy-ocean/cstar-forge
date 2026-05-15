@@ -138,8 +138,8 @@ dask-worker-space/
 .DS_Store
 
 # binarys & temporary files
-cson_forge/builds/*/bld_tmp/*
-cson_forge/builds/*/exe/*
+cson_forge/catalog/builds/*/bld_tmp/*
+cson_forge/catalog/builds/*/exe/*
 *.o
 *.mod
 
@@ -155,4 +155,6 @@ workflows/_notes/*
 # MyST build outputs
 _build
 
-
+# don't clobber old blueprint/build directories - remove at some point
+/cson_forge/blueprints/
+/cson_forge/builds/

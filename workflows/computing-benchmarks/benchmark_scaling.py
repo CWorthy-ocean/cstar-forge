@@ -90,7 +90,9 @@ def main():
     print(f"    source_data: {paths.source_data}")
     print(f"    input_data: {paths.input_data}")
     print(f"    scratch: {paths.scratch}")
+    print(f"    catalog: {paths.catalog}")
     print(f"    blueprints: {paths.blueprints}")
+    print(f"    builds: {paths.builds}")
     print(f"    model_configs: {paths.model_configs}")
     print()
     

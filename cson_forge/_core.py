@@ -39,6 +39,29 @@ from .settings import ROMSTemplateRenderer, render_roms_settings
 from .util import compute_timestep_from_cfl, roms_tools_default_nesting_period_seconds
 import roms_tools as rt
 
+
+def resolve_catalog_dir(catalog_root: Optional[Union[str, Path]]) -> Path:
+    """
+    Resolve the absolute inner *catalog* directory (direct parent of ``blueprints/`` and ``builds/``).
+
+    Parameters
+    ----------
+    catalog_root
+        - ``None``: use ``config.paths.catalog`` (default data-tree location).
+        - ``"local"`` (case-insensitive string): use the package layout
+          ``<cson_forge>/catalog`` (same as ``config.paths.here / "catalog"``); no extra
+          ``/catalog`` suffix is applied.
+        - Any other ``str`` or ``Path``: *outer* catalog anchor; the inner directory is
+          ``<resolved_anchor>/catalog`` (i.e. blueprints live at ``.../catalog/blueprints``).
+    """
+    if catalog_root is None:
+        return config.paths.catalog
+    if isinstance(catalog_root, str) and catalog_root.strip().lower() == "local":
+        return config.paths.here / "catalog"
+    outer = Path(catalog_root).expanduser().resolve()
+    return config.collapse_consecutive_cson_forge_data(outer / "catalog")
+
+
 def _schedule_coroutine(coro):
     """
     Schedule a coroutine on the running loop, returns a Task.
@@ -186,6 +209,9 @@ class CstarSpecBuilder(BaseModel):
     - Blueprint state is persisted to disk at each stage transition
     - Grid object is created during initialization and reused throughout
     - Source data can be prepared independently via `ensure_source_data()`
+    - Optional ``catalog_root`` selects an *outer* anchor so blueprints and builds live under
+      ``<catalog_root>/catalog/`` (or use ``catalog_root='local'`` for the in-repo
+      ``cson_forge/catalog`` tree; default uses ``config.paths.catalog``).
     
     .. warning::
         This functionality is under active development and not yet fully implemented.
@@ -213,6 +239,16 @@ class CstarSpecBuilder(BaseModel):
     )
     override: Optional[List[Union[str, Path]]] = Field(default=None, validate_default=False)
     ensemble_id: Optional[int] = Field(default=None, validate_default=False)
+    catalog_root: Optional[Union[str, Path]] = Field(
+        default=None,
+        validate_default=False,
+        description=(
+            "Optional *outer* catalog anchor. Blueprints and builds use "
+            "``<catalog_root>/catalog/blueprints`` and ``<catalog_root>/catalog/builds``. "
+            "Omit to use ``config.paths.catalog``. Use ``catalog_root='local'`` for the "
+            "in-repo ``cson_forge/catalog`` package directory (no extra ``/catalog`` suffix)."
+        ),
+    )
     # Internal attributes (computed/loaded)
     blueprint: Optional[cstar_models.RomsMarblBlueprint] = Field(
         default=None,
@@ -480,19 +516,24 @@ class CstarSpecBuilder(BaseModel):
         )
 
     @property
+    def resolved_catalog_dir(self) -> Path:
+        """Absolute inner *catalog* directory (contains ``blueprints/`` and ``builds/``)."""
+        return resolve_catalog_dir(self.catalog_root)
+
+    @property
     def blueprint_dir(self) -> Path:
         """Return the blueprint directory path."""
-        return config.paths.blueprints / config.system_id / self.name
+        return self.resolved_catalog_dir / "blueprints" / config.system_id / self.name
     
     @property
     def compile_time_code_dir(self) -> Path:
-        """Compile-time rendered templates under ``config.paths.here / builds``."""
-        return config.paths.here / "builds" / self.name / "compile-time"
+        """Compile-time rendered templates under this builder's ``builds`` tree."""
+        return self.resolved_catalog_dir / "builds" / self.name / "compile-time"
     
     @property
     def run_time_code_dir(self) -> Path:
-        """Run-time rendered templates under ``config.paths.here / builds``."""
-        return config.paths.here / "builds" / self.name / "run-time"
+        """Run-time rendered templates under this builder's ``builds`` tree."""
+        return self.resolved_catalog_dir / "builds" / self.name / "run-time"
 
     def persist(self) -> None:
         """
@@ -2587,7 +2628,12 @@ class CstarSpecEngine:
     ```
     """
     
-    def __init__(self, domains_file: Union[str, Path]):
+    def __init__(
+        self,
+        domains_file: Union[str, Path],
+        *,
+        catalog_root: Optional[Union[str, Path]] = None,
+    ):
         """
         Initialize CstarSpecEngine.
         
@@ -2595,12 +2641,17 @@ class CstarSpecEngine:
         ----------
         domains_file : Union[str, Path]
             Path to domains YAML file.
+        catalog_root : str or Path, optional
+            Default *outer* anchor passed to every ``CstarSpecBuilder`` (inner paths are
+            ``<catalog_root>/catalog/blueprints`` and ``<catalog_root>/catalog/builds``, except
+            ``catalog_root="local"`` which uses the in-repo ``cson_forge/catalog`` directory).
         """
         domains_file = Path(domains_file)
         
         self.domains_file = domains_file
         self._domains: Optional[Dict[str, Any]] = None
         self.builder: Optional[Dict[str, CstarSpecBuilder]] = None
+        self._engine_catalog_root: Optional[Union[str, Path]] = catalog_root
         # Load domains on initialization
         self._load_domains()
     
@@ -2665,7 +2716,8 @@ class CstarSpecEngine:
         self,
         domain_name: str,
         overrides: Optional[Dict[str, Any]] = None,
-        ensemble_id: Optional[int] = None
+        ensemble_id: Optional[int] = None,
+        catalog_root: Optional[Union[str, Path]] = None,
     ) -> CstarSpecBuilder:
         """
         Create a CstarSpecBuilder instance from domain configuration.
@@ -2680,6 +2732,10 @@ class CstarSpecEngine:
         ensemble_id : Optional[int], optional
             Ensemble ID to use for this builder. If None, uses default (1).
             Default is None.
+        catalog_root : str or Path, optional
+            If set, written into the builder config (overrides domain YAML unless
+            already set there). Outer anchor for ``CstarSpecBuilder.catalog_root``.
+            ``None`` leaves domain/engine defaults only.
         
         Returns
         -------
@@ -2706,6 +2762,12 @@ class CstarSpecEngine:
         # Apply overrides if provided
         if overrides:
             config_dict.update(overrides)
+
+        # catalog_root: explicit call wins, else engine default, else domain YAML only
+        if catalog_root is not None:
+            config_dict["catalog_root"] = catalog_root
+        elif getattr(self, "_engine_catalog_root", None) is not None:
+            config_dict.setdefault("catalog_root", self._engine_catalog_root)
         
         # Convert date strings to datetime objects
         if "start_time" in config_dict:
@@ -2737,6 +2799,7 @@ class CstarSpecEngine:
         compile_time_settings: Optional[Dict[str, Any]] = None,
         run_time_settings: Optional[Dict[str, Any]] = None,
         ensemble_id: Optional[int] = None,
+        catalog_root: Optional[Union[str, Path]] = None,
     ) -> CstarSpecBuilder:
         """
         Execute the complete workflow for a domain.
@@ -2767,6 +2830,10 @@ class CstarSpecEngine:
         ensemble_id : Optional[int], optional
             Ensemble ID to use for this domain. If None, uses default (1).
             Default is None.
+        catalog_root : str or Path, optional
+            Overrides ``CstarSpecEngine`` default and domain YAML for this call only.
+            Outer anchor: blueprints and builds resolve under ``<catalog_root>/catalog/``.
+            Same rules as ``CstarSpecBuilder.catalog_root`` (including ``"local"``).
         
         Returns
         -------
@@ -2774,7 +2841,12 @@ class CstarSpecEngine:
             The CstarSpecBuilder instance after completing the workflow.
         """
         # Create builder from domain configuration
-        builder = self._create_builder(domain_name, overrides=overrides, ensemble_id=ensemble_id)
+        builder = self._create_builder(
+            domain_name,
+            overrides=overrides,
+            ensemble_id=ensemble_id,
+            catalog_root=catalog_root,
+        )
         
         # Execute workflow
         builder.ensure_source_data()
@@ -2802,6 +2874,7 @@ class CstarSpecEngine:
         run_time_settings: Optional[Dict[str, Any]] = None,
         ensemble_id: Optional[int] = None,
         stop_on_failure: bool = False,
+        catalog_root: Optional[Union[str, Path]] = None,
     ) -> Dict[str, CstarSpecBuilder]:
         """
         Execute the complete workflow for all domains (generation only).
@@ -2827,6 +2900,9 @@ class CstarSpecEngine:
         ensemble_id : Optional[int], optional
             Ensemble ID to use for all domains. If None, uses default (1).
             Default is None.
+        catalog_root : str or Path, optional
+            Passed through to each ``generate_domain`` call (overrides engine default for
+            this batch only). Outer anchor: ``<catalog_root>/catalog/{blueprints,builds}``.
         
         Returns
         -------
@@ -2874,6 +2950,7 @@ class CstarSpecEngine:
                     compile_time_settings=compile_time_settings,
                     run_time_settings=run_time_settings,
                     ensemble_id=ensemble_id,
+                    catalog_root=catalog_root,
                 )
                 print(f"\n✓ Successfully completed domain: {grid_name}")
             except Exception as e:
@@ -2960,40 +3037,54 @@ class CstarSpecEngine:
             
             try:
                 # Start the simulation
-                execution_handler = builder.run()
+                builder.prep_cstar_environment(
+                    account_key = None,  # None gets from machine config or override here
+                    queue_name = None,  # None gets from machine config or override here
+                    walltime = "12:00:00",  # don't know how long this will take, so give it a long time
+                    clobber = True,  # recommend True, but it will clear previous results from this run 
+                    n_procs_available = 0,  # 0 is auto-detect, change if on a login or shared node to not overuse resources
+                )
+                builder.run()
+
+                # deprecated run handling - leaving here for now
+                # TODO: remove this once we run_all() behvior is refactored
+                # ------------------------------------------------------------------------------
+                # execution_handler = builder.run()
                 
-                # Poll execution status until terminal
-                print(f"Monitoring execution status for {grid_name}...")
-                while True:
-                    status = execution_handler.status
-                    print(f"  Status: {status}")
+                # # Poll execution status until terminal
+                # print(f"Monitoring execution status for {grid_name}...")
+                # while True:
+                #     status = execution_handler.status
+                #     print(f"  Status: {status}")
                     
-                    if ExecutionStatus.is_terminal(status):
-                        if status == ExecutionStatus.COMPLETED:
-                            print(f"\n✓ Simulation completed successfully: {grid_name}")
-                        elif status == ExecutionStatus.FAILED:
-                            print(f"\n✗ Simulation failed: {grid_name}")
-                            warnings.warn(
-                                f"Simulation {grid_name} failed with status {status}",
-                                UserWarning,
-                                stacklevel=2
-                            )
-                            failed_simulations.append((grid_name, status, "failed"))
-                        elif status == ExecutionStatus.CANCELLED:
-                            print(f"\n⚠ Simulation was cancelled: {grid_name}")
-                            warnings.warn(
-                                f"Simulation {grid_name} was cancelled",
-                                UserWarning,
-                                stacklevel=2
-                            )
-                            failed_simulations.append((grid_name, status, "cancelled"))
-                        break
+                #     if ExecutionStatus.is_terminal(status):
+                #         if status == ExecutionStatus.COMPLETED:
+                #             print(f"\n✓ Simulation completed successfully: {grid_name}")
+                #         elif status == ExecutionStatus.FAILED:
+                #             print(f"\n✗ Simulation failed: {grid_name}")
+                #             warnings.warn(
+                #                 f"Simulation {grid_name} failed with status {status}",
+                #                 UserWarning,
+                #                 stacklevel=2
+                #             )
+                #             failed_simulations.append((grid_name, status, "failed"))
+                #         elif status == ExecutionStatus.CANCELLED:
+                #             print(f"\n⚠ Simulation was cancelled: {grid_name}")
+                #             warnings.warn(
+                #                 f"Simulation {grid_name} was cancelled",
+                #                 UserWarning,
+                #                 stacklevel=2
+                #             )
+                #             failed_simulations.append((grid_name, status, "cancelled"))
+                #         break
                     
-                    # Wait before next status check
-                    time.sleep(poll_interval)
+                #     # Wait before next status check
+                #     time.sleep(poll_interval)
                 
-                execution_results[grid_name] = execution_handler
-                
+                # execution_results[grid_name] = execution_handler
+                # ------------------------------------------------------------------------------
+
+
             except Exception as e:
                 print(f"\n✗ Error running simulation {grid_name}: {e}")
                 warnings.warn(

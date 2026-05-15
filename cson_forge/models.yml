@@ -54,7 +54,7 @@ cson_roms-marbl_v0.1:
     initial_conditions:
       source:
         name: GLORYS
-        glorys_layout: global
+        glorys_layout: regional
       bgc_source:
         name: UNIFIED
         climatology: true
@@ -75,7 +75,7 @@ cson_roms-marbl_v0.1:
       boundary:
         - source:
             name: GLORYS
-            glorys_layout: global
+            glorys_layout: regional
           type: physics
         - source:
             name: UNIFIED
