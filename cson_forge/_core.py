@@ -2643,7 +2643,8 @@ class CstarSpecEngine:
       partitioning: dict
     ```
     """
-    
+    import asyncio
+
     def __init__(
         self,
         domains_file: Union[str, Path],
@@ -2875,8 +2876,16 @@ class CstarSpecEngine:
             compile_time_settings=compile_time_settings or {},
             run_time_settings=run_time_settings or {}
         )
-        builder.build()
-        builder.pre_run()
+        # TODO: pass prep args as dict to generate_domain()
+        builder.prep_cstar_environment(
+            account_key = None,  # None gets from machine config or override here
+            queue_name = None,  # None gets from machine config or override here
+            walltime = "00:10:00",
+            clobber = True,  # recommend True, but it will clear previous results from this run 
+            n_procs_available = 0,  # 0 is auto-detect, change if on a login or shared node to not overuse resources
+        )
+        #import asyncio
+        asyncio.run(builder.run())
         
         return builder
     
