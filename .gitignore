@@ -158,3 +158,4 @@ _build
 # don't clobber old blueprint/build directories - remove at some point
 /cson_forge/blueprints/
 /cson_forge/builds/
+*.out
