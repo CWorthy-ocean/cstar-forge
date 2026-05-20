@@ -1,6 +1,5 @@
-import cson_forge
-import cstar.execution.handler as handler
-import time
+import cstar_forge
+
 import yaml
 from datetime import datetime
 from pathlib import Path
@@ -208,7 +207,7 @@ partitioning_inner= dict(
 
 ######################################
 
-ocn_outer_down = cson_forge.CstarSpecBuilder(
+ocn_outer_down = cstar_forge.CstarSpecBuilder(
     description=description_outer,
     model_name=model_name,
     grid_name=grid_name_outer_down,
@@ -220,7 +219,7 @@ ocn_outer_down = cson_forge.CstarSpecBuilder(
     partitioning=partitioning_outer,
 )
 
-ocn_middle_down = cson_forge.CstarSpecBuilder(
+ocn_middle_down = cstar_forge.CstarSpecBuilder(
     description=description_middle,
     model_name=model_name,
     grid_name=grid_name_middle_down,
@@ -233,7 +232,7 @@ ocn_middle_down = cson_forge.CstarSpecBuilder(
     partitioning=partitioning_middle,
 )
 
-ocn_inner = cson_forge.CstarSpecBuilder(
+ocn_inner = cstar_forge.CstarSpecBuilder(
     description=description_inner,
     model_name=model_name,
     grid_name=grid_name_inner,
@@ -246,7 +245,7 @@ ocn_inner = cson_forge.CstarSpecBuilder(
     CDR_forcing=cdr_forcing_cfg,
 )
 
-ocn_middle_up = cson_forge.CstarSpecBuilder(
+ocn_middle_up = cstar_forge.CstarSpecBuilder(
     description=description_middle,
     model_name=model_name,
     grid_name=grid_name_middle_up,
@@ -259,7 +258,7 @@ ocn_middle_up = cson_forge.CstarSpecBuilder(
     partitioning=partitioning_middle,
 )
 
-ocn_outer_up = cson_forge.CstarSpecBuilder(
+ocn_outer_up = cstar_forge.CstarSpecBuilder(
     description=description_outer,
     model_name=model_name,
     grid_name=grid_name_outer_up,
