@@ -138,8 +138,8 @@ dask-worker-space/
 .DS_Store
 
 # binarys & temporary files
-cson_forge/catalog/builds/*/bld_tmp/*
-cson_forge/catalog/builds/*/exe/*
+cstar_forge/catalog/builds/*/bld_tmp/*
+cstar_forge/catalog/builds/*/exe/*
 *.o
 *.mod
 
@@ -158,3 +158,4 @@ _build
 # don't clobber old blueprint/build directories - remove at some point
 /cson_forge/blueprints/
 /cson_forge/builds/
+*.out

@@ -1,5 +1,5 @@
 """
-Input data generation classes for CSON models.
+Input data generation classes for CSFORGE models.
 
 This module provides classes for generating input data files for ocean models.
 The base InputData class defines the interface, and RomsMarblInputData provides
@@ -22,7 +22,7 @@ import cstar.applications.roms_marbl.models as cstar_models
 from cstar.orchestration.models import Resource
 
 from . import config
-from . import models as cson_models
+from . import models as forge_models
 from . import source_data
 from .util import roms_tools_nesting_writer
 import roms_tools as rt
@@ -201,9 +201,9 @@ class RomsMarblInputData(InputData):
     - Corrections
     """
     
-    model_spec: cson_models.ModelSpec
+    model_spec: forge_models.ModelSpec
     grid: rt.Grid
-    boundaries: cson_models.OpenBoundaries
+    boundaries: forge_models.OpenBoundaries
     source_data: source_data.SourceData
     blueprint_dir: Path
     partitioning: cstar_models.PartitioningParameterSet
