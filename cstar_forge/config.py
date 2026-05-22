@@ -142,10 +142,10 @@ def register_system(tag: str) -> Callable[[SystemLayoutFn], SystemLayoutFn]:
 
 @register_system("MacOS")
 def _layout_mac(home: Path, env: dict) -> Tuple[Path, Path, Path]:
-    base = home / "cson-forge-data"
+    base = home / "cstar-forge-data"
     source_data = base / "source-data"
     input_data = base / "input-data"
-    scratch = base / "cson-forge-run"
+    scratch = base / "cstar-forge-run"
     return source_data, input_data, scratch
 
 
@@ -154,30 +154,30 @@ def _layout_RCAC_anvil(home: Path, env: dict) -> Tuple[Path, Path, Path]:
     work = Path(env.get("WORK", home / "work"))
     scratch_root = Path(env.get("SCRATCH", work / "scratch"))
 
-    base = work / "cson-forge-data"
+    base = work / "cstar-forge-data"
     source_data = base / "source-data"
     input_data = base / USER / "input-data"
-    scratch = scratch_root / "cson-forge-run"
+    scratch = scratch_root / "cstar-forge-run"
     return source_data, input_data, scratch
 
 
 @register_system("NERSC_perlmutter")
 def _layout_NERSC_perlmutter(home: Path, env: dict) -> Tuple[Path, Path, Path]:
     scratch_root = Path(env.get("SCRATCH", home / "scratch"))
-    base = scratch_root / "cson-forge-data"
+    base = scratch_root / "cstar-forge-data"
 
     source_data = base / "source-data"
     input_data = base / USER / "input-data"
-    scratch = base / "cson-forge-run"
+    scratch = base / "cstar-forge-run"
     return source_data, input_data, scratch
 
 
 @register_system("unknown")
 def _layout_unknown(home: Path, env: dict) -> Tuple[Path, Path, Path]:
-    base = home / "cson-forge-data"
+    base = home / "cstar-forge-data"
     source_data = base / "source-data"
     input_data = base / "input-data"
-    scratch = base / "cson-forge-run"
+    scratch = base / "cstar-forge-run"
     return source_data, input_data, scratch
 
 
@@ -190,7 +190,7 @@ def default_catalog_inner_dir(source_data: Path) -> Path:
     Default inner *catalog* directory: the folder that directly contains ``blueprints/`` and ``builds/``.
 
     The catalog lives alongside ``source-data`` inside the base data directory, e.g.
-    ``~/cson-forge-data/catalog/{blueprints,builds}``.
+    ``~/cstar-forge-data/catalog/{blueprints,builds}``.
     """
     return source_data.parent.resolve() / "catalog"
 
@@ -211,7 +211,7 @@ def get_data_paths() -> DataPaths:
 
     here = Path(__file__).resolve().parent
     model_configs = here / "model-configs"
-    # Inner catalog dir: .../cson_forge_data/catalog/{blueprints,builds}
+    # Inner catalog dir: .../cstar_forge_data/catalog/{blueprints,builds}
     catalog = default_catalog_inner_dir(source_data)
     blueprints_dir = catalog / "blueprints"
     builds_dir = catalog / "builds"
@@ -246,7 +246,7 @@ def with_catalog(paths: DataPaths, catalog: Path) -> DataPaths:
     respectively. Other fields (``here``, data roots, YAML paths) are unchanged.
 
     Intended for relocating the on-disk catalog without editing ``get_data_paths``;
-    assign the result to ``cson_forge.config.paths`` (and create directories as needed).
+    assign the result to ``cstar_forge.config.paths`` (and create directories as needed).
     """
     catalog = Path(catalog)
     return replace(
@@ -389,8 +389,8 @@ def get_environment_info() -> EnvironmentInfo:
         kernel_name = os.environ.get("JPY_KERNEL_NAME", None)
         if not kernel_name:
             # Try to infer from Python executable path
-            if "cson-forge" in python_executable:
-                kernel_name = "cson-forge-v0"
+            if "cstar-forge" in python_executable:
+                kernel_name = "cstar-forge-v0"
             else:
                 kernel_name = None
         try:
@@ -443,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
         argv = sys.argv[1:]
 
     parser = argparse.ArgumentParser(
-        description="Inspect CSON-Forge data path configuration."
+        description="Inspect cstar-forge data path configuration."
     )
 
     subparsers = parser.add_subparsers(dest="command")

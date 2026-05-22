@@ -5,8 +5,8 @@ The ``BlueprintCatalog`` class discovers and loads blueprint YAML files under
 ``config.paths.blueprints`` (by default ``<package>/catalog/blueprints``).
 
 On disk, this package directory also holds the catalog layout: ``blueprints/`` and
-``builds/`` next to this ``__init__.py``. Import as ``cson_forge.catalog`` or
-``from cson_forge import catalog``.
+``builds/`` next to this ``__init__.py``. Import as ``cstar_forge.catalog`` or
+``from cstar_forge import catalog``.
 """
 
 from pathlib import Path
@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 import pandas as pd
 
-from .. import config
+from . import config
 import roms_tools as rt
 
 

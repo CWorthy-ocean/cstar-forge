@@ -154,7 +154,7 @@ echo "    • Environment Name: $KERNEL_NAME"
 echo "    • roms-tools (pip): git ref $ROMS_TOOLS_GIT_REF"
 echo "    • C-Star (pip):   git ref $C_STAR_GIT_REF"
 if [[ ${#LOCAL_PYTHON_PACKAGES[@]} -eq 1 ]] && [[ "${LOCAL_PYTHON_PACKAGES[0]}" == "." ]]; then
-  echo "    • Python Package:   cson-forge (from current directory)"
+  echo "    • Python Package:   cstar-forge (from current directory)"
 else
   echo "    • Python Packages:"
   for pkg in "${LOCAL_PYTHON_PACKAGES[@]}"; do
@@ -454,7 +454,7 @@ for package_dir in "${LOCAL_PYTHON_PACKAGES[@]}"; do
   # Resolve to absolute path
   if [[ "$package_dir" == "." ]]; then
     install_dir="$SCRIPT_DIR"
-    package_display="cson-forge (current directory)"
+    package_display="cstar-forge (current directory)"
   else
     install_dir="$SCRIPT_DIR/$package_dir"
     package_display="$package_dir"
@@ -470,13 +470,13 @@ for package_dir in "${LOCAL_PYTHON_PACKAGES[@]}"; do
   pip install -e .
   
   # Verify installation by checking if the package can be imported
-  # For the root package, check for cson_forge module
+  # For the root package, check for cstar_forge module
   echo "Activating and testing kernel in environment $KERNEL_NAME... this may take a few minutes."
   if [[ "$package_dir" == "." ]]; then
-    if python -c "import cson_forge" 2>/dev/null; then
-      echo "  ✓ cson-forge installed successfully"
+    if python -c "import cstar_forge" 2>/dev/null; then
+      echo "  ✓ cstar-forge installed successfully"
     else
-      echo "  ✗ cson-forge installation failed (cannot import cson_forge)"
+      echo "  ✗ cstar-forge installation failed (cannot import cstar_forge)"
     fi
   else
     echo "  ✓ $package_display installed"
