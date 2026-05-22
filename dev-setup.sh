@@ -251,6 +251,31 @@ else
   echo "Installing $KERNEL_NAME python environment using $PACKAGE_MANAGER (detected)..."
 fi
 
+# Activate a conda/mamba environment, falling back to plain conda if the
+# primary tool ($CONDA_LIKE_CMD) fails to activate. This is needed when mamba
+# creates environments in a prefix (e.g. $MAMBA_ROOT_PREFIX) that conda does
+# not index by name, causing 'mamba activate' to fail even though the env
+# was created successfully. Exits with an error if both attempts fail.
+_activate_env() {
+  local env_name="$1"
+  # Primary attempt (mamba or conda)
+  $CONDA_LIKE_CMD activate "$env_name" 2>/dev/null || true
+  if [[ "${CONDA_DEFAULT_ENV:-}" == "$env_name" ]]; then
+    return 0
+  fi
+  # Fall back to conda when the primary tool (mamba) failed to activate
+  if [[ "$CONDA_LIKE_CMD" != "conda" ]]; then
+    echo "  Warning: '$CONDA_LIKE_CMD activate' did not activate '$env_name'; falling back to 'conda activate'..."
+    source "$(conda info --base)/etc/profile.d/conda.sh"
+    conda activate "$env_name" 2>/dev/null || true
+    if [[ "${CONDA_DEFAULT_ENV:-}" == "$env_name" ]]; then
+      return 0
+    fi
+  fi
+  echo "Error: Could not activate environment '$env_name' via $CONDA_LIKE_CMD or conda." >&2
+  exit 1
+}
+
 # Initialize and activate environment
 set +u
 if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
@@ -325,7 +350,7 @@ else
   
   # Activate environment
   echo "Activating $PACKAGE_MANAGER environment: $KERNEL_NAME"
-  conda activate "$KERNEL_NAME"
+  _activate_env "$KERNEL_NAME"
 fi
 # Keep set +u for package manager operations (scripts may reference unset variables)
 # We'll restore set -u at the very end of the script
@@ -345,7 +370,7 @@ if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
 else
   if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate "$KERNEL_NAME"
+    _activate_env "$KERNEL_NAME"
   fi
 fi
 
@@ -392,7 +417,7 @@ if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
 else
   if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate "$KERNEL_NAME"
+    _activate_env "$KERNEL_NAME"
   fi
 fi
 
@@ -419,7 +444,7 @@ if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
 else
   if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate "$KERNEL_NAME"
+    _activate_env "$KERNEL_NAME"
   fi
 fi
 
@@ -477,7 +502,7 @@ if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
 else
   if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
     source "$(conda info --base)/etc/profile.d/conda.sh"
-    conda activate "$KERNEL_NAME"
+    _activate_env "$KERNEL_NAME"
   fi
 fi
 

@@ -1,18 +1,20 @@
 import os, fsspec
 from pathlib import Path
+import yaml
 
 # import some python package that keeps track of/enforces a hierachical file system?
 #  catalog: 
 
 class DomainCatalog():
-    '''C-Star DomainCatalog track handles the hierachical system of validated/registerd "domains." 
-    The DomainCatalog is designed to hold, at the root, models and model domains that together describe
-    "validated" C-Star model solutions, where validated indicates model review and reflections (e.g. 
-    input considerations/deviations rom C-Star default processing, outputs, intended use, uncertainty, 
-    caveats) descrbed in catalog metadata.
+    '''C-Star DomainCatalog class handles the hierachical system of validated/registerd "domains." 
+    The DomainCatalog is designed to hold, at the root in side a folder called 'catalog', models and 
+    model domains that together describe "validated" C-Star model solutions, where validated 
+    indicates model review and reflections (e.g. input considerations/deviations rom C-Star default 
+    processing, outputs, intended use, uncertainty, caveats) descrbed in catalog metadata.
 
     The base of a given catalog (self.catalog_root) is intended to be somewhere in the local file system,
-    perhaps a git repository, or a web address.
+    perhaps a git repository, or a web address. The details of the location are handled by the fsspec 
+    package/filesystem.
 
     The DomainCatalog can process models, blueprints, and observations present in the catalog (report 
     those available, returing yaml-based schema for particular named <model, domain, observation>).
@@ -29,10 +31,39 @@ class DomainCatalog():
     The domain catalog should probably abstract a storage_service concept, were writing and reading domain
     assets happen through the service (e.g. local gile systme github...)
 
+    The catalog structure is as follows:
+
+    Catalog/
+    ├── Machines/
+    │   ├── Anvil.yml #example machine file
+    │   └── Derecho.yml #example machine file
+    ├── ModelSpec/
+    │   ├── ROMS-v0.yml #example model spec file
+    │   ├── ROMS-MARBL-v0.yml #example model spec file
+    │   ├── ROMS-DyeTracer-v0.yml #example model spec file
+    │   └── ROMS-CDR-v0.yml #example model spec file
+    ├── DomainSpec/
+    │   ├── Pacific-12km/ #example domain spec
+    │   │   ├── Domain.yml
+    │   │   └── Assets/{*.png, *.pdf}
+    │   └── SalishSea-Nested/ #example domain spec
+    │       ├── Domain.yml
+    │       └── Assets/{*.png, *.pdf}
+    ├── Blueprints/
+    │   └── Anvil_ROMS-MARBL-v0_Pacific-12km_20220101-20261231/ #example blueprint
+    │       ├── Archive.yml              # meta data and pointer to output
+    │       └── Assets/{*.png, *.mp4, *.pdf, *.csv}    # plots, movies, skill metrics, reports/papers
+    └── Observations/
+        ├── glodap.py  
+        └── woa.py   # or a different paradigm for datasets
+
     '''
 
-    catalog_root: None | Path | str   # {Path, str, github url}
+    catalog_root: None | Path | str     # {Path, str, github url}
     cat: None | fsspec.filesystem       # fsspec instance of this catalog's filesystem
+    _domains: list[Path] = []           # list of paths to domain spec yaml instances (read-oin yaml files)
+    _blueprints: list[Path] = []        # list of paths to blueprint yaml instances (read-oin yaml files)
+    _models: list[Path] = []            # list of paths to model yaml instances (read-oin yaml files)
 
     def __init__(catalog_root=None):
                 
@@ -68,13 +99,13 @@ class DomainCatalog():
     def _scan_domains():
         self._domains = []
         for domain in self.catalog_root.glob("catalog/domains/*.yml"):
-            self._domains.append(domain)
+            self._domains.append(Path(domain))
 
     def _scan_blueprints():
-        pass  # add exising functionaliy to recusively return build blueprints, organized by domain name
+        pass  # add exising functionaliy from inputs_data.py recusively return build blueprints, organized by domain name
 
     def _scan_models():
-        '''scan the models.yaml, essential a database'''
+        '''scan the models yaml files, essentially the same things as _scan_domains()'''
         pass # scan the models.yaml, essential a database
 
     def register_domain(builder: CstarSpecBuilder):
@@ -85,10 +116,12 @@ class DomainCatalog():
         '''
         pass
 
-    def register_model():
+    def register_model(model_yaml: Path | str):
+        '''register a new model by validatingm, copying a model yaml file to the catalog, 
+        and rescanning the catalog after adding'''
         pass
 
-    def add_to_domain(domain_name: str, item_key: str, item_value: any):
+    def add_to_domain(domain_name: str, asset_name: str, asset_file: any, asset_metadata: dict):
         pass
 
     def copy_domain(domain_name: str, catalog: DomainCatalog):
@@ -97,3 +130,29 @@ class DomainCatalog():
     def copy_model(model_name: str, catalog: DomainCatalog):
         pass
 
+    def domain(domain_id: str | int):
+        '''return a domain spec yaml instance by name or index'''
+        if isinstance(domain_id, str):
+            return self._domains[domain_id]
+        elif isinstance(domain_id, int):
+            return self._domains[domain_id]
+        else:
+            raise ValueError(f'Invalid domain id: {domain_id}')
+
+    def blueprint(blueprint_id: str | int):
+        '''return a blueprint yaml instance by name or index'''
+        if isinstance(blueprint_id, str):
+            return self._blueprints[blueprint_id]
+        elif isinstance(blueprint_id, int):
+            return self._blueprints[blueprint_id]
+        else:
+            raise ValueError(f'Invalid blueprint id: {blueprint_id}')
+
+    def model(model_id: str | int):
+        '''return a model yaml instance by name or index'''
+        if isinstance(model_id, str):
+            return self._models[model_id]
+        elif isinstance(model_id, int):
+            return self._models[model_id]
+        else:
+            raise ValueError(f'Invalid model id: {model_id}')
