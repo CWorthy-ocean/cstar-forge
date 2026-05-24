@@ -2199,6 +2199,88 @@ class CstarSpecBuilder(BaseModel):
         """
         self._get_catalog().register_domain(self)
 
+    @classmethod
+    def from_domain(
+        cls,
+        domain_data: Dict[str, Any],
+        catalog: Optional[Any] = None,
+        **overrides: Any,
+    ) -> "CstarSpecBuilder":
+        """Create a CstarSpecBuilder from a domain dict returned by DomainCatalog.
+
+        Handles date-string → datetime conversion, dict → Pydantic model
+        coercion, and resolution of ``_parent_grid_name`` / ``_child_grid_name``
+        cross-references via the optional *catalog* argument.
+
+        Parameters
+        ----------
+        domain_data : dict
+            Domain configuration dict, e.g. as returned by
+            ``DomainCatalog.domain('ccs-12km')``.
+        catalog : DomainCatalog, optional
+            Required when *domain_data* contains ``_parent_grid_name`` or
+            ``_child_grid_name`` reference keys that must be resolved to
+            ``grid_kwargs_parent`` / ``grid_kwargs_child`` dicts.
+        **overrides
+            Any ``CstarSpecBuilder`` field values that should override what is
+            in *domain_data* (e.g. ``start_time``, ``end_time``,
+            ``catalog_root``).
+
+        Returns
+        -------
+        CstarSpecBuilder
+
+        Examples
+        --------
+        Simple domain (no nesting)::
+
+            from cstar_forge.domain_catalog import DomainCatalog
+            dc = DomainCatalog()                   # package built-in catalog
+            builder = CstarSpecBuilder.from_domain(
+                dc.domain('ccs-12km'),
+                start_time='2020-01-01',
+                end_time='2020-06-30',
+            )
+
+        Nested domain (catalog required for cross-reference resolution)::
+
+            builder = CstarSpecBuilder.from_domain(
+                dc.domain('GoA-10th_deg'),
+                catalog=dc,
+                start_time='2020-01-01',
+                end_time='2020-06-30',
+            )
+        """
+        cfg = domain_data.copy()
+
+        # Resolve parent/child grid kwargs from the catalog when referenced by name.
+        for ref_key, kwarg_key in (
+            ("_parent_grid_name", "grid_kwargs_parent"),
+            ("_child_grid_name", "grid_kwargs_child"),
+        ):
+            if ref_key in cfg:
+                ref_name = cfg.pop(ref_key)
+                if catalog is None:
+                    raise ValueError(
+                        f"'catalog' must be provided to resolve '{ref_key}' "
+                        f"reference '{ref_name}' in domain_data."
+                    )
+                cfg[kwarg_key] = catalog.domain_data(ref_name)["grid_kwargs"]
+
+        # Convert ISO date strings → datetime.
+        for date_key in ("start_time", "end_time"):
+            if isinstance(cfg.get(date_key), str):
+                cfg[date_key] = datetime.fromisoformat(cfg[date_key])
+
+        # Convert plain dicts → Pydantic model instances.
+        if isinstance(cfg.get("open_boundaries"), dict):
+            cfg["open_boundaries"] = forge_models.OpenBoundaries(**cfg["open_boundaries"])
+        if isinstance(cfg.get("partitioning"), dict):
+            cfg["partitioning"] = cstar_models.PartitioningParameterSet(**cfg["partitioning"])
+
+        cfg.update(overrides)
+        return cls(**cfg)
+
     def configure_build(
         self,
         compile_time_settings: Dict[str, Any] = None,
@@ -2819,52 +2901,27 @@ class CstarSpecEngine:
         CstarSpecBuilder
             Configured CstarSpecBuilder instance.
         """
-        config_dict = self._get_domain_config(domain_name).copy()
-        
-        # Apply ensemble_id if provided
+        cfg = self._get_domain_config(domain_name).copy()
+
         if ensemble_id is not None:
-            config_dict["ensemble_id"] = ensemble_id
-        
+            cfg["ensemble_id"] = ensemble_id
 
-        if "_parent_grid_name" in config_dict:
-            parent_grid_config = self._get_domain_config(config_dict["_parent_grid_name"]).copy()
-            config_dict["grid_kwargs_parent"] = parent_grid_config["grid_kwargs"]
-            config_dict.pop("_parent_grid_name", None)
+        # Resolve parent/child grid kwargs from this engine's own domain registry
+        # (references here point to sibling entries in the engine's domains file).
+        for ref_key, kwarg_key in (
+            ("_parent_grid_name", "grid_kwargs_parent"),
+            ("_child_grid_name", "grid_kwargs_child"),
+        ):
+            if ref_key in cfg:
+                cfg[kwarg_key] = self._get_domain_config(cfg.pop(ref_key))["grid_kwargs"]
 
-        if "_child_grid_name" in config_dict:
-            child_grid_config = self._get_domain_config(config_dict["_child_grid_name"]).copy()
-            config_dict["grid_kwargs_child"] = child_grid_config["grid_kwargs"]
-            config_dict.pop("_child_grid_name", None)
-
-        # Apply overrides if provided
-        if overrides:
-            config_dict.update(overrides)
-
-        # catalog_root: explicit call wins, else engine default, else domain YAML only
+        # catalog_root: explicit call wins, else engine default, else domain YAML only.
         if catalog_root is not None:
-            config_dict["catalog_root"] = catalog_root
+            cfg["catalog_root"] = catalog_root
         elif getattr(self, "_engine_catalog_root", None) is not None:
-            config_dict.setdefault("catalog_root", self._engine_catalog_root)
-        
-        # Convert date strings to datetime objects
-        if "start_time" in config_dict:
-            if isinstance(config_dict["start_time"], str):
-                config_dict["start_time"] = datetime.fromisoformat(config_dict["start_time"])
-        if "end_time" in config_dict:
-            if isinstance(config_dict["end_time"], str):
-                config_dict["end_time"] = datetime.fromisoformat(config_dict["end_time"])
-        
-        # Convert open_boundaries dict to OpenBoundaries model
-        if "open_boundaries" in config_dict:
-            config_dict["open_boundaries"] = forge_models.OpenBoundaries(**config_dict["open_boundaries"])
-        
-        # Convert partitioning dict to PartitioningParameterSet
-        if "partitioning" in config_dict:
-            config_dict["partitioning"] = cstar_models.PartitioningParameterSet(**config_dict["partitioning"])
+            cfg.setdefault("catalog_root", self._engine_catalog_root)
 
-
-        # Create and return CstarSpecBuilder
-        return CstarSpecBuilder(**config_dict)
+        return CstarSpecBuilder.from_domain(cfg, **(overrides or {}))
     
     def generate_domain(
         self,
