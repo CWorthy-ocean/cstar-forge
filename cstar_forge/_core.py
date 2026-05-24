@@ -42,7 +42,7 @@ import roms_tools as rt
 
 def resolve_catalog_dir(catalog_root: Optional[Union[str, Path]]) -> Path:
     """
-    Resolve the absolute inner *catalog* directory (direct parent of ``blueprints/`` and ``builds/``).
+    Resolve the absolute inner *catalog* directory (direct parent of ``blueprints/``).
 
     Parameters
     ----------
@@ -243,10 +243,37 @@ class CstarSpecBuilder(BaseModel):
         default=None,
         validate_default=False,
         description=(
-            "Optional *outer* catalog anchor. Blueprints and builds use "
-            "``<catalog_root>/catalog/blueprints`` and ``<catalog_root>/catalog/builds``. "
+            "Optional *outer* catalog anchor. Blueprints live under "
+            "``<catalog_root>/catalog/blueprints/<machine>/<name>/``. "
             "Omit to use ``config.paths.catalog``. Use ``catalog_root='local'`` for the "
             "in-repo ``cstar_forge/catalog`` package directory (no extra ``/catalog`` suffix)."
+        ),
+    )
+    initialize_catalog_from: Optional[Union[str, Path]] = Field(
+        default=None,
+        validate_default=False,
+        description=(
+            "Merge Machines/, ModelSpec/, and DomainSpec/ from this source catalog "
+            "into the resolved catalog_root before use. "
+            "Pass ``'local'`` to merge from the built-in package catalog."
+        ),
+    )
+    initialize_catalog_clobber: bool = Field(
+        default=False,
+        validate_default=False,
+        description=(
+            "When merging via ``initialize_catalog_from``, silently overwrite "
+            "files that already exist at the destination. "
+            "If False (default) and conflicts are found, raises ValueError listing them."
+        ),
+    )
+    suppress_catalog_validation: bool = Field(
+        default=True,
+        validate_default=False,
+        description=(
+            "Skip the catalog structure validation check when opening the catalog. "
+            "Defaults to True so that CstarSpecBuilder can operate on an empty or "
+            "partially populated catalog without raising an error."
         ),
     )
     # Internal attributes (computed/loaded)
@@ -291,7 +318,8 @@ class CstarSpecBuilder(BaseModel):
     _cstar_simulation: Optional[Any] = PrivateAttr(default=None)
     _settings_compile_time: Dict[str, Any] = PrivateAttr(default_factory=dict)
     _settings_run_time: Dict[str, Any] = PrivateAttr(default_factory=dict)
-    
+    _catalog_instance: Optional[Any] = PrivateAttr(default=None)
+
     @model_validator(mode="after")
     def _validate_dates(self) -> "CstarSpecBuilder":
         """Validate that start_date precedes end_date."""
@@ -515,25 +543,37 @@ class CstarSpecBuilder(BaseModel):
             output_dir=self.run_output_dir,
         )
 
+    def _get_catalog(self) -> Any:
+        """Return (and cache) a DomainCatalog for this builder's resolved catalog directory."""
+        if self._catalog_instance is None:
+            from .domain_catalog import DomainCatalog
+            self._catalog_instance = DomainCatalog(
+                catalog_root=self.resolved_catalog_dir,
+                initialize_catalog_from=self.initialize_catalog_from,
+                initialize_catalog_clobber=self.initialize_catalog_clobber,
+                suppress_validation=self.suppress_catalog_validation,
+            )
+        return self._catalog_instance
+
     @property
     def resolved_catalog_dir(self) -> Path:
-        """Absolute inner *catalog* directory (contains ``blueprints/`` and ``builds/``)."""
+        """Absolute inner *catalog* directory (contains ``blueprints/``)."""
         return resolve_catalog_dir(self.catalog_root)
 
     @property
     def blueprint_dir(self) -> Path:
         """Return the blueprint directory path."""
-        return self.resolved_catalog_dir / "blueprints" / config.system_id / self.name
+        return self._get_catalog().blueprint_dir_for(config.system_id, self.name)
     
     @property
     def compile_time_code_dir(self) -> Path:
-        """Compile-time rendered templates under this builder's ``builds`` tree."""
-        return self.resolved_catalog_dir / "builds" / self.name / "compile-time"
-    
+        """Compile-time rendered templates inside this blueprint's Build/ directory."""
+        return self._get_catalog().build_dir_for(config.system_id, self.name) / "compile-time"
+
     @property
     def run_time_code_dir(self) -> Path:
-        """Run-time rendered templates under this builder's ``builds`` tree."""
-        return self.resolved_catalog_dir / "builds" / self.name / "run-time"
+        """Run-time rendered templates inside this blueprint's Build/ directory."""
+        return self._get_catalog().build_dir_for(config.system_id, self.name) / "run-time"
 
     def persist(self) -> None:
         """
@@ -938,11 +978,15 @@ class CstarSpecBuilder(BaseModel):
         return DatasetsDict(self._datasets)
     
     def _load_model_spec(self):
-        """Load ModelSpec from models.yml."""
-        self._model_spec = forge_models.load_models_yaml(
-            config.paths.models_yaml,
-            self.model_name
-        )
+        """Load ModelSpec from DomainCatalog, falling back to models.yml."""
+        from .domain_catalog import default_catalog
+        try:
+            self._model_spec = default_catalog.load_model_spec(self.model_name)
+        except KeyError:
+            self._model_spec = forge_models.load_models_yaml(
+                config.paths.models_yaml,
+                self.model_name
+            )
 
     def _prompt_yes_no(self, message: str) -> bool:
         """Prompt user for a yes/no answer in interactive runs."""
@@ -2139,6 +2183,22 @@ class CstarSpecBuilder(BaseModel):
             ninfo = 1,
         )
    
+    def register_domain(self) -> None:
+        """Register this builder's domain in the catalog.
+
+        Writes a ``DomainSpec/<grid_name>/Domain.yml`` file (and an empty
+        ``Assets/`` directory) into the catalog pointed to by ``catalog_root``,
+        recording ``grid_name``, ``model_name``, ``grid_kwargs``,
+        ``open_boundaries``, ``partitioning``, and date range from this builder.
+
+        Raises
+        ------
+        ValueError
+            If a valid catalog is not found at the resolved ``catalog_root``
+            (see ``initialize_catalog_from``).
+        """
+        self._get_catalog().register_domain(self)
+
     def configure_build(
         self,
         compile_time_settings: Dict[str, Any] = None,

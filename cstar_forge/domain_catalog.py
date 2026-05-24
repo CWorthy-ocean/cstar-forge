@@ -1,158 +1,674 @@
-import os, fsspec
-from pathlib import Path
+"""DomainCatalog: manages the catalog directory structure for C-Star forge."""
+
+from __future__ import annotations
+
+import re
+import shutil
+import fsspec
 import yaml
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-# import some python package that keeps track of/enforces a hierachical file system?
-#  catalog: 
 
-class DomainCatalog():
-    '''C-Star DomainCatalog class handles the hierachical system of validated/registerd "domains." 
-    The DomainCatalog is designed to hold, at the root in side a folder called 'catalog', models and 
-    model domains that together describe "validated" C-Star model solutions, where validated 
-    indicates model review and reflections (e.g. input considerations/deviations rom C-Star default 
-    processing, outputs, intended use, uncertainty, caveats) descrbed in catalog metadata.
+_DEFAULT_CATALOG_ROOT = Path(__file__).parent / "catalog"
 
-    The base of a given catalog (self.catalog_root) is intended to be somewhere in the local file system,
-    perhaps a git repository, or a web address. The details of the location are handled by the fsspec 
-    package/filesystem.
 
-    The DomainCatalog can process models, blueprints, and observations present in the catalog (report 
-    those available, returing yaml-based schema for particular named <model, domain, observation>).
+class DomainCatalog:
+    """C-Star DomainCatalog manages the hierarchical system of validated/registered "domains."
 
-    Returned domains can be combined with models using forge to develop blueprints for new C-Star
-    simulations on new machines. Archived blueprints can be run directly if all domain assests and 
-    the orginal run machine/setup/container are available.
+    The DomainCatalog holds, inside a folder called 'catalog', models and model domains
+    that together describe "validated" C-Star model solutions.
 
-    The DomainCatalog can also "register" new domains, which consists of adding required dmoain metadata,
-    linking non-forge default generated files (e.g. groomed grids, or other input files) to persistent
-    copyies/storage, and optionally copying the domain an alternate catalog root (e.g. from local storage
-    to github or other service)
+    The base of a given catalog (self.catalog_root) is the *inner* catalog directory that
+    directly contains the subdirectories below. It can be a local path or a remote URL;
+    file access is mediated by fsspec for portability.
 
-    The domain catalog should probably abstract a storage_service concept, were writing and reading domain
-    assets happen through the service (e.g. local gile systme github...)
+    Catalog structure::
 
-    The catalog structure is as follows:
+        catalog/
+        ├── Machines/
+        │   ├── MacOS.yml
+        │   ├── NERSC_perlmutter.yml
+        │   └── RCAC_anvil.yml
+        ├── ModelSpec/
+        │   ├── cson_roms-marbl_v0.1.yml
+        │   └── cson_roms-no-bgc_v0.1.yml
+        ├── DomainSpec/
+        │   ├── ccs-12km/
+        │   │   ├── Domain.yml
+        │   │   └── Assets/
+        │   └── PAC_2fth_deg/
+        │       ├── Domain.yml
+        │       └── Assets/
+        ├── Blueprints/  (alias: blueprints/)
+        │   └── <machine>/<blueprint-name>/
+        │       ├── B_*.yml
+        │       └── Build/
+        └── Observations/
 
-    Catalog/
-    ├── Machines/
-    │   ├── Anvil.yml #example machine file
-    │   └── Derecho.yml #example machine file
-    ├── ModelSpec/
-    │   ├── ROMS-v0.yml #example model spec file
-    │   ├── ROMS-MARBL-v0.yml #example model spec file
-    │   ├── ROMS-DyeTracer-v0.yml #example model spec file
-    │   └── ROMS-CDR-v0.yml #example model spec file
-    ├── DomainSpec/
-    │   ├── Pacific-12km/ #example domain spec
-    │   │   ├── Domain.yml
-    │   │   └── Assets/{*.png, *.pdf}
-    │   └── SalishSea-Nested/ #example domain spec
-    │       ├── Domain.yml
-    │       └── Assets/{*.png, *.pdf}
-    ├── Blueprints/
-    │   └── Anvil_ROMS-MARBL-v0_Pacific-12km_20220101-20261231/ #example blueprint
-    │       ├── Archive.yml              # meta data and pointer to output
-    │       └── Assets/{*.png, *.mp4, *.pdf, *.csv}    # plots, movies, skill metrics, reports/papers
-    └── Observations/
-        ├── glodap.py  
-        └── woa.py   # or a different paradigm for datasets
+    Parameters
+    ----------
+    catalog_root : str or Path or None
+        Root of the catalog (inner directory containing Machines/, ModelSpec/, etc.).
+        Defaults to the package-bundled catalog at ``<cstar_forge>/catalog``.
+        Pass a github URL string for remote catalogs.
+    """
 
-    '''
+    def __init__(
+        self,
+        catalog_root: Optional[Union[str, Path]] = None,
+        initialize_catalog_from: Optional[Union[str, Path]] = None,
+        initialize_catalog_clobber: bool = False,
+        suppress_validation: bool = False,
+    ) -> None:
+        _using_default = catalog_root is None
 
-    catalog_root: None | Path | str     # {Path, str, github url}
-    cat: None | fsspec.filesystem       # fsspec instance of this catalog's filesystem
-    _domains: list[Path] = []           # list of paths to domain spec yaml instances (read-oin yaml files)
-    _blueprints: list[Path] = []        # list of paths to blueprint yaml instances (read-oin yaml files)
-    _models: list[Path] = []            # list of paths to model yaml instances (read-oin yaml files)
-
-    def __init__(catalog_root=None):
-                
         if catalog_root is None:
-            # find directory of this file (__main__?), set catalog root to <this_dir>/calaog
-            pass
+            self.catalog_root: Path = _DEFAULT_CATALOG_ROOT
+            self._fs = fsspec.filesystem("file")
+        elif isinstance(catalog_root, Path):
+            expanded = catalog_root.expanduser()
+            self.catalog_root = expanded.resolve() if not expanded.is_absolute() else expanded
+            self._fs = fsspec.filesystem("file")
+        elif isinstance(catalog_root, str):
+            if "github" in catalog_root:
+                self._fs = fsspec.filesystem("github", org=catalog_root)
+                self.catalog_root = Path(catalog_root)
+            elif catalog_root.startswith("http"):
+                self._fs = fsspec.filesystem("http")
+                self.catalog_root = Path(catalog_root)
+            else:
+                self.catalog_root = Path(catalog_root).expanduser().resolve()
+                self._fs = fsspec.filesystem("file")
         else:
-            # typcheck for {github url; <Path, str> exists ..}                 
-            self.catalog_root = catalog_root
-            self.cat = self.infer_service()
+            raise ValueError(
+                f"catalog_root must be a Path, str, or None; got {type(catalog_root)}"
+            )
 
-        # scan for required directry structure, if it doesn't exist, create it?
-        # While scanning, catalog file list of yamls in catalog/models, catalog/blueprints, 
-        # catalog/domains
-        self._scan_domains()
+        # Merge catalog skeleton from a source catalog before scanning.
+        if initialize_catalog_from is not None:
+            self._initialize_from(initialize_catalog_from, clobber=initialize_catalog_clobber)
+
+        # Internal registries
+        self._models: Dict[str, Path] = {}
+        self._machines: Dict[str, Path] = {}
+        self._domains: Dict[str, Path] = {}     # domain_name -> DomainSpec/<name>/ dir
+        self._blueprints: Dict[str, Path] = {}  # blueprint_name -> blueprints/<machine>/<name>/ dir
+
+        self._scan_machines()
+        self._scan_models()
         self._scan_blueprints()
+        self._scan_domains()
+
+        # Validate non-default catalogs that weren't just initialized.
+        if not _using_default and initialize_catalog_from is None and not suppress_validation:
+            self._validate_catalog()
+
+    # ------------------------------------------------------------------
+    # Scanning
+    # ------------------------------------------------------------------
+
+    def _scan_machines(self) -> None:
+        """Scan Machines/ for per-machine YAML files."""
+        self._machines = {}
+        machine_dir = self.catalog_root / "Machines"
+        if machine_dir.exists():
+            for f in sorted(machine_dir.glob("*.yml")):
+                self._machines[f.stem] = f
+
+    def _scan_models(self) -> None:
+        """Scan ModelSpec/ for per-model YAML files."""
+        self._models = {}
+        model_dir = self.catalog_root / "ModelSpec"
+        if model_dir.exists():
+            for f in sorted(model_dir.glob("*.yml")):
+                self._models[f.stem] = f
+
+    def _scan_blueprints(self) -> None:
+        """Scan blueprints/ (and Blueprints/) for blueprint directories."""
+        self._blueprints = {}
+        for subdir_name in ("blueprints", "Blueprints"):
+            bp_root = self.catalog_root / subdir_name
+            if bp_root.exists():
+                for machine_dir in sorted(bp_root.iterdir()):
+                    if machine_dir.is_dir():
+                        for bp_dir in sorted(machine_dir.iterdir()):
+                            if bp_dir.is_dir():
+                                self._blueprints[bp_dir.name] = bp_dir
+
+    def _scan_domains(self) -> None:
+        """Scan DomainSpec/ for domain directories containing Domain.yml."""
+        self._domains = {}
+        domain_spec_dir = self.catalog_root / "DomainSpec"
+        if domain_spec_dir.exists():
+            for domain_dir in sorted(domain_spec_dir.iterdir()):
+                if domain_dir.is_dir() and (domain_dir / "Domain.yml").exists():
+                    self._domains[domain_dir.name] = domain_dir
+
+    # ------------------------------------------------------------------
+    # Initialization helpers
+    # ------------------------------------------------------------------
+
+    def _initialize_from(self, source: Union[str, Path], clobber: bool = False) -> None:
+        """Merge Machines/, ModelSpec/, and DomainSpec/ from a source catalog into self.catalog_root.
+
+        Files that do not already exist at the destination are always copied.
+        Files that exist at both source and destination are "conflicts":
+        - ``clobber=True``: overwrite conflicts silently.
+        - ``clobber=False``: raise ``ValueError`` listing all conflicts and
+          suggest re-running with ``initialize_catalog_clobber=True``.
+
+        Parameters
+        ----------
+        source : str or Path
+            Inner catalog directory to merge from, or ``'local'`` to use the
+            package-bundled catalog (``cstar_forge/catalog``).
+        clobber : bool
+            Whether to overwrite conflicting destination files.
+        """
+        if isinstance(source, str) and source.strip().lower() == "local":
+            src_root = _DEFAULT_CATALOG_ROOT
+        else:
+            src_root = Path(source).expanduser().resolve()
+
+        self.catalog_root.mkdir(parents=True, exist_ok=True)
+
+        # Collect all source files and map each to its destination path.
+        pairs: List[Tuple[Path, Path]] = []
+        for subdir in ("Machines", "ModelSpec", "DomainSpec"):
+            src_sub = src_root / subdir
+            if not src_sub.exists():
+                continue
+            for src_file in sorted(src_sub.rglob("*")):
+                if src_file.is_file():
+                    rel = src_file.relative_to(src_root)
+                    pairs.append((src_file, self.catalog_root / rel))
+
+        # Detect conflicts before writing anything.
+        if not clobber:
+            conflicts = [dst for _, dst in pairs if dst.exists()]
+            if conflicts:
+                conflict_list = "\n".join(f"  {c}" for c in conflicts)
+                raise ValueError(
+                    f"Catalog merge conflict: the following files already exist "
+                    f"in '{self.catalog_root}' and would be overwritten:\n"
+                    f"{conflict_list}\n\n"
+                    f"To overwrite conflicting files, use "
+                    f"initialize_catalog_clobber=True."
+                )
+
+        # Perform the merge.
+        for src_file, dst_file in pairs:
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_file, dst_file)
+
+    def _validate_catalog(self) -> None:
+        """Raise ValueError if Machines/ or ModelSpec/ are missing or empty.
+
+        Only called for non-default catalog roots that were not just initialized.
+        """
+        machines_dir = self.catalog_root / "Machines"
+        models_dir = self.catalog_root / "ModelSpec"
+
+        has_machines = machines_dir.exists() and any(machines_dir.glob("*.yml"))
+        has_models = models_dir.exists() and any(models_dir.glob("*.yml"))
+
+        if not has_machines or not has_models:
+            missing = []
+            if not has_machines:
+                missing.append("Machines/ (with at least one .yml)")
+            if not has_models:
+                missing.append("ModelSpec/ (with at least one .yml)")
+            raise ValueError(
+                f"No valid catalog found at '{self.catalog_root}'. "
+                f"Missing: {', '.join(missing)}.\n"
+                f"To initialize from the built-in package catalog run:\n"
+                f"    DomainCatalog(catalog_root=..., initialize_catalog_from='local')\n"
+                f"Or pass initialize_catalog_from=<inner-catalog-path> to copy from "
+                f"another existing catalog."
+            )
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def model_names(self) -> List[str]:
+        """Return a sorted list of available model names."""
+        return sorted(self._models.keys())
+
+    @property
+    def machine_names(self) -> List[str]:
+        """Return a sorted list of available machine names."""
+        return sorted(self._machines.keys())
+
+    @property
+    def domain_names(self) -> List[str]:
+        """Return a sorted list of available domain names."""
+        return sorted(self._domains.keys())
+
+    @property
+    def blueprint_names(self) -> List[str]:
+        """Return a sorted list of available blueprint names."""
+        return sorted(self._blueprints.keys())
+
+    @property
+    def blueprints_dir(self) -> Path:
+        """Path to the blueprints directory (catalog_root/blueprints)."""
+        return self.catalog_root / "blueprints"
+
+    # ------------------------------------------------------------------
+    # Path helpers (used by CstarSpecBuilder)
+    # ------------------------------------------------------------------
+
+    def blueprint_dir_for(self, machine_id: str, blueprint_name: str) -> Path:
+        """Return the blueprint directory for a given machine and blueprint name."""
+        return self.blueprints_dir / machine_id / blueprint_name
+
+    def build_dir_for(self, machine_id: str, blueprint_name: str) -> Path:
+        """Return the Build/ directory inside the blueprint folder.
+
+        Build artifacts live at ``blueprints/<machine_id>/<blueprint_name>/Build/``,
+        co-located with the blueprint YAML files.
+        """
+        return self.blueprints_dir / machine_id / blueprint_name / "Build"
+
+    # ------------------------------------------------------------------
+    # Path accessors (raise KeyError if not found)
+    # ------------------------------------------------------------------
+
+    def model_path(self, model_name: str) -> Path:
+        """Return the path to the YAML file for a named model."""
+        if model_name not in self._models:
+            raise KeyError(
+                f"Model '{model_name}' not found in catalog at {self.catalog_root}. "
+                f"Available models: {self.model_names}"
+            )
+        return self._models[model_name]
+
+    def machine_path(self, machine_name: str) -> Path:
+        """Return the path to the YAML file for a named machine."""
+        if machine_name not in self._machines:
+            raise KeyError(
+                f"Machine '{machine_name}' not found in catalog at {self.catalog_root}. "
+                f"Available machines: {self.machine_names}"
+            )
+        return self._machines[machine_name]
+
+    def domain_path(self, domain_name: str) -> Path:
+        """Return the directory path for a named domain (contains Domain.yml and Assets/)."""
+        if domain_name not in self._domains:
+            raise KeyError(
+                f"Domain '{domain_name}' not found in catalog at {self.catalog_root}. "
+                f"Available domains: {self.domain_names}"
+            )
+        return self._domains[domain_name]
+
+    def blueprint_path(self, blueprint_name: str) -> Path:
+        """Return the directory path for a named blueprint."""
+        if blueprint_name not in self._blueprints:
+            raise KeyError(
+                f"Blueprint '{blueprint_name}' not found in catalog at {self.catalog_root}. "
+                f"Available blueprints: {self.blueprint_names}"
+            )
+        return self._blueprints[blueprint_name]
+
+    # ------------------------------------------------------------------
+    # Data accessors (return raw dicts)
+    # ------------------------------------------------------------------
+
+    def machine_data(self, machine_name: str) -> dict:
+        """Return the raw YAML data dict for a named machine."""
+        path = self.machine_path(machine_name)
+        with path.open() as f:
+            return yaml.safe_load(f) or {}
+
+    def model_data(self, model_name: str) -> dict:
+        """Return the raw YAML data dict for a named model."""
+        path = self.model_path(model_name)
+        with path.open() as f:
+            return yaml.safe_load(f) or {}
+
+    def domain_data(self, domain_name: str) -> dict:
+        """Return the raw YAML data dict for a named domain (reads Domain.yml)."""
+        path = self.domain_path(domain_name) / "Domain.yml"
+        with path.open() as f:
+            return yaml.safe_load(f) or {}
+
+    # ------------------------------------------------------------------
+    # Sketch-compatible accessor methods (name or index)
+    # ------------------------------------------------------------------
+
+    def domain(self, domain_id: Union[str, int]) -> dict:
+        """Return a domain spec dict by name (str) or index (int).
+
+        Parameters
+        ----------
+        domain_id : str or int
+            Domain name or zero-based index into domain_names.
+
+        Returns
+        -------
+        dict
+            Parsed Domain.yml content.
+        """
+        if isinstance(domain_id, str):
+            return self.domain_data(domain_id)
+        elif isinstance(domain_id, int):
+            return self.domain_data(self.domain_names[domain_id])
+        else:
+            raise ValueError(f"domain_id must be str or int, got {type(domain_id)}")
+
+    def model(self, model_id: Union[str, int]) -> dict:
+        """Return a model spec dict by name (str) or index (int).
+
+        Parameters
+        ----------
+        model_id : str or int
+            Model name or zero-based index into model_names.
+
+        Returns
+        -------
+        dict
+            Parsed model YAML content.
+        """
+        if isinstance(model_id, str):
+            return self.model_data(model_id)
+        elif isinstance(model_id, int):
+            return self.model_data(self.model_names[model_id])
+        else:
+            raise ValueError(f"model_id must be str or int, got {type(model_id)}")
+
+    def blueprint(self, blueprint_id: Union[str, int]) -> Path:
+        """Return a blueprint directory Path by name (str) or index (int).
+
+        Parameters
+        ----------
+        blueprint_id : str or int
+            Blueprint name or zero-based index into blueprint_names.
+
+        Returns
+        -------
+        Path
+            Path to the blueprint's directory (contains B_*.yml stage files).
+        """
+        if isinstance(blueprint_id, str):
+            return self.blueprint_path(blueprint_id)
+        elif isinstance(blueprint_id, int):
+            return self._blueprints[self.blueprint_names[blueprint_id]]
+        else:
+            raise ValueError(f"blueprint_id must be str or int, got {type(blueprint_id)}")
+
+    # ------------------------------------------------------------------
+    # Model/spec loading
+    # ------------------------------------------------------------------
+
+    def load_model_spec(self, model_name: str) -> Any:
+        """Load and return a parsed ModelSpec for the named model.
+
+        Parameters
+        ----------
+        model_name : str
+            Name of the model (must exist in ModelSpec/).
+
+        Returns
+        -------
+        ModelSpec
+            Parsed Pydantic ModelSpec instance.
+        """
+        from .models import load_models_yaml
+        path = self.model_path(model_name)
+        return load_models_yaml(path, model_name)
+
+    # ------------------------------------------------------------------
+    # Registration / mutation methods
+    # ------------------------------------------------------------------
+
+    def register_model(self, model_yaml: Union[Path, str]) -> None:
+        """Register a new model by copying its YAML into ModelSpec/ and rescanning."""
+        src = Path(model_yaml).expanduser().resolve()
+        dest_dir = self.catalog_root / "ModelSpec"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_dir / src.name)
         self._scan_models()
 
-    def infer_service():
-        # find the setup the service that feeds us catalog files
-        if not isinstance(self.catalog_root, Path):
-            if isinstance(self.catalog_root, str):
-                if 'github' in self.catalog_root:
-                    return fsspec.filesystem('github', root=self.catalog_root)
-                if self.catalog_root.startswith('http'):
-                    return fsspec.filesystem('http', root=self.catalog_root)
-                else:
-                    return fsspec.filesystem('file', root=self.catalog_root)
-            raise ValueError(f'Could not infer serice from catalog_root: {self.catalog_root}')            
+    def register_domain(self, builder: Any) -> None:
+        """Create a new DomainSpec entry from a CstarSpecBuilder instance.
+
+        Writes a Domain.yml file and creates an empty Assets/ directory under
+        DomainSpec/<grid_name>/. The domain name is taken from builder.grid_name.
+
+        Parameters
+        ----------
+        builder : CstarSpecBuilder
+            A configured builder whose grid_name, model_name, grid_kwargs,
+            open_boundaries, and partitioning will be recorded.
+        """
+        domain_name = builder.grid_name
+        domain_dir = self.catalog_root / "DomainSpec" / domain_name
+        domain_dir.mkdir(parents=True, exist_ok=True)
+        (domain_dir / "Assets").mkdir(exist_ok=True)
+
+        domain_data: Dict[str, Any] = {
+            "description": builder.description,
+            "model_name": builder.model_name,
+            "grid_name": builder.grid_name,
+            "start_time": builder.start_date.isoformat(),
+            "end_time": builder.end_date.isoformat(),
+            "grid_kwargs": builder.grid_kwargs,
+            "open_boundaries": builder.open_boundaries.model_dump(),
+            "partitioning": {
+                "n_procs_x": builder.partitioning.n_procs_x,
+                "n_procs_y": builder.partitioning.n_procs_y,
+            },
+        }
+        if builder.grid_kwargs_parent:
+            domain_data["grid_kwargs_parent"] = builder.grid_kwargs_parent
+        if builder.grid_kwargs_child:
+            domain_data["grid_kwargs_child"] = builder.grid_kwargs_child
+
+        with (domain_dir / "Domain.yml").open("w") as f:
+            yaml.safe_dump(
+                domain_data, f,
+                default_flow_style=False, sort_keys=False, allow_unicode=True,
+            )
+
+        self._scan_domains()
+
+    def add_asset_to_domain(
+        self,
+        domain_name: str,
+        asset_name: str,
+        asset_file: Any,
+        asset_metadata: dict,
+    ) -> None:
+        """Add an asset file to a domain's Assets/ folder and record it in Domain.yml.
+
+        Parameters
+        ----------
+        domain_name : str
+            Name of the existing domain.
+        asset_name : str
+            Filename to store the asset under in Assets/.
+        asset_file : file-like or path-like
+            Source of the asset: a file-like object (must have .read()) or a path.
+        asset_metadata : dict
+            Arbitrary key/value metadata recorded alongside the asset in Domain.yml.
+        """
+        domain_dir = self.domain_path(domain_name)
+        assets_dir = domain_dir / "Assets"
+        assets_dir.mkdir(exist_ok=True)
+
+        dest = assets_dir / asset_name
+        if hasattr(asset_file, "read"):
+            dest.write_bytes(asset_file.read())
         else:
-            return fsspec.filesystem('file', root=catalog_root)
+            shutil.copy2(Path(asset_file), dest)
 
-    def _scan_domains():
-        self._domains = []
-        for domain in self.catalog_root.glob("catalog/domains/*.yml"):
-            self._domains.append(Path(domain))
+        domain_yml = domain_dir / "Domain.yml"
+        with domain_yml.open() as f:
+            data = yaml.safe_load(f) or {}
+        data.setdefault("assets", {})[asset_name] = {
+            "path": f"Assets/{asset_name}",
+            **asset_metadata,
+        }
+        with domain_yml.open("w") as f:
+            yaml.safe_dump(
+                data, f,
+                default_flow_style=False, sort_keys=False, allow_unicode=True,
+            )
 
-    def _scan_blueprints():
-        pass  # add exising functionaliy from inputs_data.py recusively return build blueprints, organized by domain name
+    def copy_domain(self, domain_name: str, catalog: "DomainCatalog") -> None:
+        """Copy a domain spec directory (Domain.yml + Assets/) to another DomainCatalog.
 
-    def _scan_models():
-        '''scan the models yaml files, essentially the same things as _scan_domains()'''
-        pass # scan the models.yaml, essential a database
+        Parameters
+        ----------
+        domain_name : str
+            Name of the domain to copy from this catalog.
+        catalog : DomainCatalog
+            Target catalog to copy the domain into.
+        """
+        src = self.domain_path(domain_name)
+        dest = catalog.catalog_root / "DomainSpec" / domain_name
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
+        catalog._scan_domains()
 
-    def register_domain(builder: CstarSpecBuilder):
-        ''' Create a new domain by copying information from a CstarSpecBuilder ... somhow this has 
-        to be called by CstarSpecBuilder, as it will supply the builder paths.
-        
-        it is not clear exactly what this means. Soecbuilder is holdong everythng in memory
-        '''
-        pass
+    def copy_model(self, model_name: str, catalog: "DomainCatalog") -> None:
+        """Copy a model YAML file to another DomainCatalog.
 
-    def register_model(model_yaml: Path | str):
-        '''register a new model by validatingm, copying a model yaml file to the catalog, 
-        and rescanning the catalog after adding'''
-        pass
+        Parameters
+        ----------
+        model_name : str
+            Name of the model to copy from this catalog.
+        catalog : DomainCatalog
+            Target catalog to copy the model into.
+        """
+        src = self.model_path(model_name)
+        dest_dir = catalog.catalog_root / "ModelSpec"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest_dir / src.name)
+        catalog._scan_models()
 
-    def add_to_domain(domain_name: str, asset_name: str, asset_file: any, asset_metadata: dict):
-        pass
+    # ------------------------------------------------------------------
+    # Blueprint DataFrame methods (merged from BlueprintCatalog)
+    # ------------------------------------------------------------------
 
-    def copy_domain(domain_name: str, catalog: DomainCatalog):
-        pass
+    def _find_blueprint_stage_files(self, stage: Optional[str] = None) -> List[Path]:
+        """Find B_*.yml files across all known blueprint directories."""
+        pattern = f"B_*_{stage}.yml" if stage else "B_*.yml"
+        files: List[Path] = []
+        for bp_dir in self._blueprints.values():
+            files.extend(
+                f for f in bp_dir.glob(pattern)
+                if ".ipynb_checkpoints" not in str(f)
+            )
+        if not stage or stage == "run":
+            for bp_dir in self._blueprints.values():
+                files.extend(
+                    f for f in bp_dir.glob("B_*_run_*.yml")
+                    if ".ipynb_checkpoints" not in str(f)
+                )
+        return sorted(set(files))
 
-    def copy_model(model_name: str, catalog: DomainCatalog):
-        pass
+    def _load_blueprint_yaml(self, blueprint_path: Path) -> Dict[str, Any]:
+        """Load a single B_*.yml file."""
+        if not blueprint_path.exists():
+            raise FileNotFoundError(f"Blueprint file not found: {blueprint_path}")
+        with blueprint_path.open("r") as f:
+            return yaml.safe_load(f) or {}
 
-    def domain(domain_id: str | int):
-        '''return a domain spec yaml instance by name or index'''
-        if isinstance(domain_id, str):
-            return self._domains[domain_id]
-        elif isinstance(domain_id, int):
-            return self._domains[domain_id]
-        else:
-            raise ValueError(f'Invalid domain id: {domain_id}')
+    def _load_grid_kwargs(self, grid_yaml_path: Path) -> Dict[str, Any]:
+        """Load Grid kwargs from a two-document _grid.yml file."""
+        if not grid_yaml_path.exists():
+            raise FileNotFoundError(f"Grid YAML file not found: {grid_yaml_path}")
+        with grid_yaml_path.open("r") as f:
+            docs = list(yaml.safe_load_all(f))
+        if len(docs) != 2:
+            raise ValueError(f"Expected 2 documents in {grid_yaml_path}, found {len(docs)}")
+        grid_data = docs[1]
+        if "Grid" not in grid_data:
+            raise KeyError(f"Grid section not found in {grid_yaml_path}")
+        return grid_data["Grid"]
 
-    def blueprint(blueprint_id: str | int):
-        '''return a blueprint yaml instance by name or index'''
-        if isinstance(blueprint_id, str):
-            return self._blueprints[blueprint_id]
-        elif isinstance(blueprint_id, int):
-            return self._blueprints[blueprint_id]
-        else:
-            raise ValueError(f'Invalid blueprint id: {blueprint_id}')
+    def _extract_model_and_grid_name(self, blueprint_name: str) -> Tuple[Optional[str], Optional[str]]:
+        """Extract (model_name, grid_name) from a blueprint name.
 
-    def model(model_id: str | int):
-        '''return a model yaml instance by name or index'''
-        if isinstance(model_id, str):
-            return self._models[model_id]
-        elif isinstance(model_id, int):
-            return self._models[model_id]
-        else:
-            raise ValueError(f'Invalid model id: {model_id}')
+        Strips a trailing _NNprocs suffix, then tries to match against known
+        model names (longest first). Falls back to splitting on the last underscore.
+        """
+        if not blueprint_name:
+            return None, None
+        name = re.sub(r"_\d+procs$", "", blueprint_name)
+        for model_name in sorted(self.model_names, key=len, reverse=True):
+            if name.startswith(model_name + "_"):
+                return model_name, name[len(model_name) + 1:]
+        parts = name.rsplit("_", 1)
+        if len(parts) == 2:
+            return parts[0], parts[1]
+        return None, None
+
+    def blueprintDF(self, stage: Optional[str] = "postconfig") -> "pd.DataFrame":
+        """Load all blueprints and return a pandas DataFrame.
+
+        Parameters
+        ----------
+        stage : str, optional
+            Blueprint stage to load (preconfig, postconfig, build, run).
+            Defaults to "postconfig".
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns: model_name, grid_name, blueprint_name,
+            description, start_time, end_time, blueprint_path, grid_yaml_path, stage.
+        """
+        import pandas as pd
+
+        records = []
+        for bp_file in self._find_blueprint_stage_files(stage=stage):
+            try:
+                bp = self._load_blueprint_yaml(bp_file)
+                blueprint_name = bp.get("name")
+                if not blueprint_name:
+                    print(f"Warning: skipping {bp_file}: missing 'name' field")
+                    continue
+                model_name, grid_name = self._extract_model_and_grid_name(blueprint_name)
+                if not model_name or not grid_name:
+                    print(f"Warning: skipping {bp_file}: could not parse model/grid from '{blueprint_name}'")
+                    continue
+                grid_yaml = bp_file.parent / "_grid.yml"
+                file_stage = next(
+                    (s for s in ("preconfig", "postconfig", "build", "run") if f"_{s}" in bp_file.name),
+                    None,
+                )
+                records.append({
+                    "model_name": model_name,
+                    "grid_name": grid_name,
+                    "blueprint_name": blueprint_name,
+                    "description": bp.get("description"),
+                    "start_time": bp.get("valid_start_date"),
+                    "end_time": bp.get("valid_end_date"),
+                    "blueprint_path": bp_file,
+                    "grid_yaml_path": grid_yaml if grid_yaml.exists() else None,
+                    "stage": file_stage,
+                })
+            except Exception as e:
+                print(f"Warning: could not parse {bp_file}: {e}")
+                continue
+
+        if not records:
+            return pd.DataFrame()
+        return pd.DataFrame(records)
+
+    def __repr__(self) -> str:
+        return (
+            f"DomainCatalog(catalog_root={self.catalog_root}, "
+            f"models={self.model_names}, machines={self.machine_names}, "
+            f"domains={self.domain_names})"
+        )
+
+
+# Package-default catalog instance (points to cstar_forge/catalog/)
+default_catalog = DomainCatalog()

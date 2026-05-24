@@ -673,10 +673,13 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
     with path.open() as f:
         data = yaml.safe_load(f) or {}
     
-    if model_name not in data:
+    _SINGLE_MODEL_KEYS = frozenset({"templates", "settings", "code", "inputs"})
+    if model_name in data:
+        block = data[model_name]  # multi-model file (e.g., models.yml)
+    elif _SINGLE_MODEL_KEYS.intersection(data.keys()):
+        block = data  # single-model file: content at top level, filename is model name
+    else:
         raise KeyError(f"Model '{model_name}' not found in models YAML file: {path}")
-    
-    block = data[model_name]
     
     # Parse code
     if "code" not in block:

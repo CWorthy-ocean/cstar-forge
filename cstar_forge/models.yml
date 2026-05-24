@@ -71,12 +71,12 @@ cson_roms-marbl_v0.1:
             climatology: true
           type: bgc
           coarse_grid_mode: "never"
-        - source:
-            name: WOA
-            climatology: true
-          restoring_forces: ['sss']
-          type: restoring
-          coarse_grid_mode: "never"
+        # - source:
+        #     name: WOA
+        #     climatology: true
+        #   restoring_forces: ['sss']
+        #   type: restoring
+        #   coarse_grid_mode: "never"
 
       boundary:
         - source:
