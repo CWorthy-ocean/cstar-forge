@@ -485,8 +485,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 
-def _load_machine_config_from_catalog(system_tag: str, fallback_path: Path) -> MachineConfig:
-    """Load machine config from DomainCatalog, falling back to machines.yml."""
+def _load_machine_config_from_catalog(system_tag: str) -> MachineConfig:
+    """Load machine config from the default DomainCatalog (internal cstar-forge catalog)."""
     try:
         from .domain_catalog import default_catalog
         data = default_catalog.machine_data(system_tag)
@@ -496,14 +496,14 @@ def _load_machine_config_from_catalog(system_tag: str, fallback_path: Path) -> M
             queues=data.get("queues"),
         )
     except (KeyError, Exception):
-        return load_machine_config(system_tag, fallback_path)
+        return MachineConfig()
 
 
 # Initialize canonical instance
 paths = get_data_paths()
 system = _detect_system()
 system_id = system  # Alias for compatibility
-machine_config = _load_machine_config_from_catalog(system, paths.machines_yaml)
+machine_config = _load_machine_config_from_catalog(system)
 cluster_type = _default_cluster_type(system)
 
 

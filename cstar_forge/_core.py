@@ -350,6 +350,14 @@ class CstarSpecBuilder(BaseModel):
         and has been persisted to disk.
         """
         
+        if self.catalog_root is None:
+            print(
+                "Note: No catalog_root specified. Using internal cstar-forge catalog for ModelSpec "
+                "and MachineSpec (default/example values).\n"
+                f"      Blueprints will be written to: {config.paths.catalog}\n"
+                "      To use a custom catalog, set catalog_root=<path> when creating CstarSpecBuilder."
+            )
+
         # Create grids, 4 cases:
         # has child and no parent, has child and parent, has parent and no child, no parent no child
 
@@ -978,15 +986,24 @@ class CstarSpecBuilder(BaseModel):
         return DatasetsDict(self._datasets)
     
     def _load_model_spec(self):
-        """Load ModelSpec from DomainCatalog, falling back to models.yml."""
-        from .domain_catalog import default_catalog
-        try:
+        """Load ModelSpec from the builder's catalog when catalog_root is set, else from the default catalog."""
+        if self.catalog_root is not None:
+            self._model_spec = self._get_catalog().load_model_spec(self.model_name)
+        else:
+            from .domain_catalog import default_catalog
             self._model_spec = default_catalog.load_model_spec(self.model_name)
-        except KeyError:
-            self._model_spec = forge_models.load_models_yaml(
-                config.paths.models_yaml,
-                self.model_name
+
+    def _get_machine_config(self):
+        """Return MachineConfig from the builder's catalog when catalog_root is set, else from config."""
+        if self.catalog_root is not None:
+            from .config import MachineConfig
+            data = self._get_catalog().machine_data(config.system)
+            return MachineConfig(
+                account=data.get("account"),
+                pes_per_node=data.get("pes_per_node"),
+                queues=data.get("queues"),
             )
+        return config.machine_config
 
     def _prompt_yes_no(self, message: str) -> bool:
         """Prompt user for a yes/no answer in interactive runs."""
@@ -2471,7 +2488,7 @@ class CstarSpecBuilder(BaseModel):
         """
 
 
-        mc = config.machine_config
+        mc = self._get_machine_config()
         queues = mc.queues or {}
 
         # precedence: passed variable > pre-existing env-var setting > internal machine config > some default

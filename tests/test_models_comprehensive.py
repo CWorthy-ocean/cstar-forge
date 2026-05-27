@@ -341,7 +341,7 @@ class TestSettingsStage:
             scratch=original_paths.scratch,
             catalog=original_paths.catalog,
             blueprints=original_paths.blueprints,
-            builds=original_paths.builds,
+
             models_yaml=original_paths.models_yaml,
             builds_yaml=original_paths.builds_yaml,
             machines_yaml=original_paths.machines_yaml,
@@ -377,7 +377,7 @@ class TestSettingsStage:
             scratch=original_paths.scratch,
             catalog=original_paths.catalog,
             blueprints=original_paths.blueprints,
-            builds=original_paths.builds,
+
             models_yaml=original_paths.models_yaml,
             builds_yaml=original_paths.builds_yaml,
             machines_yaml=original_paths.machines_yaml,
@@ -1870,7 +1870,7 @@ class TestLoadModelsYaml:
             scratch=original_paths.scratch,
             catalog=original_paths.catalog,
             blueprints=original_paths.blueprints,
-            builds=original_paths.builds,
+
             models_yaml=original_paths.models_yaml,
             builds_yaml=original_paths.builds_yaml,
             machines_yaml=original_paths.machines_yaml,
@@ -1958,7 +1958,7 @@ class TestLoadModelsYaml:
             scratch=original_paths.scratch,
             catalog=original_paths.catalog,
             blueprints=original_paths.blueprints,
-            builds=original_paths.builds,
+
             models_yaml=original_paths.models_yaml,
             builds_yaml=original_paths.builds_yaml,
             machines_yaml=original_paths.machines_yaml,
@@ -2043,7 +2043,7 @@ class TestLoadModelsYaml:
             scratch=original_paths.scratch,
             catalog=original_paths.catalog,
             blueprints=original_paths.blueprints,
-            builds=original_paths.builds,
+
             models_yaml=original_paths.models_yaml,
             builds_yaml=original_paths.builds_yaml,
             machines_yaml=original_paths.machines_yaml,
@@ -2128,7 +2128,7 @@ class TestLoadModelsYaml:
             scratch=original_paths.scratch,
             catalog=original_paths.catalog,
             blueprints=original_paths.blueprints,
-            builds=original_paths.builds,
+
             models_yaml=original_paths.models_yaml,
             builds_yaml=original_paths.builds_yaml,
             machines_yaml=original_paths.machines_yaml,
