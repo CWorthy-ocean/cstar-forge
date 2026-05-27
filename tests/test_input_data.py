@@ -70,7 +70,6 @@ def _create_mock_paths(tmp_path):
         scratch=config.paths.scratch,
         catalog=config.paths.catalog,
         blueprints=config.paths.blueprints,
-        builds=config.paths.builds,
         models_yaml=config.paths.models_yaml,
         builds_yaml=config.paths.builds_yaml,
         machines_yaml=config.paths.machines_yaml,
