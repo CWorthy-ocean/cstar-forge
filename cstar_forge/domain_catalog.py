@@ -21,11 +21,11 @@ def _is_github_catalog_url(catalog_root: str) -> bool:
     )
 
 
-def _parse_github_catalog_url(url: str) -> Tuple[str, str, Path]:
-    """Parse a GitHub URL into ``(org, repo, path_within_repo)``."""
+def _parse_github_catalog_url(url: str) -> Tuple[str, str, str, Path]:
+    """Parse a GitHub URL into ``(org, repo, branch, path_within_repo)``."""
     raw = url.strip().rstrip("/")
     if raw.startswith("git@github.com:"):
-        path = raw[len("git@github.com:") :]
+        path = raw[len("git@github.com:"):]
     elif "github.com/" in raw:
         path = raw.split("github.com/", 1)[1]
     else:
@@ -43,11 +43,14 @@ def _parse_github_catalog_url(url: str) -> Tuple[str, str, Path]:
 
     org_name, repo_name = parts[0], parts[1]
     rest = parts[2:]
+    branch = "main"
     if rest and rest[0] in ("tree", "blob"):
-        rest = rest[2:]  # drop tree|blob and branch/tag name
+        if len(rest) >= 2:
+            branch = rest[1]
+        rest = rest[2:]  # drop tree|blob and branch name
 
     repo_path = Path(*rest) if rest else Path(".")
-    return org_name, repo_name, repo_path
+    return org_name, repo_name, branch, repo_path
 
 
 class DomainCatalog:
@@ -97,6 +100,7 @@ class DomainCatalog:
         initialize_catalog_from: Optional[Union[str, Path]] = None,
         initialize_catalog_clobber: bool = False,
         suppress_validation: bool = False,
+        github_token: Optional[str] = None,
     ) -> None:
         _using_default = catalog_root is None
 
@@ -112,8 +116,15 @@ class DomainCatalog:
                 self.catalog_root = _DEFAULT_CATALOG_ROOT
                 self._fs = fsspec.filesystem("file")
             elif _is_github_catalog_url(catalog_root):
-                org_name, repo_name, repo_path = _parse_github_catalog_url(catalog_root)
-                self._fs = fsspec.filesystem("github", org=org_name, repo=repo_name)
+                import os
+                org_name, repo_name, branch, repo_path = _parse_github_catalog_url(catalog_root)
+                token = github_token or os.environ.get("GITHUB_TOKEN")
+                gh_kwargs: Dict[str, Any] = dict(org=org_name, repo=repo_name, sha=branch)
+                if token:
+                    gh_kwargs["username"] = "x-access-token"
+                    gh_kwargs["token"] = token
+                self._fs = fsspec.filesystem("github", **gh_kwargs)
+                self._github_ref = branch  # fsspec GithubFileSystem stores no ref attr
                 self.catalog_root = repo_path
             elif catalog_root.startswith("http"):
                 self._fs = fsspec.filesystem("http")
@@ -146,6 +157,49 @@ class DomainCatalog:
             self._validate_catalog()
 
     # ------------------------------------------------------------------
+    # Filesystem helpers (local vs. remote)
+    # ------------------------------------------------------------------
+
+    @property
+    def _is_local(self) -> bool:
+        return getattr(self._fs, "protocol", "file") in ("file", "local", ("file", "local"))
+
+    def _fs_exists(self, path: Path) -> bool:
+        return path.exists() if self._is_local else self._fs.exists(str(path))
+
+    def _fs_isdir(self, path: Path) -> bool:
+        return path.is_dir() if self._is_local else self._fs.isdir(str(path))
+
+    def _fs_glob(self, directory: Path, pattern: str) -> List[Path]:
+        if self._is_local:
+            return list(directory.glob(pattern))
+        return [Path(f) for f in self._fs.glob(str(directory / pattern))]
+
+    def _fs_iterdir(self, path: Path) -> List[Path]:
+        if self._is_local:
+            return list(path.iterdir())
+        return [Path(f) for f in self._fs.ls(str(path), detail=False)]
+
+    def _fs_iterdir_dirs(self, path: Path) -> List[Path]:
+        """Return only subdirectories. For remote fs, uses a single detail=True ls call."""
+        if self._is_local:
+            return [p for p in path.iterdir() if p.is_dir()]
+        entries = self._fs.ls(str(path), detail=True)
+        return [Path(e["name"]) for e in entries if e.get("type") == "directory"]
+
+    def _fs_open(self, path: Path):
+        if self._is_local:
+            return path.open("r")
+        return self._fs.open(str(path), "r")
+
+    def _to_raw_github_url(self, path: Path) -> str:
+        """Return the raw.githubusercontent.com URL for a path in the GitHub repo."""
+        org = self._fs.org
+        repo = self._fs.repo
+        ref = getattr(self, "_github_ref", None) or "HEAD"
+        return f"https://raw.githubusercontent.com/{org}/{repo}/{ref}/{path}"
+
+    # ------------------------------------------------------------------
     # Scanning
     # ------------------------------------------------------------------
 
@@ -153,38 +207,54 @@ class DomainCatalog:
         """Scan Machines/ for per-machine YAML files."""
         self._machines = {}
         machine_dir = self.catalog_root / "Machines"
-        if machine_dir.exists():
-            for f in sorted(machine_dir.glob("*.yml")):
+        try:
+            for f in sorted(self._fs_glob(machine_dir, "*.yml")):
                 self._machines[f.stem] = f
+        except Exception:
+            pass
 
     def _scan_models(self) -> None:
         """Scan ModelSpec/ for per-model YAML files."""
         self._models = {}
         model_dir = self.catalog_root / "ModelSpec"
-        if model_dir.exists():
-            for f in sorted(model_dir.glob("*.yml")):
+        try:
+            for f in sorted(self._fs_glob(model_dir, "*.yml")):
                 self._models[f.stem] = f
+        except Exception:
+            pass
 
     def _scan_blueprints(self) -> None:
-        """Scan blueprints/ (and Blueprints/) for blueprint directories."""
+        """Scan blueprints/ (and Blueprints/) for blueprint directories.
+
+        Expected layout: blueprints/<machine>/<name>/B_*.yml
+        Uses _fs_iterdir_dirs to retrieve directory type from a single ls call,
+        avoiding a separate isdir API call per entry.
+        """
         self._blueprints = {}
         for subdir_name in ("blueprints", "Blueprints"):
             bp_root = self.catalog_root / subdir_name
-            if bp_root.exists():
-                for machine_dir in sorted(bp_root.iterdir()):
-                    if machine_dir.is_dir():
-                        for bp_dir in sorted(machine_dir.iterdir()):
-                            if bp_dir.is_dir():
-                                self._blueprints[bp_dir.name] = bp_dir
+            if not self._fs_exists(bp_root):
+                continue
+            try:
+                for machine_dir in sorted(self._fs_iterdir_dirs(bp_root)):
+                    for bp_dir in sorted(self._fs_iterdir_dirs(machine_dir)):
+                        self._blueprints[bp_dir.name] = bp_dir
+            except Exception:
+                pass
 
     def _scan_domains(self) -> None:
-        """Scan DomainSpec/ for domain directories containing Domain.yml."""
+        """Scan DomainSpec/ for domain directories containing Domain.yml.
+
+        Uses a single glob for */Domain.yml to find all domains in one API call.
+        """
         self._domains = {}
         domain_spec_dir = self.catalog_root / "DomainSpec"
-        if domain_spec_dir.exists():
-            for domain_dir in sorted(domain_spec_dir.iterdir()):
-                if domain_dir.is_dir() and (domain_dir / "Domain.yml").exists():
-                    self._domains[domain_dir.name] = domain_dir
+        try:
+            for domain_yml in sorted(self._fs_glob(domain_spec_dir, "*/Domain.yml")):
+                domain_dir = domain_yml.parent
+                self._domains[domain_dir.name] = domain_dir
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Initialization helpers
@@ -247,18 +317,13 @@ class DomainCatalog:
         """Raise ValueError if Machines/ or ModelSpec/ are missing or empty.
 
         Only called for non-default catalog roots that were not just initialized.
+        Uses the already-populated _machines/_models dicts so remote filesystems work.
         """
-        machines_dir = self.catalog_root / "Machines"
-        models_dir = self.catalog_root / "ModelSpec"
-
-        has_machines = machines_dir.exists() and any(machines_dir.glob("*.yml"))
-        has_models = models_dir.exists() and any(models_dir.glob("*.yml"))
-
-        if not has_machines or not has_models:
+        if not self._machines or not self._models:
             missing = []
-            if not has_machines:
+            if not self._machines:
                 missing.append("Machines/ (with at least one .yml)")
-            if not has_models:
+            if not self._models:
                 missing.append("ModelSpec/ (with at least one .yml)")
             raise ValueError(
                 f"No valid catalog found at '{self.catalog_root}'. "
@@ -303,7 +368,12 @@ class DomainCatalog:
     # ------------------------------------------------------------------
     def tree(self) -> None:
         """Print the tree of the catalog."""
-        print(self._fs.tree("catalog"))
+        try:
+            print(self._fs.tree(str(self.catalog_root)))
+        except (AttributeError, NotImplementedError):
+            # fsspec GitHub FS has no tree(); fall back to find()
+            entries = self._fs.find(str(self.catalog_root))
+            print("\n".join(entries))
 
     def blueprint_dir_for(self, machine_id: str, blueprint_name: str) -> Path:
         """Return the blueprint directory for a given machine and blueprint name."""
@@ -364,19 +434,19 @@ class DomainCatalog:
     def machine_data(self, machine_name: str) -> dict:
         """Return the raw YAML data dict for a named machine."""
         path = self.machine_path(machine_name)
-        with path.open() as f:
+        with self._fs_open(path) as f:
             return yaml.safe_load(f) or {}
 
     def model_data(self, model_name: str) -> dict:
         """Return the raw YAML data dict for a named model."""
         path = self.model_path(model_name)
-        with path.open() as f:
+        with self._fs_open(path) as f:
             return yaml.safe_load(f) or {}
 
     def domain_data(self, domain_name: str) -> dict:
         """Return the raw YAML data dict for a named domain (reads Domain.yml)."""
         path = self.domain_path(domain_name) / "Domain.yml"
-        with path.open() as f:
+        with self._fs_open(path) as f:
             return yaml.safe_load(f) or {}
 
     # ------------------------------------------------------------------
@@ -647,29 +717,29 @@ class DomainCatalog:
         files: List[Path] = []
         for bp_dir in self._blueprints.values():
             files.extend(
-                f for f in bp_dir.glob(pattern)
+                f for f in self._fs_glob(bp_dir, pattern)
                 if ".ipynb_checkpoints" not in str(f)
             )
         if not stage or stage == "run":
             for bp_dir in self._blueprints.values():
                 files.extend(
-                    f for f in bp_dir.glob("B_*_run_*.yml")
+                    f for f in self._fs_glob(bp_dir, "B_*_run_*.yml")
                     if ".ipynb_checkpoints" not in str(f)
                 )
         return sorted(set(files))
 
     def _load_blueprint_yaml(self, blueprint_path: Path) -> Dict[str, Any]:
         """Load a single B_*.yml file."""
-        if not blueprint_path.exists():
+        if not self._fs_exists(blueprint_path):
             raise FileNotFoundError(f"Blueprint file not found: {blueprint_path}")
-        with blueprint_path.open("r") as f:
+        with self._fs_open(blueprint_path) as f:
             return yaml.safe_load(f) or {}
 
     def _load_grid_kwargs(self, grid_yaml_path: Path) -> Dict[str, Any]:
         """Load Grid kwargs from a two-document _grid.yml file."""
-        if not grid_yaml_path.exists():
+        if not self._fs_exists(grid_yaml_path):
             raise FileNotFoundError(f"Grid YAML file not found: {grid_yaml_path}")
-        with grid_yaml_path.open("r") as f:
+        with self._fs_open(grid_yaml_path) as f:
             docs = list(yaml.safe_load_all(f))
         if len(docs) != 2:
             raise ValueError(f"Expected 2 documents in {grid_yaml_path}, found {len(docs)}")
@@ -695,14 +765,14 @@ class DomainCatalog:
             return parts[0], parts[1]
         return None, None
 
-    def blueprintDF(self, stage: Optional[str] = "postconfig") -> "pd.DataFrame":
+    def blueprintDF(self, stage: Optional[str] = None) -> "pd.DataFrame":
         """Load all blueprints and return a pandas DataFrame.
 
         Parameters
         ----------
         stage : str, optional
-            Blueprint stage to load (preconfig, postconfig, build, run).
-            Defaults to "postconfig".
+            Blueprint stage to filter by (preconfig, postconfig, build, run).
+            Defaults to None, which returns all stages.
 
         Returns
         -------
@@ -724,7 +794,16 @@ class DomainCatalog:
                 if not model_name or not grid_name:
                     print(f"Warning: skipping {bp_file}: could not parse model/grid from '{blueprint_name}'")
                     continue
+                is_github = hasattr(self._fs, "org")
                 grid_yaml = bp_file.parent / "_grid.yml"
+                grid_yaml_exists = self._fs_exists(grid_yaml)
+                if grid_yaml_exists and is_github:
+                    grid_yaml_result: Optional[Union[Path, str]] = self._to_raw_github_url(grid_yaml)
+                else:
+                    grid_yaml_result = grid_yaml if grid_yaml_exists else None
+                blueprint_path_result: Union[Path, str] = (
+                    self._to_raw_github_url(bp_file) if is_github else bp_file
+                )
                 file_stage = next(
                     (s for s in ("preconfig", "postconfig", "build", "run") if f"_{s}" in bp_file.name),
                     None,
@@ -736,8 +815,8 @@ class DomainCatalog:
                     "description": bp.get("description"),
                     "start_time": bp.get("valid_start_date"),
                     "end_time": bp.get("valid_end_date"),
-                    "blueprint_path": bp_file,
-                    "grid_yaml_path": grid_yaml if grid_yaml.exists() else None,
+                    "blueprint_path": blueprint_path_result,
+                    "grid_yaml_path": grid_yaml_result,
                     "stage": file_stage,
                 })
             except Exception as e:

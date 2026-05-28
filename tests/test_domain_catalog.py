@@ -17,19 +17,23 @@ from cstar_forge.domain_catalog import (
     [
         (
             "https://github.com/CWorthy-ocean/cstar-forge",
-            ("CWorthy-ocean", "cstar-forge", Path(".")),
+            ("CWorthy-ocean", "cstar-forge", "main", Path(".")),
         ),
         (
             "https://github.com/CWorthy-ocean/cstar-forge/",
-            ("CWorthy-ocean", "cstar-forge", Path(".")),
+            ("CWorthy-ocean", "cstar-forge", "main", Path(".")),
         ),
         (
             "https://github.com/CWorthy-ocean/cstar-forge/tree/main/cstar_forge/catalog",
-            ("CWorthy-ocean", "cstar-forge", Path("cstar_forge/catalog")),
+            ("CWorthy-ocean", "cstar-forge", "main", Path("cstar_forge/catalog")),
+        ),
+        (
+            "https://github.com/CWorthy-ocean/cstar-forge/tree/develop/cstar_forge/catalog",
+            ("CWorthy-ocean", "cstar-forge", "develop", Path("cstar_forge/catalog")),
         ),
         (
             "git@github.com:CWorthy-ocean/cstar-forge.git",
-            ("CWorthy-ocean", "cstar-forge", Path(".")),
+            ("CWorthy-ocean", "cstar-forge", "main", Path(".")),
         ),
     ],
 )
@@ -47,14 +51,18 @@ def test_is_github_catalog_url():
 def test_github_catalog_uses_org_and_repo():
     url = "https://github.com/CWorthy-ocean/cstar-forge"
     with patch("cstar_forge.domain_catalog.fsspec.filesystem") as mock_fs:
-        mock_fs.return_value.exists = lambda _path: False
+        instance = mock_fs.return_value
+        instance.protocol = "github"
+        instance.exists = lambda _path: False
+        instance.ls = lambda _path, detail=False: []
+        instance.glob = lambda _pattern: []
         catalog = DomainCatalog(
             catalog_root=url,
             suppress_validation=True,
         )
-    mock_fs.assert_called_once_with("github", org="CWorthy-ocean", repo="cstar-forge")
+    mock_fs.assert_called_once_with("github", org="CWorthy-ocean", repo="cstar-forge", sha="main")
     assert catalog.catalog_root == Path(".")
-    assert catalog._fs is mock_fs.return_value
+    assert catalog._fs is instance
 
 
 def test_parse_github_catalog_url_invalid():
