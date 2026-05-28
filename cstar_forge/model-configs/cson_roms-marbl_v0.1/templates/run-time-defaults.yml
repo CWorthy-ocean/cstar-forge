@@ -1,66 +1,240 @@
 # Default configuration parameters for ROMS run-time configuration
-# This file contains default values for all template parameters in roms.in
+# This file mirrors section headers, variables, and values in namelist.nml
+# Section keys omit the leading '&' (the template adds it in the output file).
 
-roms.in:
-  title:
-    casename: null  # Set dynamically from blueprint
-
-  time_stepping:
-    ntimes: 1200
-    dt: 2160  # seconds
-    ndtfast: 60
+namelist.nml:
+  SIMULATION_NAME_SETTINGS:
+    output_root_name: roms
+    title: roms_run
+  TIME_STEPPING:
+    ntimes: 20
+    dt: 40
+    ndtfast: 30
     ninfo: 1
-
-  s_coord:
-    theta_s: null # Set dynamically from grid file
-    theta_b: null # Set dynamically from grid file
-    tcline: null  # Set dynamically from grid file
-
-  grid:
-    grid_file: null  # Set dynamically from generated grid file
-
-  forcing:
-    surface_forcing_path: null  # Set dynamically
-    surface_forcing_bgc_path: null  # Set dynamically
-    boundary_forcing_path: null  # Set dynamically
-    boundary_forcing_bgc_path: null  # Set dynamically
-    tidal_forcing_path: null  # Set dynamically
-    river_path: null  # Set dynamically
-
-  lateral_visc:
-    visc2: 0.0  # m^2/sec
-    visc4: 0.0  # m^2/sec
-    rho0: 1000.0
-
-  output_root_name:
-    output_root_name: null
-    
-  vertical_mixing:
-    akv: 0.0  # m^2/sec
-    # akt is a list of values, one per tracer (NT tracers)
-    # Default is all zeros - will be generated in template
-    akt_default: 0.0
-
-  tracer_diff2:
-    # tnu2 is a list of values, one per tracer (NT tracers)
-    # Default is all zeros - will be generated in template
-    tnu2_default: 0.0
-
-  bottom_drag:
-    rdrg: 0.0E-4  # m/s
-    rdrg2: 1.0E-3
-    zob: 1.0E-2  # meters
-    cdb_min: 1.0E-4
-    cdb_max: 1.0E-2
-
-  v_sponge:
-    v_sponge: 0.0  # m^2/sec
-
-  gamma2: 1.0  # Slipperiness parameter
-
-  ubind: 0.1  # m/s, OBC binding velocity scale
-
-  initial:
+  GRID_SETTINGS:
+    grdname: input_data/example_input_grid.nc
+  S_COORD:
+    theta_s: 6
+    theta_b: 6
+    hc: 25
+  PARAM_SETTINGS:
+    NP_XI: 3
+    NP_ETA: 2
+    NSUB_X: 1
+    NSUB_E: 1
+    LLm: 199
+    MMm: 99
+    N: 50
+    nt_passive: 0
+    ntrc_bio: 32
+  INITIAL_CONDITIONS:
+    ininame: my_initial_conditions.nc
     nrrec: 1
-    initial_file: null  # Set dynamically from generated initial conditions file
-
+  FORCING_FILES:
+    frcfile:
+    - input_data/example_input_boundary_forcing.nc
+    - input_data/example_input_surface_flux_forcing.nc
+    - input_data/example_input_river_forcing.nc
+  BULK_FRC_SETTINGS:
+    interp_bulk_frc: true
+    check_bulk_frc_units: false
+  FLUX_FRC_SETTINGS:
+    interp_flux_frc: true
+  RIVER_FRC_SETTINGS:
+    river_source: false
+    river_analytical: false
+    nriv: 1
+  TIDES_SETTINGS:
+    bry_tides: false
+    pot_tides: false
+    ana_tides: false
+    ntides: 10
+  BASIC_OUTPUT_SETTINGS:
+    wrt_file_his: false
+    output_period_his: 100
+    nrpf_his: 20
+    wrt_Z: true
+    wrt_Ub: true
+    wrt_Vb: true
+    wrt_U: true
+    wrt_V: true
+    wrt_R: true
+    wrt_O: true
+    wrt_W: true
+    wrt_Akv: true
+    wrt_Akt: true
+    wrt_Aks: true
+    wrt_Hbls: true
+    wrt_Hbbl: true
+    wrt_file_avg: false
+    output_period_avg: 100
+    nrpf_avg: 20
+    wrt_avg_Z: true
+    wrt_avg_Ub: true
+    wrt_avg_Vb: true
+    wrt_avg_U: true
+    wrt_avg_V: true
+    wrt_avg_R: true
+    wrt_avg_O: true
+    wrt_avg_W: true
+    wrt_avg_Akv: true
+    wrt_avg_Akt: true
+    wrt_avg_Aks: true
+    wrt_avg_Hbls: true
+    wrt_avg_Hbbl: true
+    wrt_file_rst: false
+    monthly_restarts: false
+    output_period_rst: 2000
+    nrpf_rst: 10
+  TS_OUTPUT_SETTINGS:
+    wrt_temp: false
+    wrt_salt: false
+    wrt_temp_dia: false
+    wrt_salt_dia: false
+  FRC_OUTPUT_SETTINGS:
+    wrt_frc: false
+    wrt_frc_avg: false
+    output_period: 3600
+    nrpf: 4
+  EXTRACT_DATA_SETTINGS:
+    do_extract: false
+    extract_period: 1800
+    nrpf_extract: 48
+    extract_file: sample_edata.nc
+    N_chd: 90
+    theta_s_chd: 5
+    theta_b_chd: 2
+    hc_chd: 250
+  SPONGE_TUNE_SETTINGS:
+    ub_tune: false
+    sp_timscale: 86400
+    wrt_sponge: true
+    spn_avg: true
+    nrpf: 7
+    output_period: 86400
+  CALC_PFLX_SETTINGS:
+    calc_pflx: true
+    timescale: 86400
+  ZSLICE_SETTINGS:
+    do_zslice: false
+    zslice_avg: false
+    wrt_T_zsl: false
+    wrt_U_zsl: false
+    wrt_V_zsl: false
+    output_period: 1200
+    nrpf: 72
+    ndep: 2
+    vecdep:
+    - -2
+    - -15
+    nt_z: 2
+    trc2zsc:
+    - 1
+    - 2
+  BGC_SETTINGS:
+    interp_bgc_frc: false
+    wrt_bgc_his: false
+    output_period_his: 100
+    nrpf_his: 10
+    wrt_bgc_avg: false
+    output_period_avg: 100
+    nrpf_avg: 10
+    wrt_bgc_dia_his: false
+    output_period_his_dia: 100
+    nrpf_his_dia: 10
+    wrt_bgc_dia_avg: false
+    output_period_avg_dia: 100
+    nrpf_avg_dia: 10
+  MARBL_BIOGEOCHEMISTRY_SETTINGS:
+    marbl_config_file: marbl_in
+    marbl_tracers_to_write: ''
+    marbl_diagnostics_to_write: ''
+    marbl_timestep_ratio: 1
+  CDR_FRC_SETTINGS:
+    cdr_source: false
+    cdr_file: cdr_release.nc
+    ncdr_parm: 1
+    nz_chd: 50
+    forcing_depth_profiles: false
+    forcing_3d: false
+    forcing_parameterized: false
+    time_interpolation: false
+    relocate_to_wet_pts: false
+    cdr_volume: false
+  CDR_OUTPUT_SETTINGS:
+    do_cdr_output: false
+    wrt_cdr_avg: true
+    cdr_monthly_averages: false
+    output_period: 3600
+    nrpf: 4
+  UPSCALE_SETTINGS:
+    do_upscale: false
+    nrpf_uscl: 48
+    output_period_uscl: 100
+  LIN_RHO_EOS_SETTINGS:
+    Tcoef: 0.2
+    T0: 1
+    Scoef: 0.822
+    S0: 1
+  RHO0_SETTINGS:
+    rho0: 1027.5
+  GAMMA2_SETTINGS:
+    gamma2: 1
+  TRACER_DIFF2:
+    tnu2:
+    - 0
+    - 0
+  BOTTOM_DRAG_SETTINGS:
+    rdrg: 0.0
+    rdrg2: 0.001
+    zob: 0.01
+  VERTICAL_MIXING_SETTINGS:
+    akv_bak: 0
+    akt_bak:
+    - 0
+    - 0
+  LATERAL_VISC_SETTINGS:
+    visc2: 0
+  UBIND_SETTINGS:
+    ubind: 0.1
+  V_SPONGE_SETTINGS:
+    v_sponge: 1
+  SSS_CORRECTION:
+    dSSSdt: 0
+  SST_CORRECTION:
+    dSSTdt: 0
+  DIAGNOSTICS_SETTINGS:
+    diag_avg: false
+    diag_uv: false
+    diag_trc: false
+    output_period: 3600
+    nrpf: 4
+    code_check_mode: false
+  STDOUT_DIAG_SETTINGS:
+    code_check_mode: false
+  RANDOM_OUTPUT_SETTINGS:
+    do_random: false
+    output_period: 3600
+    nrpf: 10
+  SURF_FLX_SETTINGS:
+    wrt_smflx: false
+    wrt_stflx: false
+    wrt_swflx: false
+    sflx_avg: false
+    output_period: 120
+    nrpf: 10
+  PIPE_FRC_SETTINGS:
+    pipe_source: false
+    p_analytical: false
+    npip: 1
+  PARTICLES_SETTINGS:
+    floats: false
+    np: 50
+    extra_space_fac: 1.5
+    exchange_facx: 0.1
+    exchange_facy: 0.1
+    exchange_facc: 0.01
+    output_period: 400
+    nrpf: 100
+    ppm3: 1.0e-06
+    pmin: 200

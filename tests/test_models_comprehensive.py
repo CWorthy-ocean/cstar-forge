@@ -722,12 +722,14 @@ class TestModelSpec:
         # Check if master_settings_file_name exists as a property
         # If it doesn't exist, skip this assertion (attribute may have been removed)
         if hasattr(spec, 'master_settings_file_name'):
-            assert spec.master_settings_file_name == "roms.in"
+            assert spec.master_settings_file_name in ("roms.in", "namelist.nml")
         else:
-            # If attribute doesn't exist, check that run_time filter contains roms.in
+            # If attribute doesn't exist, check that run_time filter contains a settings file
             assert spec.code.run_time is not None
             assert spec.code.run_time.filter is not None
-            assert "roms.in" in spec.code.run_time.filter.files
+            assert any(
+                f in spec.code.run_time.filter.files for f in ("roms.in", "namelist.nml")
+            )
     
     def test_modelspec_cross_validation_templates_settings(self, tmp_path):
         """Test ModelSpec cross-validation between templates and settings."""
@@ -1973,7 +1975,7 @@ class TestLoadModelsYaml:
         
         run_yaml = tmp_path / "test_model" / "templates" / "run-time-defaults.yml"
         run_yaml.parent.mkdir(parents=True, exist_ok=True)
-        run_yaml.write_text("roms.in: {}\n")
+        run_yaml.write_text("namelist.nml: {}\n")
         
         yaml_content = {
             "test_model": {
@@ -2025,7 +2027,7 @@ class TestLoadModelsYaml:
         assert spec.settings.compile_time is not None
         assert "cppdefs" in spec.settings.compile_time.settings_dict
         assert spec.settings.run_time is not None
-        assert "roms.in" in spec.settings.run_time.settings_dict
+        assert "namelist.nml" in spec.settings.run_time.settings_dict
     
     def test_load_models_yaml_with_templates_and_settings(self, tmp_path, monkeypatch):
         """Test load_models_yaml with both templates and settings."""

@@ -350,3 +350,55 @@ def _attach_roms_jinja_filters(env: Environment) -> None:
     env.filters["lower"] = ROMSTemplateRenderer._fortran_bool
     env.filters["fort_cdr_file_decl"] = _fortran_cdr_file_decl
 
+
+# Top-level key in run-time settings YAML / builder dict for ``namelist.nml.j2``.
+RUNTIME_NAMELIST_KEY = "namelist.nml"
+
+
+def runtime_namelist(settings_run_time: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the namelist section dict from a run-time settings mapping."""
+    if RUNTIME_NAMELIST_KEY not in settings_run_time:
+        raise KeyError(
+            f"Run-time settings must include {RUNTIME_NAMELIST_KEY!r}; "
+            f"got keys: {sorted(settings_run_time.keys())}"
+        )
+    nml = settings_run_time[RUNTIME_NAMELIST_KEY]
+    if not isinstance(nml, dict):
+        raise TypeError(
+            f"{RUNTIME_NAMELIST_KEY!r} must be a mapping, got {type(nml).__name__}"
+        )
+    return nml
+
+
+def ensure_nml_section(settings_run_time: Dict[str, Any], section: str) -> Dict[str, Any]:
+    """Get or create a namelist section (e.g. ``TIME_STEPPING``) under ``namelist.nml``."""
+    nml = settings_run_time.setdefault(RUNTIME_NAMELIST_KEY, {})
+    if section not in nml or not isinstance(nml[section], dict):
+        nml[section] = {}
+    return nml[section]
+
+
+def ensure_cppdefs_section(settings_compile_time: Dict[str, Any]) -> Dict[str, Any]:
+    """Get or create the ``cppdefs`` compile-time settings section."""
+    if "cppdefs" not in settings_compile_time or not isinstance(
+        settings_compile_time["cppdefs"], dict
+    ):
+        settings_compile_time["cppdefs"] = {}
+    return settings_compile_time["cppdefs"]
+
+
+def append_frcfile(settings_run_time: Dict[str, Any], path: Union[str, Path]) -> None:
+    """Append a forcing file path to ``FORCING_FILES.frcfile`` if not already present."""
+    sec = ensure_nml_section(settings_run_time, "FORCING_FILES")
+    files = sec.setdefault("frcfile", [])
+    path_str = str(path)
+    if path_str not in files:
+        files.append(path_str)
+
+
+# Namelist sections that hold filesystem paths rewritten for staged input datasets.
+NAMELIST_PATH_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("GRID_SETTINGS", "grdname"),
+    ("INITIAL_CONDITIONS", "ininame"),
+)
+

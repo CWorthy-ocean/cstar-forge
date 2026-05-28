@@ -272,13 +272,13 @@ ocn_outer_up = cstar_forge.CstarSpecBuilder(
 
 #####################################
 
-sim = [ocn_outer_down, ocn_middle_down, ocn_inner, ocn_middle_up, ocn_outer_up]
-compile = [compile_settings_outer_down, compile_settings_middle_down, compile_settings_inner,
-           compile_settings_middle_up, compile_settings_outer_up]
-runtime = [runtime_settings_outer, runtime_settings_middle, runtime_settings_inner,
-           runtime_settings_middle, runtime_settings_outer]
+sim = [ocn_outer_down]#, ocn_middle_down, ocn_inner, ocn_middle_up, ocn_outer_up]
+#compile = [compile_settings_outer_down]#, compile_settings_middle_down, compile_settings_inner,
+           #compile_settings_middle_up, compile_settings_outer_up]
+runtime = [runtime_settings_outer]#, runtime_settings_middle, runtime_settings_inner,
+           #runtime_settings_middle, runtime_settings_outer]
 
-for ocn,ct,rt in zip(sim,compile,runtime):
+for ocn,rt in zip(sim,runtime):
     # ensure that source data is staged locally
     ocn.ensure_source_data()
 
@@ -287,7 +287,6 @@ for ocn,ct,rt in zip(sim,compile,runtime):
 
     # configure and build the model
     ocn.configure_build(
-        compile_time_settings=ct,
         run_time_settings=rt,
     )
 
