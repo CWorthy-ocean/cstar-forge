@@ -13,6 +13,43 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 _DEFAULT_CATALOG_ROOT = Path(__file__).parent / "catalog"
 
 
+def _is_github_catalog_url(catalog_root: str) -> bool:
+    """Return True if *catalog_root* looks like a GitHub repository URL."""
+    s = catalog_root.strip()
+    return s.startswith(("https://github.com/", "http://github.com/")) or s.startswith(
+        "git@github.com:"
+    )
+
+
+def _parse_github_catalog_url(url: str) -> Tuple[str, str, Path]:
+    """Parse a GitHub URL into ``(org, repo, path_within_repo)``."""
+    raw = url.strip().rstrip("/")
+    if raw.startswith("git@github.com:"):
+        path = raw[len("git@github.com:") :]
+    elif "github.com/" in raw:
+        path = raw.split("github.com/", 1)[1]
+    else:
+        raise ValueError(f"Not a GitHub catalog URL: {url!r}")
+
+    if path.endswith(".git"):
+        path = path[: -len(".git")]
+
+    parts = [p for p in path.split("/") if p]
+    if len(parts) < 2:
+        raise ValueError(
+            f"Could not parse GitHub org/repo from catalog_root {url!r}. "
+            "Expected https://github.com/<org>/<repo>[/path/...]."
+        )
+
+    org_name, repo_name = parts[0], parts[1]
+    rest = parts[2:]
+    if rest and rest[0] in ("tree", "blob"):
+        rest = rest[2:]  # drop tree|blob and branch/tag name
+
+    repo_path = Path(*rest) if rest else Path(".")
+    return org_name, repo_name, repo_path
+
+
 class DomainCatalog:
     """C-Star DomainCatalog manages the hierarchical system of validated/registered "domains."
 
@@ -74,9 +111,10 @@ class DomainCatalog:
             if catalog_root.strip().lower() == "local":
                 self.catalog_root = _DEFAULT_CATALOG_ROOT
                 self._fs = fsspec.filesystem("file")
-            elif "github" in catalog_root:
-                self._fs = fsspec.filesystem("github", org=catalog_root)
-                self.catalog_root = Path(catalog_root)
+            elif _is_github_catalog_url(catalog_root):
+                org_name, repo_name, repo_path = _parse_github_catalog_url(catalog_root)
+                self._fs = fsspec.filesystem("github", org=org_name, repo=repo_name)
+                self.catalog_root = repo_path
             elif catalog_root.startswith("http"):
                 self._fs = fsspec.filesystem("http")
                 self.catalog_root = Path(catalog_root)
@@ -263,6 +301,9 @@ class DomainCatalog:
     # ------------------------------------------------------------------
     # Path helpers (used by CstarSpecBuilder)
     # ------------------------------------------------------------------
+    def tree(self) -> None:
+        """Print the tree of the catalog."""
+        print(self._fs.tree("catalog"))
 
     def blueprint_dir_for(self, machine_id: str, blueprint_name: str) -> Path:
         """Return the blueprint directory for a given machine and blueprint name."""
