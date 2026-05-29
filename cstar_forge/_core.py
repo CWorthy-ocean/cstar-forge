@@ -2461,8 +2461,7 @@ class CstarSpecBuilder(BaseModel):
 
         return
 
-    @staticmethod
-    def prep_cstar_environment(
+    def prep_cstar_environment(self,
             account_key: Optional[str] = None,
             queue_name: Optional[str] = None,
             walltime: str | None = None,
