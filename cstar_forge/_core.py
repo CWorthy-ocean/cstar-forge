@@ -56,8 +56,10 @@ def resolve_catalog_dir(catalog_root: Optional[Union[str, Path]]) -> Path:
     """
     if catalog_root is None:
         return config.paths.catalog
-    if isinstance(catalog_root, str) and catalog_root.strip().lower() == "local":
+    if isinstance(catalog_root, str) and catalog_root.strip().lower() in ("local",):
         return config.paths.here / "catalog"
+    if isinstance(catalog_root, str) and catalog_root.strip().lower() == "default":
+        return config.paths.catalog
     outer = Path(catalog_root).expanduser().resolve()
     return outer / "catalog"
 
@@ -245,8 +247,10 @@ class CstarSpecBuilder(BaseModel):
         description=(
             "Optional *outer* catalog anchor. Blueprints live under "
             "``<catalog_root>/catalog/blueprints/<machine>/<name>/``. "
-            "Omit to use ``config.paths.catalog``. Use ``catalog_root='local'`` for the "
-            "in-repo ``cstar_forge/catalog`` package directory (no extra ``/catalog`` suffix)."
+            "Omit (None) to use the bundled internal catalog for ModelSpec/MachineSpec. "
+            "Use ``'default'`` to open the user data-tree catalog at "
+            "``config.paths.catalog`` with full validation. "
+            "Use ``'local'`` for the in-repo ``cstar_forge/catalog`` package directory."
         ),
     )
     initialize_catalog_from: Optional[Union[str, Path]] = Field(
@@ -355,7 +359,8 @@ class CstarSpecBuilder(BaseModel):
                 "Note: No catalog_root specified. Using internal cstar-forge catalog for ModelSpec "
                 "and MachineSpec (default/example values).\n"
                 f"      Blueprints will be written to: {config.paths.catalog}\n"
-                "      To use a custom catalog, set catalog_root=<path> when creating CstarSpecBuilder."
+                "      To use a custom catalog, set catalog_root=<path> or catalog_root='default' "
+                "when creating CstarSpecBuilder."
             )
 
         # Create grids, 4 cases:
@@ -987,15 +992,20 @@ class CstarSpecBuilder(BaseModel):
     
     def _load_model_spec(self):
         """Load ModelSpec from the builder's catalog when catalog_root is set, else from the default catalog."""
-        if self.catalog_root is not None:
+        if self._uses_explicit_catalog:
             self._model_spec = self._get_catalog().load_model_spec(self.model_name)
         else:
             from .domain_catalog import default_catalog
             self._model_spec = default_catalog.load_model_spec(self.model_name)
 
+    @property
+    def _uses_explicit_catalog(self) -> bool:
+        """True when catalog_root routes to a user-managed catalog (not the bundled fallback)."""
+        return self.catalog_root is not None
+
     def _get_machine_config(self):
         """Return MachineConfig from the builder's catalog when catalog_root is set, else from config."""
-        if self.catalog_root is not None:
+        if self._uses_explicit_catalog:
             from .config import MachineConfig
             data = self._get_catalog().machine_data(config.system)
             return MachineConfig(
