@@ -280,6 +280,33 @@ class CstarSpecBuilder(BaseModel):
             "partially populated catalog without raising an error."
         ),
     )
+    initialize_catalog_from: Optional[Union[str, Path]] = Field(
+        default=None,
+        validate_default=False,
+        description=(
+            "Merge Machines/, ModelSpec/, and DomainSpec/ from this source catalog "
+            "into the resolved catalog_root before use. "
+            "Pass ``'local'`` to merge from the built-in package catalog."
+        ),
+    )
+    initialize_catalog_clobber: bool = Field(
+        default=False,
+        validate_default=False,
+        description=(
+            "When merging via ``initialize_catalog_from``, silently overwrite "
+            "files that already exist at the destination. "
+            "If False (default) and conflicts are found, raises ValueError listing them."
+        ),
+    )
+    suppress_catalog_validation: bool = Field(
+        default=True,
+        validate_default=False,
+        description=(
+            "Skip the catalog structure validation check when opening the catalog. "
+            "Defaults to True so that CstarSpecBuilder can operate on an empty or "
+            "partially populated catalog without raising an error."
+        ),
+    )
     # Internal attributes (computed/loaded)
     blueprint: Optional[cstar_models.RomsMarblBlueprint] = Field(
         default=None,
