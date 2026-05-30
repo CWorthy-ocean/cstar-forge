@@ -50,7 +50,6 @@ def _create_mock_paths_core(tmp_path, blueprints_dir=None, scratch=None, here=No
     bp = blueprints_dir if blueprints_dir is not None else cat / "blueprints"
     return DataPaths(
         here=h,
-        model_configs=config.paths.model_configs,
         source_data=config.paths.source_data,
         input_data=config.paths.input_data,
         scratch=scratch if scratch is not None else config.paths.scratch,
@@ -689,7 +688,6 @@ class TestCstarSpecBuilderModelPostInit:
                 # Create a real DataPaths object with tmp_path for blueprints
                 mock_paths_obj = DataPaths(
                     here=config.paths.here,
-                    model_configs=config.paths.model_configs,
                     source_data=config.paths.source_data,
                     input_data=config.paths.input_data,
                     scratch=config.paths.scratch,

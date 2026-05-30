@@ -64,7 +64,6 @@ def _create_mock_paths(tmp_path):
     """Helper to create a mock DataPaths with tmp_path as input_data."""
     return DataPaths(
         here=config.paths.here,
-        model_configs=config.paths.model_configs,
         source_data=config.paths.source_data,
         input_data=tmp_path,
         scratch=config.paths.scratch,

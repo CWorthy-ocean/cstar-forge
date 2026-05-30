@@ -1,6 +1,6 @@
 templates:
   compile_time:
-    location: "{{ config.path.model_configs }}/{{ model.name }}/templates/compile-time"
+    location: "templates/compile-time"
     filter:
       files:
       - bgc.opt.j2
@@ -20,7 +20,7 @@ templates:
       - upscale_output.opt.j2
 
   run_time:
-    location: "{{ config.path.model_configs }}/{{ model.name }}/templates/run-time"
+    location: "templates/run-time"
     filter:
       files:
       - roms.in.j2
@@ -33,14 +33,14 @@ settings:
     n_tracers: 34
     marbl: true
   compile_time:
-    _default_config_yaml: "{{ config.path.model_configs }}/{{ model.name }}/templates/compile-time-defaults.yml"
+    _default_config_yaml: "templates/compile-time-defaults.yml"
   run_time:
-    _default_config_yaml: "{{ config.path.model_configs }}/{{ model.name }}/templates/run-time-defaults.yml"
+    _default_config_yaml: "templates/run-time-defaults.yml"
 
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: "6588486"
+    commit:  "6588486" # restoring test: "7332706b5c1e404a2ca708eac41252c8b27f4ad6"
 
   marbl:
     location: https://github.com/marbl-ecosys/MARBL.git
@@ -70,6 +70,12 @@ inputs:
           climatology: true
         type: bgc
         coarse_grid_mode: "never"
+      # - source:  # salinity restoring disabled until further checks passed
+      #     name: WOA
+      #     climatology: true
+      #   restoring_forces: ['sss']
+      #   type: restoring
+      #   coarse_grid_mode: "never"
 
     boundary:
       - source:

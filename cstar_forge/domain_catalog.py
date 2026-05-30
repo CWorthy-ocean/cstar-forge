@@ -71,8 +71,12 @@ class DomainCatalog:
         │   ├── NERSC_perlmutter.yml
         │   └── RCAC_anvil.yml
         ├── ModelSpec/
-        │   ├── cson_roms-marbl_v0.1.yml
-        │   └── cson_roms-no-bgc_v0.1.yml
+        │   ├── cson_roms-marbl_v0.1/
+        │   │   ├── model.yml
+        │   │   └── templates/
+        │   └── cson_roms-no-bgc_v0.1/
+        │       ├── model.yml
+        │       └── templates/
         ├── DomainSpec/
         │   ├── ccs-12km/
         │   │   ├── Domain.yml
@@ -214,12 +218,13 @@ class DomainCatalog:
             pass
 
     def _scan_models(self) -> None:
-        """Scan ModelSpec/ for per-model YAML files."""
+        """Scan ModelSpec/ for per-model directories containing model.yml."""
         self._models = {}
-        model_dir = self.catalog_root / "ModelSpec"
+        model_dir_root = self.catalog_root / "ModelSpec"
         try:
-            for f in sorted(self._fs_glob(model_dir, "*.yml")):
-                self._models[f.stem] = f
+            for f in sorted(self._fs_glob(model_dir_root, "*/model.yml")):
+                model_dir = f.parent
+                self._models[model_dir.name] = model_dir  # store dir, not file
         except Exception:
             pass
 
@@ -324,7 +329,7 @@ class DomainCatalog:
             if not self._machines:
                 missing.append("Machines/ (with at least one .yml)")
             if not self._models:
-                missing.append("ModelSpec/ (with at least one .yml)")
+                missing.append("ModelSpec/ (with at least one <name>/model.yml)")
             raise ValueError(
                 f"No valid catalog found at '{self.catalog_root}'. "
                 f"Missing: {', '.join(missing)}.\n"
@@ -392,13 +397,38 @@ class DomainCatalog:
     # ------------------------------------------------------------------
 
     def model_path(self, model_name: str) -> Path:
-        """Return the path to the YAML file for a named model."""
+        """Return the path to the model.yml file for a named model."""
+        if model_name not in self._models:
+            raise KeyError(
+                f"Model '{model_name}' not found in catalog at {self.catalog_root}. "
+                f"Available models: {self.model_names}"
+            )
+        return self._models[model_name] / "model.yml"
+
+    def model_dir(self, model_name: str) -> Path:
+        """Return the directory containing model.yml and templates/ for a named model."""
         if model_name not in self._models:
             raise KeyError(
                 f"Model '{model_name}' not found in catalog at {self.catalog_root}. "
                 f"Available models: {self.model_names}"
             )
         return self._models[model_name]
+
+    def compile_time_template_dir(self, model_name: str) -> Path:
+        """Return the compile-time template directory for a named model."""
+        return self.model_dir(model_name) / "templates" / "compile-time"
+
+    def run_time_template_dir(self, model_name: str) -> Path:
+        """Return the run-time template directory for a named model."""
+        return self.model_dir(model_name) / "templates" / "run-time"
+
+    def compile_time_defaults_path(self, model_name: str) -> Path:
+        """Return the path to compile-time-defaults.yml for a named model."""
+        return self.model_dir(model_name) / "templates" / "compile-time-defaults.yml"
+
+    def run_time_defaults_path(self, model_name: str) -> Path:
+        """Return the path to run-time-defaults.yml for a named model."""
+        return self.model_dir(model_name) / "templates" / "run-time-defaults.yml"
 
     def machine_path(self, machine_name: str) -> Path:
         """Return the path to the YAML file for a named machine."""
@@ -580,12 +610,22 @@ class DomainCatalog:
     # Registration / mutation methods
     # ------------------------------------------------------------------
 
-    def register_model(self, model_yaml: Union[Path, str]) -> None:
-        """Register a new model by copying its YAML into ModelSpec/ and rescanning."""
-        src = Path(model_yaml).expanduser().resolve()
-        dest_dir = self.catalog_root / "ModelSpec"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest_dir / src.name)
+    def register_model(self, model_dir: Union[Path, str]) -> None:
+        """Register a new model by copying its directory (containing model.yml) into ModelSpec/ and rescanning.
+
+        Parameters
+        ----------
+        model_dir : str or Path
+            Path to the model directory (which must contain model.yml).
+            The directory name is used as the model name.
+        """
+        src = Path(model_dir).expanduser().resolve()
+        if not (src / "model.yml").exists():
+            raise ValueError(f"model_dir must contain a model.yml file: {src}")
+        dest_dir = self.catalog_root / "ModelSpec" / src.name
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir)
+        shutil.copytree(src, dest_dir)
         self._scan_models()
 
     def register_domain(self, builder: Any) -> None:
@@ -692,7 +732,7 @@ class DomainCatalog:
         catalog._scan_domains()
 
     def copy_model(self, model_name: str, catalog: "DomainCatalog") -> None:
-        """Copy a model YAML file to another DomainCatalog.
+        """Copy a model directory (model.yml + templates/) to another DomainCatalog.
 
         Parameters
         ----------
@@ -701,10 +741,11 @@ class DomainCatalog:
         catalog : DomainCatalog
             Target catalog to copy the model into.
         """
-        src = self.model_path(model_name)
-        dest_dir = catalog.catalog_root / "ModelSpec"
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest_dir / src.name)
+        src = self.model_dir(model_name)
+        dest = catalog.catalog_root / "ModelSpec" / model_name
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(src, dest)
         catalog._scan_models()
 
     # ------------------------------------------------------------------

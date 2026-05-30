@@ -37,7 +37,6 @@ class DataPaths:
     """
 
     here: Path
-    model_configs: Path
     source_data: Path
     input_data: Path
     scratch: Path
@@ -207,7 +206,6 @@ def get_data_paths() -> DataPaths:
     source_data, input_data, scratch = layout_fn(home, env)
 
     here = Path(__file__).resolve().parent
-    model_configs = here / "model-configs"
     # Inner catalog dir: .../cstar_forge_data/catalog/blueprints/
     catalog = default_catalog_inner_dir(source_data)
     blueprints_dir = catalog / "blueprints"
@@ -216,12 +214,11 @@ def get_data_paths() -> DataPaths:
     machines_yaml = here / "machines.yml"
 
     # ensure everything exists
-    for p in (source_data, input_data, scratch, catalog, blueprints_dir, model_configs):
+    for p in (source_data, input_data, scratch, catalog, blueprints_dir):
         _ensure_dir(p)
 
     return DataPaths(
         here=here,
-        model_configs=model_configs,
         source_data=source_data,
         input_data=input_data,
         scratch=scratch,

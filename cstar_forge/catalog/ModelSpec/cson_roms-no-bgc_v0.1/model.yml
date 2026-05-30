@@ -1,6 +1,6 @@
 templates:
   compile_time:
-    location: "{{ config.path.model_configs }}/{{ model.name }}/templates/compile-time"
+    location: "templates/compile-time"
     filter:
       files:
       - blk_frc.opt.j2
@@ -16,7 +16,7 @@ templates:
       - tracers.opt.j2
 
   run_time:
-    location: "{{ config.path.model_configs }}/{{ model.name }}/templates/run-time"
+    location: "templates/run-time"
     filter:
       files:
       - roms.in.j2
@@ -26,9 +26,9 @@ settings:
     n_tracers: 2
     marbl: false
   compile_time:
-    _default_config_yaml: "{{ config.path.model_configs }}/{{ model.name }}/templates/compile-time-defaults.yml"
+    _default_config_yaml: "templates/compile-time-defaults.yml"
   run_time:
-    _default_config_yaml: "{{ config.path.model_configs }}/{{ model.name }}/templates/run-time-defaults.yml"
+    _default_config_yaml: "templates/run-time-defaults.yml"
 
 code:
   roms:
