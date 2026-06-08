@@ -1977,7 +1977,7 @@ class CstarSpecBuilder(BaseModel):
         # Set dynamic values that depend on instance properties
         sim_name = ensure_nml_section(self._settings_run_time, "SIMULATION_NAME_SETTINGS")
         sim_name["title"] = self.casename
-        sim_name["output_root_name"] = str(self.run_output_dir / "output/roms)
+        sim_name["output_root_name"] = str(self.run_output_dir / "output/roms")
 
         # Set timestepping defaults (will compute dt from CFL if dt is None)
         self._set_run_time_settings_timestepping_defaults(dt=dt)
