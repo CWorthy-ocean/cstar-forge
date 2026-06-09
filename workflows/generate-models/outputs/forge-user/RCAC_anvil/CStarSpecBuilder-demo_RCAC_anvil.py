@@ -1,5 +1,6 @@
 """Create a new domain and run a ROMS simulation using C-STAR Forge."""
 
+import asyncio
 import cstar_forge
 from datetime import datetime
 from glob import glob
@@ -91,7 +92,7 @@ ocn.ensure_source_data()
 # Generate input files
 ####################################
 
-ocn.generate_inputs(clobber=True)  # setting clobber=True will overwrite existing files
+ocn.generate_inputs(clobber=False)  # setting clobber=True will overwrite existing files
 
 ####################################
 # Access generated input datasets
@@ -124,25 +125,25 @@ ocn.prep_cstar_environment(
 # Run model simulation
 ####################################
 
-ocn.run()
+asyncio.run(ocn.run())
 
 ####################################
 # Visualize model output
 ####################################
 
-bgc_glob = str(
-    ocn.run_output_dir / "output" / "joined_output" / (ocn.casename + "_bgc.*")
-)
-print(bgc_glob)
-
-files = glob(str(ocn.run_output_dir / "output" / "joined_output" / "output_bgc.*"))
-ds = xr.open_mfdataset(files)
-ds = ds.where(ocn.grid.ds.mask_rho)
-ds.DIC.isel(time=0, s_rho=-1).plot()
-plt.show()
+#bgc_glob = str(
+#    ocn.run_output_dir / "output" / "joined_output" / (ocn.casename + "_bgc.*")
+#)
+#print(bgc_glob)
+#
+#files = glob(str(ocn.run_output_dir / "output" / "joined_output" / "output_bgc.*"))
+#ds = xr.open_mfdataset(files)
+#ds = ds.where(ocn.grid.ds.mask_rho)
+#ds.DIC.isel(time=0, s_rho=-1).plot()
+#plt.show()
 
 ####################################
 # Set blueprint state
 ####################################
 
-ocn.set_blueprint_state(state="draft")
+#ocn.set_blueprint_state(state="draft")

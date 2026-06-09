@@ -2572,6 +2572,9 @@ class CstarSpecBuilder(BaseModel):
                 del os.environ["CSTAR_NPROCS_POST"]
         #implicit: elif n_procs_available is None, do nothing
 
+        python_bin_dir = str(Path(sys.executable).resolve().parent)
+        path_prefix = [python_bin_dir]
+
         if config.system == "RCAC_anvil":
             # find the right conda path to this environment and put it in the front of the path
             # otherwise, it might find the wrong cstar executable
@@ -2585,8 +2588,17 @@ class CstarSpecBuilder(BaseModel):
 
             # make symlink in current dir to correct cstar
             os.symlink(cstar_exe, new_link)
-            _current_path = os.environ["PATH"]
-            os.environ["PATH"] = str(Path.cwd()) + os.pathsep + _current_path
+            path_prefix = [str(Path.cwd()), python_bin_dir]
+
+        conda_lib_dir = Path(sys.executable).resolve().parent.parent / "lib"
+        if conda_lib_dir.is_dir():
+            os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
+                [str(conda_lib_dir), os.environ.get("LD_LIBRARY_PATH", "")]
+            ).rstrip(os.pathsep)
+
+        os.environ["PATH"] = os.pathsep.join(
+            path_prefix + [os.environ.get("PATH", "")]
+        ).rstrip(os.pathsep)
 
 
     async def run(
@@ -3263,7 +3275,7 @@ class CstarSpecEngine:
                     clobber = True,  # recommend True, but it will clear previous results from this run
                     n_procs_available = 0,  # 0 is auto-detect, change if on a login or shared node to not overuse resources
                 )
-                builder.run()
+                asyncio.run(builder.run())
 
                 # deprecated run handling - leaving here for now
                 # TODO: remove this once we run_all() behvior is refactored

@@ -769,6 +769,28 @@ class TestRomsMarblInputDataGeneration:
             
             # Check that resource was added to forcing.surface
             assert len(sample_roms_marbl_input_data.blueprint_elements.forcing.surface.data) > 0
+
+    @patch('cstar_forge.input_data.rt.SurfaceForcing')
+    def test_generate_surface_forcing_strips_unsupported_kwargs(
+        self, mock_sf_class, sample_roms_marbl_input_data, tmp_path
+    ):
+        """Unsupported forge kwargs (e.g. restoring_forces=None) are not passed to roms_tools."""
+        mock_sf = MagicMock()
+        surface_path = tmp_path / "surface.nc"
+        surface_path.touch()
+        mock_sf.save.return_value = surface_path
+        mock_sf_class.return_value = mock_sf
+
+        with patch('cstar_forge.input_data.config.paths', _create_mock_paths(tmp_path)):
+            sample_roms_marbl_input_data._generate_surface_forcing(
+                key="forcing.surface",
+                source={"name": "ERA5"},
+                type="physics",
+                restoring_forces=None,
+            )
+
+        _, call_kwargs = mock_sf_class.call_args
+        assert "restoring_forces" not in call_kwargs
     
     @patch('cstar_forge.input_data.rt.SurfaceForcing')
     def test_generate_surface_forcing_missing_type(self, mock_sf_class, sample_roms_marbl_input_data):

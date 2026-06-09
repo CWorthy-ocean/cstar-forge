@@ -165,6 +165,18 @@ def compute_timestep_from_cfl(
     return dt
 
 
+def roms_tools_init_kwargs(target, args: dict) -> dict:
+    """
+    Return *args* restricted to keyword parameters accepted by *target*.
+
+    Forge model specs may include fields (for example ``restoring_forces``) that
+    are only supported in newer roms_tools releases. Drop unknown keys so older
+    installs still work for physics/bgc surface forcing.
+    """
+    params = inspect.signature(target).parameters
+    return {key: value for key, value in args.items() if key in params}
+
+
 def roms_tools_nesting_writer():
     """
     Return the roms_tools API that writes parent/child nesting metadata to disk.

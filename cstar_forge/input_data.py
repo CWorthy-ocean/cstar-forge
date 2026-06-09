@@ -29,7 +29,7 @@ from .settings import (
     ensure_cppdefs_section,
     ensure_nml_section,
 )
-from .util import roms_tools_nesting_writer
+from .util import roms_tools_init_kwargs, roms_tools_nesting_writer
 import roms_tools as rt
 
 # Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name must contain the
@@ -761,6 +761,19 @@ class RomsMarblInputData(InputData):
         yaml_path = self._yaml_filename(f"{key}-{type}")
         output_path = self._forcing_filename(input_name=f"surface-{type}")
 
+        surface_forcing_params = inspect.signature(rt.SurfaceForcing.__init__).parameters
+        if type == "restoring" and "restoring_forces" not in surface_forcing_params:
+            warnings.warn(
+                "Skipping surface restoring forcing: installed roms_tools does not "
+                "support restoring_forces (upgrade roms_tools or disable restoring "
+                "in the model spec).",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+
+        surface_forcing_kwargs = roms_tools_init_kwargs(rt.SurfaceForcing, input_args)
+
         existing_paths = self._existing_output_paths(output_path)
         frc = None
         if existing_paths:
@@ -773,7 +786,7 @@ class RomsMarblInputData(InputData):
                     UserWarning,
                     stacklevel=2,
                 )
-                frc = rt.SurfaceForcing(grid=self.grid, **input_args)
+                frc = rt.SurfaceForcing(grid=self.grid, **surface_forcing_kwargs)
                 try:
                     frc.to_yaml(yaml_path)
                 except Exception as e:
@@ -786,7 +799,7 @@ class RomsMarblInputData(InputData):
             if input_args["type"] == "restoring":
                 if "sss" in input_args["restoring_forces"]:
                     ensure_cppdefs_section(self._settings_compile_time)["sal_restore"] = True
-            frc = rt.SurfaceForcing(grid=self.grid, **input_args)
+            frc = rt.SurfaceForcing(grid=self.grid, **surface_forcing_kwargs)
             paths = frc.save(output_path)
             try:
                 frc.to_yaml(yaml_path)

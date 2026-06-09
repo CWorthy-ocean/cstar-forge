@@ -12,6 +12,19 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape, meta
 from typing import Dict, Any, Union, Set, Optional
 
 
+def _copy_template_file(src: Path, dst: Path) -> None:
+    """
+    Copy a template file to the build output directory.
+
+    Prefer ``copy2`` to preserve metadata when the filesystem allows it; on HPC
+    scratch/NFS mounts, ``copystat``/``utime`` often raises ``PermissionError``.
+    """
+    try:
+        shutil.copy2(src, dst)
+    except (PermissionError, OSError):
+        shutil.copyfile(src, dst)
+
+
 def _fortran_cdr_file_decl(path: Any, max_line_len: int = 72) -> str:
     """
     Emit ``character(len=...) :: cdr_file = '...'`` for ROMS ``cdr_frc.opt``.
@@ -286,7 +299,7 @@ def render_roms_settings(
         else:
             # Copy non-template file directly
             output_path = code_output_dir / template_file
-            shutil.copy2(template_path, output_path)
+            _copy_template_file(template_path, output_path)
             
             rendered_files.append(template_file)
     
