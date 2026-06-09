@@ -424,49 +424,47 @@ class ModelSpec(BaseModel):
     def _validate_settings_templates_cross_ref(self) -> "ModelSpec":
         """
         Cross-validate that template files have corresponding settings keys.
-        
-        Only files ending with .j2 in templates.compile_time.filter.files are validated.
-        Each .j2 template file should have a corresponding key in settings.compile_time.settings_dict.
-        Non-template files are skipped.
+
+        Only ``.j2`` templates are validated. Keys are resolved the same way as
+        ``render_roms_settings`` (e.g. ``namelist.nml.j2`` -> ``namelist.nml``,
+        ``bgc.opt.j2`` -> ``bgc``).
         """
+        from .settings import settings_key_for_template
+
         if self.templates is None or self.settings is None:
             return self
-        
-        # Validate compile_time
-        if (self.templates.compile_time is not None and 
-            self.templates.compile_time.filter is not None and
-            self.settings.compile_time is not None):
-            
-            template_files = self.templates.compile_time.filter.files or []
-            # Only validate .j2 template files - skip non-template files
-            # Remove .j2 extension and extract base name for comparison with settings keys
-            # e.g., "bgc.opt.j2" -> "bgc.opt" -> should match "bgc" key in settings_dict
-            template_base_names = set()
-            for f in template_files:
-                # Only process files that end with .j2 (template files)
-                if not f.endswith('.j2'):
-                    continue
-                # Remove .j2 extension
-                base_name = f.replace('.j2', '')
-                # Extract the section name (before first dot) for settings_dict key
-                # e.g., "bgc.opt" -> "bgc", "cppdefs.opt" -> "cppdefs"
-                if '.' in base_name:
-                    section_name = base_name.split('.')[0]
-                    template_base_names.add(section_name)
-                else:
-                    # If no dot, use the whole name
-                    template_base_names.add(base_name)
-            
-            settings_keys = set(self.settings.compile_time.settings_dict.keys())
-            
-            # Check that each template file section has a corresponding settings key
-            missing_keys = template_base_names - settings_keys
+
+        def _validate_stage(stage_name: str, template_repo: Any, settings_stage: Any) -> None:
+            if template_repo is None or template_repo.filter is None or settings_stage is None:
+                return
+
+            template_files = template_repo.filter.files or []
+            settings_dict = settings_stage.settings_dict
+            template_keys = {
+                settings_key_for_template(f, settings_dict)
+                for f in template_files
+                if f.endswith(".j2")
+            }
+            template_keys.discard(None)
+            settings_keys = set(settings_dict.keys())
+            missing_keys = template_keys - settings_keys
             if missing_keys:
                 raise ValueError(
                     f"Template files with sections {sorted(missing_keys)} do not have corresponding keys "
-                    f"in settings.compile_time.settings_dict. Available keys: {sorted(settings_keys)}"
+                    f"in settings.{stage_name}.settings_dict. Available keys: {sorted(settings_keys)}"
                 )
-        
+
+        _validate_stage(
+            "compile_time",
+            self.templates.compile_time,
+            self.settings.compile_time,
+        )
+        _validate_stage(
+            "run_time",
+            self.templates.run_time,
+            self.settings.run_time,
+        )
+
         return self
     
     @model_validator(mode="after")

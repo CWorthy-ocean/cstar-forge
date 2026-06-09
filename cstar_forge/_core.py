@@ -357,10 +357,7 @@ class CstarSpecBuilder(BaseModel):
     _cstar_simulation: Optional[Any] = PrivateAttr(default=None)
     _settings_compile_time: Dict[str, Any] = PrivateAttr(default_factory=dict)
     _settings_run_time: Dict[str, Any] = PrivateAttr(default_factory=dict)
-<<<<<<< HEAD
-=======
     _catalog_instance: Optional[Any] = PrivateAttr(default=None)
->>>>>>> main
 
     @model_validator(mode="after")
     def _validate_dates(self) -> "CstarSpecBuilder":
@@ -391,8 +388,6 @@ class CstarSpecBuilder(BaseModel):
         After this method completes, the blueprint is in the **PRECONFIG** stage
         and has been persisted to disk.
         """
-<<<<<<< HEAD
-=======
         
         if self.catalog_root is None:
             print(
@@ -402,7 +397,6 @@ class CstarSpecBuilder(BaseModel):
                 "      To use a custom catalog, set catalog_root=<path> or catalog_root='default' "
                 "when creating CstarSpecBuilder."
             )
->>>>>>> main
 
         # Create grids, 4 cases:
         # has child and no parent, has child and parent, has parent and no child, no parent no child
@@ -617,21 +611,12 @@ class CstarSpecBuilder(BaseModel):
     @property
     def blueprint_dir(self) -> Path:
         """Return the blueprint directory path."""
-<<<<<<< HEAD
-        return self.resolved_catalog_dir / "blueprints" / config.system_id / self.name
-
-    @property
-    def compile_time_code_dir(self) -> Path:
-        """Compile-time rendered templates under this builder's ``builds`` tree."""
-        return self.resolved_catalog_dir / "builds" / self.name / "compile-time"
-=======
         return self._get_catalog().blueprint_dir_for(config.system_id, self.name)
     
     @property
     def compile_time_code_dir(self) -> Path:
         """Compile-time rendered templates inside this blueprint's Build/ directory."""
         return self._get_catalog().build_dir_for(config.system_id, self.name) / "compile-time"
->>>>>>> main
 
     @property
     def run_time_code_dir(self) -> Path:
@@ -2156,12 +2141,28 @@ class CstarSpecBuilder(BaseModel):
                     f"Valid keys are: {sorted(self._settings_compile_time.keys())}"
                 )
 
+    def _normalize_run_time_settings(self, settings_run_time: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Accept either ``namelist.nml``-wrapped overrides or bare namelist sections.
+
+        ``{"TIME_STEPPING": {"dt": 40}}`` is normalized to
+        ``{"namelist.nml": {"TIME_STEPPING": {"dt": 40}}}`` when no known top-level
+        run-time keys are present.
+        """
+        if not settings_run_time or RUNTIME_NAMELIST_KEY in settings_run_time:
+            return settings_run_time
+
+        known_top = set(self._settings_run_time.keys())
+        if not any(key in known_top for key in settings_run_time):
+            return {RUNTIME_NAMELIST_KEY: settings_run_time}
+        return settings_run_time
+
     def _update_settings_run_time(self, settings_run_time: Dict[str, Any]) -> None:
         """
         Update run-time settings by recursively merging nested dictionaries.
 
         Top-level keys must already exist on the builder. Nested dicts are merged
-        recursively so partial overrides (e.g. only ``dt`` under ``time_stepping``)
+        recursively so partial overrides (e.g. only ``dt`` under ``TIME_STEPPING``)
         do not remove sibling keys populated from defaults.
 
         **Merging Behavior:**
@@ -2186,6 +2187,8 @@ class CstarSpecBuilder(BaseModel):
         # Consider adding a test for the merge operation passing {"nothing-shared": "foo"} to test the no-intersection edge case.
         if not settings_run_time:
             return
+
+        settings_run_time = self._normalize_run_time_settings(settings_run_time)
 
         for key, value in settings_run_time.items():
             if key in self._settings_run_time:
@@ -2259,8 +2262,6 @@ class CstarSpecBuilder(BaseModel):
                 "ninfo": 1,
             }
         )
-<<<<<<< HEAD
-=======
    
     def register_domain(self) -> None:
         """Register this builder's domain in the catalog.
@@ -2359,7 +2360,6 @@ class CstarSpecBuilder(BaseModel):
 
         cfg.update(overrides)
         return cls(**cfg)
->>>>>>> main
 
     def configure_build(
         self,
@@ -2862,10 +2862,7 @@ class CstarSpecEngine:
       partitioning: dict
     ```
     """
-<<<<<<< HEAD
-=======
     import asyncio
->>>>>>> main
 
     def __init__(
         self,
@@ -2981,19 +2978,10 @@ class CstarSpecEngine:
         CstarSpecBuilder
             Configured CstarSpecBuilder instance.
         """
-<<<<<<< HEAD
-        config_dict = self._get_domain_config(domain_name).copy()
-
-        # Apply ensemble_id if provided
-        if ensemble_id is not None:
-            config_dict["ensemble_id"] = ensemble_id
-
-=======
         cfg = self._get_domain_config(domain_name).copy()
 
         if ensemble_id is not None:
             cfg["ensemble_id"] = ensemble_id
->>>>>>> main
 
         # Resolve parent/child grid kwargs from this engine's own domain registry
         # (references here point to sibling entries in the engine's domains file).
@@ -3008,35 +2996,10 @@ class CstarSpecEngine:
         if catalog_root is not None:
             cfg["catalog_root"] = catalog_root
         elif getattr(self, "_engine_catalog_root", None) is not None:
-<<<<<<< HEAD
-            config_dict.setdefault("catalog_root", self._engine_catalog_root)
-
-        # Convert date strings to datetime objects
-        if "start_time" in config_dict:
-            if isinstance(config_dict["start_time"], str):
-                config_dict["start_time"] = datetime.fromisoformat(config_dict["start_time"])
-        if "end_time" in config_dict:
-            if isinstance(config_dict["end_time"], str):
-                config_dict["end_time"] = datetime.fromisoformat(config_dict["end_time"])
-
-        # Convert open_boundaries dict to OpenBoundaries model
-        if "open_boundaries" in config_dict:
-            config_dict["open_boundaries"] = forge_models.OpenBoundaries(**config_dict["open_boundaries"])
-
-        # Convert partitioning dict to PartitioningParameterSet
-        if "partitioning" in config_dict:
-            config_dict["partitioning"] = cstar_models.PartitioningParameterSet(**config_dict["partitioning"])
-
-
-        # Create and return CstarSpecBuilder
-        return CstarSpecBuilder(**config_dict)
-
-=======
             cfg.setdefault("catalog_root", self._engine_catalog_root)
 
         return CstarSpecBuilder.from_domain(cfg, **(overrides or {}))
     
->>>>>>> main
     def generate_domain(
         self,
         domain_name: str,
@@ -3107,11 +3070,6 @@ class CstarSpecEngine:
             compile_time_settings=compile_time_settings or {},
             run_time_settings=run_time_settings or {}
         )
-<<<<<<< HEAD
-        builder.build()
-        builder.pre_run()
-
-=======
         # TODO: pass prep args as dict to generate_domain()
         builder.prep_cstar_environment(
             account_key = None,  # None gets from machine config or override here
@@ -3123,7 +3081,6 @@ class CstarSpecEngine:
         #import asyncio
         asyncio.run(builder.run())
         
->>>>>>> main
         return builder
 
     def generate_all(

@@ -355,6 +355,19 @@ def _attach_roms_jinja_filters(env: Environment) -> None:
 RUNTIME_NAMELIST_KEY = "namelist.nml"
 
 
+def settings_key_for_template(
+    template_file: str,
+    settings_dict: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return the top-level settings key used to render a ``.j2`` template file."""
+    if not template_file.endswith(".j2"):
+        return None
+    base_name = template_file[:-3]
+    if settings_dict and base_name in settings_dict:
+        return base_name
+    return base_name.rsplit(".", 1)[0] if "." in base_name else base_name
+
+
 def runtime_namelist(settings_run_time: Dict[str, Any]) -> Dict[str, Any]:
     """Return the namelist section dict from a run-time settings mapping."""
     if RUNTIME_NAMELIST_KEY not in settings_run_time:

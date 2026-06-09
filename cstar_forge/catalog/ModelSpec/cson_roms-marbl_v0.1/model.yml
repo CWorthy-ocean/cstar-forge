@@ -3,27 +3,13 @@ templates:
     location: "templates/compile-time"
     filter:
       files:
-      - bgc.opt.j2
-      - blk_frc.opt.j2
-      - cdr_frc.opt.j2
-      - cdr_output.opt.j2
       - cppdefs.opt.j2
-      - diagnostics.opt.j2
-      - extract_data.opt.j2
-      - ocean_vars.opt.j2
-      - param.opt.j2
-      - river_frc.opt.j2
-      - sponge_tune.opt.j2
-      - surf_flux.opt.j2
-      - tides.opt.j2
-      - tracers.opt.j2
-      - upscale_output.opt.j2
 
   run_time:
     location: "templates/run-time"
     filter:
       files:
-      - roms.in.j2
+      - namelist.nml.j2
       - marbl_in
       - marbl_tracer_output_list
       - marbl_diagnostic_output_list

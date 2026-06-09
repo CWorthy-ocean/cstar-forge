@@ -1885,13 +1885,8 @@ class TestLoadModelsYaml:
 
         run_yaml = model_dir / "templates" / "run-time-defaults.yml"
         run_yaml.parent.mkdir(parents=True, exist_ok=True)
-<<<<<<< HEAD
         run_yaml.write_text("namelist.nml: {}\n")
-        
-=======
-        run_yaml.write_text("roms.in: {}\n")
 
->>>>>>> main
         yaml_content = {
             "test_model": {
                 "code": {
