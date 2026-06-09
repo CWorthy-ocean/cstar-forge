@@ -48,16 +48,13 @@ def _create_mock_paths_core(tmp_path, blueprints_dir=None, scratch=None, here=No
     h = here if here is not None else config.paths.here
     cat = tmp_path / "catalog"
     bp = blueprints_dir if blueprints_dir is not None else cat / "blueprints"
-    bld = cat / "builds"
     return DataPaths(
         here=h,
-        model_configs=config.paths.model_configs,
         source_data=config.paths.source_data,
         input_data=config.paths.input_data,
         scratch=scratch if scratch is not None else config.paths.scratch,
         catalog=cat,
         blueprints=bp,
-        builds=bld,
         models_yaml=config.paths.models_yaml,
         builds_yaml=config.paths.builds_yaml,
         machines_yaml=config.paths.machines_yaml,
@@ -65,11 +62,10 @@ def _create_mock_paths_core(tmp_path, blueprints_dir=None, scratch=None, here=No
 
 
 def _attach_catalog_attrs(mock_paths, blueprints_path: Path) -> None:
-    """Align MagicMock ``catalog`` / ``builds`` with ``blueprints`` for path properties."""
+    """Align MagicMock ``catalog`` with ``blueprints`` for path properties."""
     mock_paths.catalog = (
         blueprints_path.parent if blueprints_path.name == "blueprints" else blueprints_path
     )
-    mock_paths.builds = mock_paths.catalog / "builds"
 
 
 @pytest.fixture
@@ -211,7 +207,7 @@ def mock_model_spec():
         run_time=cstar_models.CodeRepository(
             location="https://github.com/test/run_time.git",
             branch="main",
-            filter=cstar_models.PathFilter(files=["roms.in"])
+            filter=cstar_models.PathFilter(files=["namelist.nml"])
         ),
         compile_time=cstar_models.CodeRepository(
             location="https://github.com/test/compile_time.git",
@@ -226,9 +222,9 @@ def mock_model_spec():
     mock_settings.compile_time.settings_dict = {"cppdefs": {"test": True}}  # Non-empty dict
     mock_settings.run_time = MagicMock()
     mock_settings.run_time.settings_dict = {
-        "roms.in": {
-            "title": {"casename": "test"},
-            "time_stepping": {"ntimes": 100, "dt": 1800, "ndtfast": 60, "ninfo": 1},
+        "namelist.nml": {
+            "SIMULATION_NAME_SETTINGS": {"title": "test", "output_root_name": "roms"},
+            "TIME_STEPPING": {"ntimes": 100, "dt": 1800, "ndtfast": 60, "ninfo": 1},
         }
     }
     mock_settings.properties = MagicMock()
@@ -245,7 +241,7 @@ def mock_model_spec():
         run_time=cstar_models.CodeRepository(
             location="/tmp/templates/run-time",
             branch="na",
-            filter=cstar_models.PathFilter(files=["roms.in.j2"])
+            filter=cstar_models.PathFilter(files=["namelist.nml.j2"])
         )
     )
     # Add inputs attribute for datasets property
@@ -381,7 +377,7 @@ class TestCstarSpecBuilderInitialization:
         assert builder._canonicalize_stored_input_netcdf_path(old_path) == expected
         assert builder._canonicalize_stored_input_netcdf_path(Path(f"{raw}_grid.nc")) == expected
 
-    def test_rewrite_roms_input_paths_to_staged_runtime_paths(
+    def test_rewrite_namelist_input_paths_to_staged_runtime_paths(
         self,
         minimal_cstar_spec_builder_args,
         mock_model_spec,
@@ -394,28 +390,30 @@ class TestCstarSpecBuilderInitialization:
 
         source_root = builder.input_data_dir.resolve()
         builder._settings_run_time = {
-            "roms.in": {
-                "grid": {"grid_file": str(source_root / "case_grid.nc")},
-                "initial": {"initial_file": str(source_root / "case_initial.nc")},
-                "forcing": {
-                    "surface_forcing_path": str(source_root / "case_surface.nc"),
-                    "boundary_forcing_path": str(source_root / "case_boundary.nc"),
-                    "tidal_forcing_path": str(source_root / "case_tidal.nc"),
-                    "river_path": "/tmp/custom_river.nc",
+            "namelist.nml": {
+                "GRID_SETTINGS": {"grdname": str(source_root / "case_grid.nc")},
+                "INITIAL_CONDITIONS": {"ininame": str(source_root / "case_initial.nc")},
+                "FORCING_FILES": {
+                    "frcfile": [
+                        str(source_root / "case_surface.nc"),
+                        str(source_root / "case_boundary.nc"),
+                        str(source_root / "case_tidal.nc"),
+                        "/tmp/custom_river.nc",
+                    ],
                 },
             }
         }
 
-        builder._rewrite_roms_input_paths_to_staged_runtime_paths()
+        builder._rewrite_namelist_input_paths_to_staged_runtime_paths()
 
         staged_root = builder.run_output_dir / "input" / "input_datasets"
-        roms_settings = builder._settings_run_time["roms.in"]
-        assert roms_settings["grid"]["grid_file"] == str(staged_root / "case_grid.nc")
-        assert roms_settings["initial"]["initial_file"] == str(staged_root / "case_initial.nc")
-        assert roms_settings["forcing"]["surface_forcing_path"] == str(staged_root / "case_surface.nc")
-        assert roms_settings["forcing"]["boundary_forcing_path"] == str(staged_root / "case_boundary.nc")
-        assert roms_settings["forcing"]["tidal_forcing_path"] == str(staged_root / "case_tidal.nc")
-        assert roms_settings["forcing"]["river_path"] == "/tmp/custom_river.nc"
+        nml = builder._settings_run_time["namelist.nml"]
+        assert nml["GRID_SETTINGS"]["grdname"] == str(staged_root / "case_grid.nc")
+        assert nml["INITIAL_CONDITIONS"]["ininame"] == str(staged_root / "case_initial.nc")
+        assert nml["FORCING_FILES"]["frcfile"][0] == str(staged_root / "case_surface.nc")
+        assert nml["FORCING_FILES"]["frcfile"][1] == str(staged_root / "case_boundary.nc")
+        assert nml["FORCING_FILES"]["frcfile"][2] == str(staged_root / "case_tidal.nc")
+        assert nml["FORCING_FILES"]["frcfile"][3] == "/tmp/custom_river.nc"
 
 
     def test_validation_end_date_before_start_date(self, minimal_cstar_spec_builder_args, mock_model_spec):
@@ -493,19 +491,19 @@ class TestOverrideSettings:
         self, minimal_cstar_spec_builder_args, mock_model_spec, tmp_path
     ):
         mock_model_spec.settings.run_time.settings_dict = {
-            "roms.in": {
-                "title": {"casename": "test"},
-                "time_stepping": {"ntimes": 100, "dt": 1800, "ndtfast": 60, "ninfo": 1},
-                "foo_section": {"bar": 0},
+            "namelist.nml": {
+                "SIMULATION_NAME_SETTINGS": {"title": "test", "output_root_name": "roms"},
+                "TIME_STEPPING": {"ntimes": 100, "dt": 1800, "ndtfast": 60, "ninfo": 1},
+                "FOO_SECTION": {"bar": 0},
             }
         }
         override_file = tmp_path / "run-time-overrides.yml"
         override_file.write_text(
             yaml.dump(
                 {
-                    "roms.in": {
-                        "foo_section": {"bar": 99},
-                        "time_stepping": {"ndtfast": 12},
+                    "namelist.nml": {
+                        "FOO_SECTION": {"bar": 99},
+                        "TIME_STEPPING": {"ndtfast": 12},
                     }
                 }
             ),
@@ -517,9 +515,10 @@ class TestOverrideSettings:
             with patch("cstar_forge._core.rt.Grid") as mock_grid:
                 mock_grid.return_value = _create_grid_mock()
                 builder = CstarSpecBuilder(**minimal_cstar_spec_builder_args)
-        assert builder._settings_run_time["roms.in"]["foo_section"]["bar"] == 99
-        assert builder._settings_run_time["roms.in"]["time_stepping"]["ndtfast"] == 12
-        assert "ntimes" in builder._settings_run_time["roms.in"]["time_stepping"]
+        nml = builder._settings_run_time["namelist.nml"]
+        assert nml["FOO_SECTION"]["bar"] == 99
+        assert nml["TIME_STEPPING"]["ndtfast"] == 12
+        assert "ntimes" in nml["TIME_STEPPING"]
 
 
 class TestCstarSpecBuilderProperties:
@@ -692,13 +691,11 @@ class TestCstarSpecBuilderModelPostInit:
                 # Create a real DataPaths object with tmp_path for blueprints
                 mock_paths_obj = DataPaths(
                     here=config.paths.here,
-                    model_configs=config.paths.model_configs,
                     source_data=config.paths.source_data,
                     input_data=config.paths.input_data,
                     scratch=config.paths.scratch,
                     catalog=tmp_path,
                     blueprints=tmp_path,
-                    builds=tmp_path / "builds",
                     models_yaml=config.paths.models_yaml,
                     builds_yaml=config.paths.builds_yaml,
                     machines_yaml=config.paths.machines_yaml,
@@ -1042,8 +1039,8 @@ class TestCstarSpecBuilderBuildAndRun:
                 with patch("cstar_forge._core.config.paths", new=mock_paths):
                     builder = CstarSpecBuilder(**minimal_cstar_spec_builder_args)
                         
-                    # Get expected code_output_dir path using mocked paths
-                    expected_code_output_dir = mock_paths.builds / builder.name / "compile-time"
+                    # Get expected code_output_dir path using builder property
+                    expected_code_output_dir = builder.compile_time_code_dir
                     expected_location = str(expected_code_output_dir.resolve())
                         
                     # Mock render_roms_settings to return the expected location
@@ -2131,7 +2128,7 @@ class TestCstarSpecBuilderGenerateInputsComprehensive:
                                 builder = CstarSpecBuilder(**minimal_cstar_spec_builder_args)
                                 # Manually set settings so the guard passes
                                 builder._settings_compile_time = {"cppdefs": {}}
-                                builder._settings_run_time = {"roms.in": {}}
+                                builder._settings_run_time = {"namelist.nml": {}}
 
                                 builder.generate_inputs(clobber=True, test=False)
 
@@ -2174,7 +2171,7 @@ class TestCstarSpecBuilderGenerateInputsComprehensive:
                             with patch('cstar_forge._core.CstarSpecBuilder.persist'):
                                 builder = CstarSpecBuilder(**minimal_cstar_spec_builder_args)
                                 builder._settings_compile_time = {"cppdefs": {}}
-                                builder._settings_run_time = {"roms.in": {}}
+                                builder._settings_run_time = {"namelist.nml": {}}
 
                                 builder.generate_inputs(clobber=True, test=False)
 

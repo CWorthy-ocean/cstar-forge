@@ -12,6 +12,19 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape, meta
 from typing import Dict, Any, Union, Set, Optional
 
 
+def _copy_template_file(src: Path, dst: Path) -> None:
+    """
+    Copy a template file to the build output directory.
+
+    Prefer ``copy2`` to preserve metadata when the filesystem allows it; on HPC
+    scratch/NFS mounts, ``copystat``/``utime`` often raises ``PermissionError``.
+    """
+    try:
+        shutil.copy2(src, dst)
+    except (PermissionError, OSError):
+        shutil.copyfile(src, dst)
+
+
 def _fortran_cdr_file_decl(path: Any, max_line_len: int = 72) -> str:
     """
     Emit ``character(len=...) :: cdr_file = '...'`` for ROMS ``cdr_frc.opt``.
@@ -286,7 +299,7 @@ def render_roms_settings(
         else:
             # Copy non-template file directly
             output_path = code_output_dir / template_file
-            shutil.copy2(template_path, output_path)
+            _copy_template_file(template_path, output_path)
             
             rendered_files.append(template_file)
     
@@ -349,4 +362,69 @@ def _attach_roms_jinja_filters(env: Environment) -> None:
     """Register ROMS Fortran Jinja filters on *env* (renderer and parse-time temp env)."""
     env.filters["lower"] = ROMSTemplateRenderer._fortran_bool
     env.filters["fort_cdr_file_decl"] = _fortran_cdr_file_decl
+
+
+# Top-level key in run-time settings YAML / builder dict for ``namelist.nml.j2``.
+RUNTIME_NAMELIST_KEY = "namelist.nml"
+
+
+def settings_key_for_template(
+    template_file: str,
+    settings_dict: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Return the top-level settings key used to render a ``.j2`` template file."""
+    if not template_file.endswith(".j2"):
+        return None
+    base_name = template_file[:-3]
+    if settings_dict and base_name in settings_dict:
+        return base_name
+    return base_name.rsplit(".", 1)[0] if "." in base_name else base_name
+
+
+def runtime_namelist(settings_run_time: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the namelist section dict from a run-time settings mapping."""
+    if RUNTIME_NAMELIST_KEY not in settings_run_time:
+        raise KeyError(
+            f"Run-time settings must include {RUNTIME_NAMELIST_KEY!r}; "
+            f"got keys: {sorted(settings_run_time.keys())}"
+        )
+    nml = settings_run_time[RUNTIME_NAMELIST_KEY]
+    if not isinstance(nml, dict):
+        raise TypeError(
+            f"{RUNTIME_NAMELIST_KEY!r} must be a mapping, got {type(nml).__name__}"
+        )
+    return nml
+
+
+def ensure_nml_section(settings_run_time: Dict[str, Any], section: str) -> Dict[str, Any]:
+    """Get or create a namelist section (e.g. ``TIME_STEPPING``) under ``namelist.nml``."""
+    nml = settings_run_time.setdefault(RUNTIME_NAMELIST_KEY, {})
+    if section not in nml or not isinstance(nml[section], dict):
+        nml[section] = {}
+    return nml[section]
+
+
+def ensure_cppdefs_section(settings_compile_time: Dict[str, Any]) -> Dict[str, Any]:
+    """Get or create the ``cppdefs`` compile-time settings section."""
+    if "cppdefs" not in settings_compile_time or not isinstance(
+        settings_compile_time["cppdefs"], dict
+    ):
+        settings_compile_time["cppdefs"] = {}
+    return settings_compile_time["cppdefs"]
+
+
+def append_frcfile(settings_run_time: Dict[str, Any], path: Union[str, Path]) -> None:
+    """Append a forcing file path to ``FORCING_FILES.frcfile`` if not already present."""
+    sec = ensure_nml_section(settings_run_time, "FORCING_FILES")
+    files = sec.setdefault("frcfile", [])
+    path_str = str(path)
+    if path_str not in files:
+        files.append(path_str)
+
+
+# Namelist sections that hold filesystem paths rewritten for staged input datasets.
+NAMELIST_PATH_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("GRID_SETTINGS", "grdname"),
+    ("INITIAL_CONDITIONS", "ininame"),
+)
 

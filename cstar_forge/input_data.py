@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import inspect
 import warnings
-from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
@@ -24,7 +23,13 @@ from cstar.orchestration.models import Resource
 from . import config
 from . import models as forge_models
 from . import source_data
-from .util import roms_tools_nesting_writer
+from .settings import (
+    RUNTIME_NAMELIST_KEY,
+    append_frcfile,
+    ensure_cppdefs_section,
+    ensure_nml_section,
+)
+from .util import roms_tools_init_kwargs, roms_tools_nesting_writer
 import roms_tools as rt
 
 # Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name must contain the
@@ -310,9 +315,9 @@ class RomsMarblInputData(InputData):
             cdr_forcing=cstar_models.Dataset(data=[]) if "cdr_forcing" in unique_keys else None,
         )
         
-        # Initialize settings dictionaries to empty dicts
-        self._settings_compile_time = defaultdict(dict)
-        self._settings_run_time = {"roms.in": {}}
+        # Settings populated during generation; merged into the builder afterward.
+        self._settings_compile_time: dict = {}
+        self._settings_run_time: dict = {RUNTIME_NAMELIST_KEY: {}}
     
     def generate_all(self, clobber: bool = False, partition_files: bool = False, test: bool = False):
         """
@@ -379,7 +384,14 @@ class RomsMarblInputData(InputData):
         else:
             print("\n✅ All input files generated.\n")
         
-        return self.blueprint_elements, self._settings_compile_time, self._settings_run_time
+        compile_payload = (
+            {"cppdefs": dict(self._settings_compile_time["cppdefs"])}
+            if self._settings_compile_time.get("cppdefs")
+            else {}
+        )
+        nml = self._settings_run_time.get(RUNTIME_NAMELIST_KEY, {})
+        run_payload = {RUNTIME_NAMELIST_KEY: dict(nml)} if nml else {}
+        return self.blueprint_elements, compile_payload, run_payload
 
     def _planned_netcdf_outputs(self, step_kwargs_list: List[tuple[InputStep, Dict[str, Any]]]) -> List[Path]:
         """Return the planned NetCDF outputs for this generation run."""
@@ -636,41 +648,44 @@ class RomsMarblInputData(InputData):
         resource = Resource(location=str(out_path), partitioned=False)
         self.blueprint_elements.grid.data.append(resource)
 
-        self._settings_run_time["roms.in"]["grid"] = dict(
-            grid_file = out_path,
-        )        
+        ensure_nml_section(self._settings_run_time, "GRID_SETTINGS")["grdname"] = str(out_path)
 
-        if "cppdefs" not in self._settings_compile_time:
-            self._settings_compile_time["cppdefs"] = {}
-        self._settings_compile_time["cppdefs"]["obc_west"] = self.boundaries.west
-        self._settings_compile_time["cppdefs"]["obc_east"] = self.boundaries.east
-        self._settings_compile_time["cppdefs"]["obc_north"] = self.boundaries.north
-        self._settings_compile_time["cppdefs"]["obc_south"] = self.boundaries.south
+        cppdefs = ensure_cppdefs_section(self._settings_compile_time)
+        cppdefs["obc_west"] = self.boundaries.west
+        cppdefs["obc_east"] = self.boundaries.east
+        cppdefs["obc_north"] = self.boundaries.north
+        cppdefs["obc_south"] = self.boundaries.south
 
-        if "param" not in self._settings_compile_time:
-            self._settings_compile_time["param"] = {}
-        self._settings_compile_time["param"]["LLm"] = self.grid.nx
-        self._settings_compile_time["param"]["MMm"] = self.grid.ny
-        self._settings_compile_time["param"]["N"] = self.grid.N
-        self._settings_compile_time["param"]["NP_XI"] = self.partitioning.n_procs_x
-        self._settings_compile_time["param"]["NP_ETA"] = self.partitioning.n_procs_y
-        self._settings_compile_time["param"]["NSUB_X"] = 1
-        self._settings_compile_time["param"]["NSUB_E"] = 1
+        ensure_nml_section(self._settings_run_time, "PARAM_SETTINGS").update(
+            {
+                "LLm": self.grid.nx,
+                "MMm": self.grid.ny,
+                "N": self.grid.N,
+                "NP_XI": self.partitioning.n_procs_x,
+                "NP_ETA": self.partitioning.n_procs_y,
+                "NSUB_X": 1,
+                "NSUB_E": 1,
+            }
+        )
 
         if out_path_nesting is not None:
-            if "extract_data" not in self._settings_compile_time:
-                self._settings_compile_time["extract_data"] = {}
-            self._settings_compile_time["extract_data"]["do_extract"] = True
-            self._settings_compile_time["extract_data"]["extract_file"] = "nesting.nc"
-            self._settings_compile_time["extract_data"]["N_chd"] = self.grid_child.N
-            self._settings_compile_time["extract_data"]["theta_s_chd"] = self.grid_child.theta_s
-            self._settings_compile_time["extract_data"]["theta_b_chd"] = self.grid_child.theta_b
-            self._settings_compile_time["extract_data"]["hc_chd"] = self.grid_child.hc
+            ensure_nml_section(self._settings_run_time, "EXTRACT_DATA_SETTINGS").update(
+                {
+                    "do_extract": True,
+                    "extract_file": "nesting.nc",
+                    "N_chd": self.grid_child.N,
+                    "theta_s_chd": self.grid_child.theta_s,
+                    "theta_b_chd": self.grid_child.theta_b,
+                    "hc_chd": self.grid_child.hc,
+                }
+            )
 
-        self._settings_run_time["roms.in"]["s_coord"] = dict(
-            tcline = self.grid.hc,
-            theta_b = self.grid.theta_b,
-            theta_s = self.grid.theta_s,
+        ensure_nml_section(self._settings_run_time, "S_COORD").update(
+            {
+                "hc": self.grid.hc,
+                "theta_b": self.grid.theta_b,
+                "theta_s": self.grid.theta_s,
+            }
         )
         
     @register_input(name="initial_conditions", order=20, label="Generating initial conditions")
@@ -712,9 +727,11 @@ class RomsMarblInputData(InputData):
             resource = Resource(location=paths, partitioned=False)
             self.blueprint_elements.initial_conditions.data.append(resource)
 
-        self._settings_run_time["roms.in"]["initial"] = dict(
-            nrrec = 1,
-            initial_file = paths[0],
+        ensure_nml_section(self._settings_run_time, "INITIAL_CONDITIONS").update(
+            {
+                "nrrec": 1,
+                "ininame": paths[0] if isinstance(paths, (list, tuple)) else paths,
+            }
         )
     
     @register_input(name="forcing.surface", order=30, label="Generating surface forcing")
@@ -744,6 +761,19 @@ class RomsMarblInputData(InputData):
         yaml_path = self._yaml_filename(f"{key}-{type}")
         output_path = self._forcing_filename(input_name=f"surface-{type}")
 
+        surface_forcing_params = inspect.signature(rt.SurfaceForcing.__init__).parameters
+        if type == "restoring" and "restoring_forces" not in surface_forcing_params:
+            warnings.warn(
+                "Skipping surface restoring forcing: installed roms_tools does not "
+                "support restoring_forces (upgrade roms_tools or disable restoring "
+                "in the model spec).",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+
+        surface_forcing_kwargs = roms_tools_init_kwargs(rt.SurfaceForcing, input_args)
+
         existing_paths = self._existing_output_paths(output_path)
         frc = None
         if existing_paths:
@@ -756,7 +786,7 @@ class RomsMarblInputData(InputData):
                     UserWarning,
                     stacklevel=2,
                 )
-                frc = rt.SurfaceForcing(grid=self.grid, **input_args)
+                frc = rt.SurfaceForcing(grid=self.grid, **surface_forcing_kwargs)
                 try:
                     frc.to_yaml(yaml_path)
                 except Exception as e:
@@ -768,8 +798,8 @@ class RomsMarblInputData(InputData):
         else:
             if input_args["type"] == "restoring":
                 if "sss" in input_args["restoring_forces"]:
-                    self._settings_compile_time["cppdefs"]["sal_restore"] = True
-            frc = rt.SurfaceForcing(grid=self.grid, **input_args)
+                    ensure_cppdefs_section(self._settings_compile_time)["sal_restore"] = True
+            frc = rt.SurfaceForcing(grid=self.grid, **surface_forcing_kwargs)
             paths = frc.save(output_path)
             try:
                 frc.to_yaml(yaml_path)
@@ -789,50 +819,31 @@ class RomsMarblInputData(InputData):
             resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
 
-        # TODO: Update self._settings_compile_time with related forcing parameter sets and cppdefs for surface forcing
         if frc is not None and hasattr(frc, "use_coarse_grid"):
             interp_frc = 1 if frc.use_coarse_grid else 0
         else:
             interp_frc = self._interp_frc_surface_reuse(input_args, Path(paths[0]))
-        
-        # Only touch 'bgc' if the model has MARBL/BGC (from PropertiesSpec).
-        has_bgc_compile = (
+
+        has_bgc = (
             self.model_spec.settings.properties is not None
             and self.model_spec.settings.properties.marbl
         )
-        
-        # Set interp_frc in the appropriate section based on forcing type
-        # blk_frc.interp_frc is for physics surface forcing
-        # bgc.interp_frc is for bgc surface forcing (only if model has bgc)
-        # Both should have the same value when present (enforced by check below)
-        if "blk_frc" not in self._settings_compile_time:
-            self._settings_compile_time["blk_frc"] = {}
-        if has_bgc_compile and "bgc" not in self._settings_compile_time:
-            self._settings_compile_time["bgc"] = {}
-        
-        # Check for consistency: all surface forcing types should use the same coarse grid setting
-        if "interp_frc" in self._settings_compile_time["blk_frc"]:
-            if interp_frc != self._settings_compile_time["blk_frc"]["interp_frc"]:
-                raise ValueError("Mismatch in coarse grid settings between surface forcing types")
-        if has_bgc_compile and "interp_frc" in self._settings_compile_time["bgc"]:
-            if interp_frc != self._settings_compile_time["bgc"]["interp_frc"]:
-                raise ValueError("Mismatch in coarse grid settings between surface forcing types")
-        
-        # Set interp_frc for the appropriate section based on type (only set bgc if model has bgc)
-        if "bgc" in type and has_bgc_compile:
-            self._settings_compile_time["bgc"]["interp_frc"] = interp_frc
-        else:
-            self._settings_compile_time["blk_frc"]["interp_frc"] = interp_frc
-        
-        self.include_coarse_dims = interp_frc == 1
-        
-        if "forcing" not in self._settings_run_time["roms.in"]:
-            self._settings_run_time["roms.in"]["forcing"] = {}
 
-        if "bgc" in type:
-            self._settings_run_time["roms.in"]["forcing"]["surface_forcing_bgc_path"] = paths[0] if isinstance(paths, (list, tuple)) else paths
-        else:
-            self._settings_run_time["roms.in"]["forcing"]["surface_forcing_path"] = paths[0] if isinstance(paths, (list, tuple)) else paths
+        bulk = ensure_nml_section(self._settings_run_time, "BULK_FRC_SETTINGS")
+        if "interp_bulk_frc" in bulk and bulk["interp_bulk_frc"] != interp_frc:
+            raise ValueError("Mismatch in coarse grid settings between surface forcing types")
+        bulk["interp_bulk_frc"] = bool(interp_frc)
+
+        if has_bgc:
+            bgc = ensure_nml_section(self._settings_run_time, "BGC_SETTINGS")
+            if "interp_bgc_frc" in bgc and bgc["interp_bgc_frc"] != interp_frc:
+                raise ValueError("Mismatch in coarse grid settings between surface forcing types")
+            bgc["interp_bgc_frc"] = bool(interp_frc)
+
+        self.include_coarse_dims = interp_frc == 1
+
+        path = paths[0] if isinstance(paths, (list, tuple)) else paths
+        append_frcfile(self._settings_run_time, path)
     
     @register_input(name="forcing.boundary", order=40, label="Generating boundary forcing")
     def _generate_boundary_forcing(self, key: str = "forcing.boundary", **kwargs):
@@ -904,15 +915,8 @@ class RomsMarblInputData(InputData):
             resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
 
-        # TODO: Update self._settings_compile_time with related forcing parameter sets and cppdefs
-        
-        if "forcing" not in self._settings_run_time["roms.in"]:
-            self._settings_run_time["roms.in"]["forcing"] = {}
-
-        if "bgc" in type:
-            self._settings_run_time["roms.in"]["forcing"]["boundary_forcing_bgc_path"] = paths[0] if isinstance(paths, (list, tuple)) else paths
-        else:
-            self._settings_run_time["roms.in"]["forcing"]["boundary_forcing_path"] = paths[0] if isinstance(paths, (list, tuple)) else paths
+        path = paths[0] if isinstance(paths, (list, tuple)) else paths
+        append_frcfile(self._settings_run_time, path)
     
     @register_input(name="forcing.tidal", order=50, label="Generating tidal forcing")
     def _generate_tidal_forcing(self, key: str = "forcing.tidal", **kwargs):
@@ -980,17 +984,17 @@ class RomsMarblInputData(InputData):
             resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
         
-        # Update settings_dict with tidal forcing parameters
-        self._settings_compile_time["tides"] = dict(
-            ntides = ntides if tidal is None else tidal.ntides,
-            bry_tides = True,
-            pot_tides = True,
-            ana_tides = False
+        ensure_nml_section(self._settings_run_time, "TIDES_SETTINGS").update(
+            {
+                "ntides": ntides if tidal is None else tidal.ntides,
+                "bry_tides": True,
+                "pot_tides": True,
+                "ana_tides": False,
+            }
         )
 
-        if "forcing" not in self._settings_run_time["roms.in"]:
-            self._settings_run_time["roms.in"]["forcing"] = {}
-        self._settings_run_time["roms.in"]["forcing"]["tidal_forcing_path"] = paths[0] if isinstance(paths, (list, tuple)) else paths
+        path = paths[0] if isinstance(paths, (list, tuple)) else paths
+        append_frcfile(self._settings_run_time, path)
 
     @register_input(name="forcing.river", order=60, label="Generating river forcing")
     def _generate_river_forcing(self, key: str = "forcing.river", **kwargs):
@@ -1017,20 +1021,15 @@ class RomsMarblInputData(InputData):
                     if "river_tracer" not in ds.variables:
                         raise ValueError("river_tracer is not in the dataset")
                     nriv = int(ds.sizes["nriver"])
-            if "river_frc" not in self._settings_compile_time:
-                self._settings_compile_time["river_frc"] = {}
-            self._settings_compile_time["river_frc"]["river_source"] = True
-            self._settings_compile_time["river_frc"]["analytical"] = False
-            self._settings_compile_time["river_frc"]["nriv"] = nriv
-            self._settings_compile_time["river_frc"]["rvol_vname"] = "river_volume"
-            self._settings_compile_time["river_frc"]["rvol_tname"] = "river_time"
-            self._settings_compile_time["river_frc"]["rtrc_vname"] = "river_tracer"
-            self._settings_compile_time["river_frc"]["rtrc_tname"] = "river_time"
-            if "forcing" not in self._settings_run_time["roms.in"]:
-                self._settings_run_time["roms.in"]["forcing"] = {}
-            self._settings_run_time["roms.in"]["forcing"]["river_path"] = (
-                paths[0] if isinstance(paths, (list, tuple)) else paths
+            ensure_nml_section(self._settings_run_time, "RIVER_FRC_SETTINGS").update(
+                {
+                    "river_source": True,
+                    "river_analytical": False,
+                    "nriv": nriv,
+                }
             )
+            path = paths[0] if isinstance(paths, (list, tuple)) else paths
+            append_frcfile(self._settings_run_time, path)
             for path in paths:
                 resource = Resource(location=path, partitioned=False)
                 getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
@@ -1080,28 +1079,20 @@ class RomsMarblInputData(InputData):
             resource = Resource(location=paths, partitioned=False)
             getattr(self.blueprint_elements.forcing, subkey).data.append(resource)
 
-        # updates settings_dict
-        if "river_frc" not in self._settings_compile_time:            
-            self._settings_compile_time["river_frc"] = {}
-
-        self._settings_compile_time["river_frc"]["river_source"] = True
-        self._settings_compile_time["river_frc"]["analytical"] = False
-        self._settings_compile_time["river_frc"]["nriv"] = river.ds.sizes["nriver"]
-        
-        # check to make sure river_volume and river_tracer are in the dataset
         if "river_volume" not in river.ds.variables:
             raise ValueError("river_volume is not in the dataset")
         if "river_tracer" not in river.ds.variables:
             raise ValueError("river_tracer is not in the dataset")
-        
-        self._settings_compile_time["river_frc"]["rvol_vname"] = "river_volume"
-        self._settings_compile_time["river_frc"]["rvol_tname"] = "river_time"
-        self._settings_compile_time["river_frc"]["rtrc_vname"] = "river_tracer"
-        self._settings_compile_time["river_frc"]["rtrc_tname"] = "river_time"
 
-        if "forcing" not in self._settings_run_time["roms.in"]:
-            self._settings_run_time["roms.in"]["forcing"] = {}
-        self._settings_run_time["roms.in"]["forcing"]["river_path"] = paths[0] if isinstance(paths, (list, tuple)) else paths
+        ensure_nml_section(self._settings_run_time, "RIVER_FRC_SETTINGS").update(
+            {
+                "river_source": True,
+                "river_analytical": False,
+                "nriv": river.ds.sizes["nriver"],
+            }
+        )
+        path = paths[0] if isinstance(paths, (list, tuple)) else paths
+        append_frcfile(self._settings_run_time, path)
 
     @register_input(name="cdr_forcing", order=80, label="Generating CDR forcing")
     def _generate_cdr_forcing(self, key: str = "cdr_forcing", cdr_kwargs=None, **kwargs):
@@ -1142,15 +1133,18 @@ class RomsMarblInputData(InputData):
             resource = Resource(location=path, partitioned=False)
             self.blueprint_elements.cdr_forcing.data.append(resource)
 
-        self._settings_compile_time["cppdefs"]["cdr_forcing"] = True
-        # always set this to cdr.nc per conventions; c-star will symlink to the real path in the blueprint
-        self._settings_compile_time["cdr_frc"]["cdr_file"] = "cdr.nc"
-        self._settings_compile_time["cdr_frc"]["cdr_source"] = True
-        self._settings_compile_time["cdr_frc"]["ncdr_parm"] = len(cdr.releases)
-        self._settings_compile_time["cdr_frc"]["forcing_parameterized"] = True
-        self._settings_compile_time["cdr_frc"]["cdr_volume"] = cdr.releases.release_type == "volume"
-        # enable cdr output
-        self._settings_compile_time["cdr_output"]["do_cdr"] = True
+        ensure_cppdefs_section(self._settings_compile_time)["cdr_forcing"] = True
+        ensure_nml_section(self._settings_run_time, "CDR_FRC_SETTINGS").update(
+            {
+                # c-star symlinks the real path to cdr.nc in the run directory
+                "cdr_file": "cdr.nc",
+                "cdr_source": True,
+                "ncdr_parm": len(cdr.releases),
+                "forcing_parameterized": True,
+                "cdr_volume": cdr.releases.release_type == "volume",
+            }
+        )
+        ensure_nml_section(self._settings_run_time, "CDR_OUTPUT_SETTINGS")["do_cdr_output"] = True
 
     @register_input(name="forcing.corrections", order=90, label="Generating corrections forcing")
     def _generate_corrections(self, key: str = "corrections", **kwargs):

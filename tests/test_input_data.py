@@ -64,13 +64,11 @@ def _create_mock_paths(tmp_path):
     """Helper to create a mock DataPaths with tmp_path as input_data."""
     return DataPaths(
         here=config.paths.here,
-        model_configs=config.paths.model_configs,
         source_data=config.paths.source_data,
         input_data=tmp_path,
         scratch=config.paths.scratch,
         catalog=config.paths.catalog,
         blueprints=config.paths.blueprints,
-        builds=config.paths.builds,
         models_yaml=config.paths.models_yaml,
         builds_yaml=config.paths.builds_yaml,
         machines_yaml=config.paths.machines_yaml,
@@ -771,6 +769,28 @@ class TestRomsMarblInputDataGeneration:
             
             # Check that resource was added to forcing.surface
             assert len(sample_roms_marbl_input_data.blueprint_elements.forcing.surface.data) > 0
+
+    @patch('cstar_forge.input_data.rt.SurfaceForcing')
+    def test_generate_surface_forcing_strips_unsupported_kwargs(
+        self, mock_sf_class, sample_roms_marbl_input_data, tmp_path
+    ):
+        """Unsupported forge kwargs (e.g. restoring_forces=None) are not passed to roms_tools."""
+        mock_sf = MagicMock()
+        surface_path = tmp_path / "surface.nc"
+        surface_path.touch()
+        mock_sf.save.return_value = surface_path
+        mock_sf_class.return_value = mock_sf
+
+        with patch('cstar_forge.input_data.config.paths', _create_mock_paths(tmp_path)):
+            sample_roms_marbl_input_data._generate_surface_forcing(
+                key="forcing.surface",
+                source={"name": "ERA5"},
+                type="physics",
+                restoring_forces=None,
+            )
+
+        _, call_kwargs = mock_sf_class.call_args
+        assert "restoring_forces" not in call_kwargs
     
     @patch('cstar_forge.input_data.rt.SurfaceForcing')
     def test_generate_surface_forcing_missing_type(self, mock_sf_class, sample_roms_marbl_input_data):
@@ -948,7 +968,12 @@ class TestRomsMarblInputDataGeneration:
 
         mock_rf_class.assert_not_called()
         assert len(sample_roms_marbl_input_data.blueprint_elements.forcing.river.data) > 0
-        assert sample_roms_marbl_input_data._settings_compile_time["river_frc"]["nriv"] == nriver
+        assert (
+            sample_roms_marbl_input_data._settings_run_time["namelist.nml"][
+                "RIVER_FRC_SETTINGS"
+            ]["nriv"]
+            == nriver
+        )
     
     @patch('cstar_forge.input_data.rt.CDRForcing')
     def test_generate_cdr_forcing(self, mock_cdr_class, sample_roms_marbl_input_data, tmp_path):
@@ -1035,8 +1060,10 @@ class TestRomsMarblInputDataGeneration:
             assert len(nesting_resources) == 1
             assert str(out_path_nesting) in nesting_resources[0].location
 
-            # extract_data settings should be set
-            extract_data = sample_roms_marbl_input_data._settings_compile_time["extract_data"]
+            # extract_data settings should be set in namelist
+            extract_data = sample_roms_marbl_input_data._settings_run_time["namelist.nml"][
+                "EXTRACT_DATA_SETTINGS"
+            ]
             assert extract_data["do_extract"] is True
             assert extract_data["N_chd"] == mock_child.N
             assert extract_data["theta_s_chd"] == mock_child.theta_s
@@ -1076,7 +1103,9 @@ class TestRomsMarblInputDataGeneration:
             with patch('xarray.open_dataset', return_value=mock_ds):
                 sample_roms_marbl_input_data._generate_grid()
 
-            extract_file = sample_roms_marbl_input_data._settings_compile_time["extract_data"]["extract_file"]
+            extract_file = sample_roms_marbl_input_data._settings_run_time["namelist.nml"][
+                "EXTRACT_DATA_SETTINGS"
+            ]["extract_file"]
             # Should be just the filename, not an absolute path
             assert extract_file == "nesting.nc"
             assert "/" not in str(extract_file)
@@ -1101,7 +1130,9 @@ class TestRomsMarblInputDataGeneration:
                 sample_roms_marbl_input_data._generate_grid()
 
         assert sample_roms_marbl_input_data.blueprint_elements.nesting_info is None
-        assert "extract_data" not in sample_roms_marbl_input_data._settings_compile_time
+        assert "EXTRACT_DATA_SETTINGS" not in sample_roms_marbl_input_data._settings_run_time.get(
+            "namelist.nml", {}
+        )
 
 
 class TestRomsMarblInputDataGenerateAll:

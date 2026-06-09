@@ -164,6 +164,30 @@ class TestRenderRomsSettings:
         assert "template1" in result["filter"]["files"]
         assert (output_dir / "Makefile").exists()
         assert (output_dir / "Makefile").read_text() == "compile:\n\techo 'compiling'"
+
+    def test_copy_non_template_file_when_copystat_fails(self, tmp_path, monkeypatch):
+        """Fall back to content-only copy when metadata updates are not permitted."""
+        template_dir = tmp_path / "templates"
+        template_dir.mkdir()
+        (template_dir / "marbl_in").write_text("marbl settings")
+
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+
+        def _copy2_raises_permission(*args, **kwargs):
+            raise PermissionError("[Errno 1] Operation not permitted")
+
+        monkeypatch.setattr("cstar_forge.settings.shutil.copy2", _copy2_raises_permission)
+
+        result = render_roms_settings(
+            template_files=["marbl_in"],
+            template_dir=template_dir,
+            settings_dict={},
+            code_output_dir=output_dir,
+        )
+
+        assert result["filter"]["files"] == ["marbl_in"]
+        assert (output_dir / "marbl_in").read_text() == "marbl settings"
     
     def test_render_with_full_match_key(self, tmp_path):
         """Test rendering with full match key (e.g., roms.in.j2 -> roms.in)."""

@@ -1,0 +1,431 @@
+{# Jinja2 template for ROMS namelist.nml; values from run-time-defaults.yml (namelist.nml) #}
+{# Override via blueprint run-time settings merges into the same section keys. #}
+
+!================================================================================
+!                             SIMULATION TITLE
+!================================================================================
+! Previously set in `roms.in`
+!================================================================================
+&SIMULATION_NAME_SETTINGS                                      !roms_read_write.F
+!------------------------
+output_root_name = {% if SIMULATION_NAME_SETTINGS.output_root_name is sameas true or SIMULATION_NAME_SETTINGS.output_root_name is sameas false %}{{ SIMULATION_NAME_SETTINGS.output_root_name|lower }}{% elif SIMULATION_NAME_SETTINGS.output_root_name is string %}"{{ SIMULATION_NAME_SETTINGS.output_root_name }}"{% else %}{{ SIMULATION_NAME_SETTINGS.output_root_name }}{% endif %} ! output file prefix (e.g. `roms_bgc.20120101120000.nc`)
+title = {% if SIMULATION_NAME_SETTINGS.title is sameas true or SIMULATION_NAME_SETTINGS.title is sameas false %}{{ SIMULATION_NAME_SETTINGS.title|lower }}{% elif SIMULATION_NAME_SETTINGS.title is string %}"{{ SIMULATION_NAME_SETTINGS.title }}"{% else %}{{ SIMULATION_NAME_SETTINGS.title }}{% endif %} ! title used in output metadata
+/
+
+&TIME_STEPPING							       !scalars.F
+!-------------
+ntimes = {% if TIME_STEPPING.ntimes is sameas true or TIME_STEPPING.ntimes is sameas false %}{{ TIME_STEPPING.ntimes|lower }}{% elif TIME_STEPPING.ntimes is string %}"{{ TIME_STEPPING.ntimes }}"{% else %}{{ TIME_STEPPING.ntimes }}{% endif %} ! Number of time steps in this run
+dt = {% if TIME_STEPPING.dt is sameas true or TIME_STEPPING.dt is sameas false %}{{ TIME_STEPPING.dt|lower }}{% elif TIME_STEPPING.dt is string %}"{{ TIME_STEPPING.dt }}"{% else %}{{ TIME_STEPPING.dt }}{% endif %} ! Time step (seconds)
+ndtfast = {% if TIME_STEPPING.ndtfast is sameas true or TIME_STEPPING.ndtfast is sameas false %}{{ TIME_STEPPING.ndtfast|lower }}{% elif TIME_STEPPING.ndtfast is string %}"{{ TIME_STEPPING.ndtfast }}"{% else %}{{ TIME_STEPPING.ndtfast }}{% endif %} ! Number of fast time-steps per slow timestep
+ninfo = {% if TIME_STEPPING.ninfo is sameas true or TIME_STEPPING.ninfo is sameas false %}{{ TIME_STEPPING.ninfo|lower }}{% elif TIME_STEPPING.ninfo is string %}"{{ TIME_STEPPING.ninfo }}"{% else %}{{ TIME_STEPPING.ninfo }}{% endif %} ! Number of steps between runtime diagnostics (STDOUT)
+/
+
+&GRID_SETTINGS	                                                    !dimensions.F
+!---------------------------
+! Previously set in `roms.in`
+!---------------------------
+grdname = {% if GRID_SETTINGS.grdname is sameas true or GRID_SETTINGS.grdname is sameas false %}{{ GRID_SETTINGS.grdname|lower }}{% elif GRID_SETTINGS.grdname is string %}"{{ GRID_SETTINGS.grdname }}"{% else %}{{ GRID_SETTINGS.grdname }}{% endif %} ! grid filepath
+/
+
+&S_COORD                                                                !scoord.F
+!---------------------------
+! Previously set in `roms.in`
+!---------------------------
+theta_s = {{ S_COORD.theta_s }}D0 ! S-coordinate surface stretching parameter
+theta_b = {{ S_COORD.theta_b }}D0 ! S-coordinate bottom stretching parameter
+hc = {{ S_COORD.hc }}D0 ! Critical depth (m)
+/
+
+&PARAM_SETTINGS                                                          !param.F
+!------------------------------
+! Previously set in `param.opt`
+!------------------------------
+NP_XI = {% if PARAM_SETTINGS.NP_XI is sameas true or PARAM_SETTINGS.NP_XI is sameas false %}{{ PARAM_SETTINGS.NP_XI|lower }}{% elif PARAM_SETTINGS.NP_XI is string %}"{{ PARAM_SETTINGS.NP_XI }}"{% else %}{{ PARAM_SETTINGS.NP_XI }}{% endif %} ! Number of processors following X
+NP_ETA = {% if PARAM_SETTINGS.NP_ETA is sameas true or PARAM_SETTINGS.NP_ETA is sameas false %}{{ PARAM_SETTINGS.NP_ETA|lower }}{% elif PARAM_SETTINGS.NP_ETA is string %}"{{ PARAM_SETTINGS.NP_ETA }}"{% else %}{{ PARAM_SETTINGS.NP_ETA }}{% endif %} ! Number of processors following Y
+NSUB_X = {% if PARAM_SETTINGS.NSUB_X is sameas true or PARAM_SETTINGS.NSUB_X is sameas false %}{{ PARAM_SETTINGS.NSUB_X|lower }}{% elif PARAM_SETTINGS.NSUB_X is string %}"{{ PARAM_SETTINGS.NSUB_X }}"{% else %}{{ PARAM_SETTINGS.NSUB_X }}{% endif %} ! Number of shared-memory subdomains in X
+NSUB_E = {% if PARAM_SETTINGS.NSUB_E is sameas true or PARAM_SETTINGS.NSUB_E is sameas false %}{{ PARAM_SETTINGS.NSUB_E|lower }}{% elif PARAM_SETTINGS.NSUB_E is string %}"{{ PARAM_SETTINGS.NSUB_E }}"{% else %}{{ PARAM_SETTINGS.NSUB_E }}{% endif %} ! Number of shared-memory subdomains in Y
+LLm = {% if PARAM_SETTINGS.LLm is sameas true or PARAM_SETTINGS.LLm is sameas false %}{{ PARAM_SETTINGS.LLm|lower }}{% elif PARAM_SETTINGS.LLm is string %}"{{ PARAM_SETTINGS.LLm }}"{% else %}{{ PARAM_SETTINGS.LLm }}{% endif %} ! Number of grid points in X
+MMm = {% if PARAM_SETTINGS.MMm is sameas true or PARAM_SETTINGS.MMm is sameas false %}{{ PARAM_SETTINGS.MMm|lower }}{% elif PARAM_SETTINGS.MMm is string %}"{{ PARAM_SETTINGS.MMm }}"{% else %}{{ PARAM_SETTINGS.MMm }}{% endif %} ! Number of grid points in Y
+N = {% if PARAM_SETTINGS.N is sameas true or PARAM_SETTINGS.N is sameas false %}{{ PARAM_SETTINGS.N|lower }}{% elif PARAM_SETTINGS.N is string %}"{{ PARAM_SETTINGS.N }}"{% else %}{{ PARAM_SETTINGS.N }}{% endif %} ! Number of vertical levels
+nt_passive = {% if PARAM_SETTINGS.nt_passive is sameas true or PARAM_SETTINGS.nt_passive is sameas false %}{{ PARAM_SETTINGS.nt_passive|lower }}{% elif PARAM_SETTINGS.nt_passive is string %}"{{ PARAM_SETTINGS.nt_passive }}"{% else %}{{ PARAM_SETTINGS.nt_passive }}{% endif %} ! Number of passive tracers
+ntrc_bio = {% if PARAM_SETTINGS.ntrc_bio is sameas true or PARAM_SETTINGS.ntrc_bio is sameas false %}{{ PARAM_SETTINGS.ntrc_bio|lower }}{% elif PARAM_SETTINGS.ntrc_bio is string %}"{{ PARAM_SETTINGS.ntrc_bio }}"{% else %}{{ PARAM_SETTINGS.ntrc_bio }}{% endif %} ! Number of BGC tracers
+/
+
+&INITIAL_CONDITIONS                                            !roms_read_write.F
+!---------------------------
+! Previously set in `roms.in`
+!---------------------------
+ininame = {% if INITIAL_CONDITIONS.ininame is sameas true or INITIAL_CONDITIONS.ininame is sameas false %}{{ INITIAL_CONDITIONS.ininame|lower }}{% elif INITIAL_CONDITIONS.ininame is string %}"{{ INITIAL_CONDITIONS.ininame }}"{% else %}{{ INITIAL_CONDITIONS.ininame }}{% endif %} ! Initial conditions (IC) file path
+nrrec = {% if INITIAL_CONDITIONS.nrrec is sameas true or INITIAL_CONDITIONS.nrrec is sameas false %}{{ INITIAL_CONDITIONS.nrrec|lower }}{% elif INITIAL_CONDITIONS.nrrec is string %}"{{ INITIAL_CONDITIONS.nrrec }}"{% else %}{{ INITIAL_CONDITIONS.nrrec }}{% endif %} ! Number of time records in IC file
+/
+
+&FORCING_FILES                                                 !roms_read_write.F
+!---------------------------
+! Previously set in `roms.in`
+!---------------------------
+frcfile =
+{% for path in FORCING_FILES.frcfile %}
+'{{ path }}'{% if not loop.last %},{% endif %}
+{% endfor %}
+/
+
+&BULK_FRC_SETTINGS
+!---------------------------------
+! Previously set in `bulk_frc.opt`
+!---------------------------------
+interp_bulk_frc = {% if BULK_FRC_SETTINGS.interp_bulk_frc is sameas true or BULK_FRC_SETTINGS.interp_bulk_frc is sameas false %}{{ BULK_FRC_SETTINGS.interp_bulk_frc|lower }}{% elif BULK_FRC_SETTINGS.interp_bulk_frc is string %}"{{ BULK_FRC_SETTINGS.interp_bulk_frc }}"{% else %}{{ BULK_FRC_SETTINGS.interp_bulk_frc }}{% endif %} ! Interpolate forcing from coarser input grid if T
+check_bulk_frc_units = {% if BULK_FRC_SETTINGS.check_bulk_frc_units is sameas true or BULK_FRC_SETTINGS.check_bulk_frc_units is sameas false %}{{ BULK_FRC_SETTINGS.check_bulk_frc_units|lower }}{% elif BULK_FRC_SETTINGS.check_bulk_frc_units is string %}"{{ BULK_FRC_SETTINGS.check_bulk_frc_units }}"{% else %}{{ BULK_FRC_SETTINGS.check_bulk_frc_units }}{% endif %} ! Check units of input vars if T
+/
+
+&FLUX_FRC_SETTINGS
+!---------------------------------
+! Previously set in `flux_frc.opt`
+!---------------------------------
+interp_flux_frc = {% if FLUX_FRC_SETTINGS.interp_flux_frc is sameas true or FLUX_FRC_SETTINGS.interp_flux_frc is sameas false %}{{ FLUX_FRC_SETTINGS.interp_flux_frc|lower }}{% elif FLUX_FRC_SETTINGS.interp_flux_frc is string %}"{{ FLUX_FRC_SETTINGS.interp_flux_frc }}"{% else %}{{ FLUX_FRC_SETTINGS.interp_flux_frc }}{% endif %} ! Interpolate forcing from coarser input grid if T
+/
+
+&RIVER_FRC_SETTINGS                                                  !river_frc.F
+river_source = {% if RIVER_FRC_SETTINGS.river_source is sameas true or RIVER_FRC_SETTINGS.river_source is sameas false %}{{ RIVER_FRC_SETTINGS.river_source|lower }}{% elif RIVER_FRC_SETTINGS.river_source is string %}"{{ RIVER_FRC_SETTINGS.river_source }}"{% else %}{{ RIVER_FRC_SETTINGS.river_source }}{% endif %} ! T if river inputs used, else F
+river_analytical = {% if RIVER_FRC_SETTINGS.river_analytical is sameas true or RIVER_FRC_SETTINGS.river_analytical is sameas false %}{{ RIVER_FRC_SETTINGS.river_analytical|lower }}{% elif RIVER_FRC_SETTINGS.river_analytical is string %}"{{ RIVER_FRC_SETTINGS.river_analytical }}"{% else %}{{ RIVER_FRC_SETTINGS.river_analytical }}{% endif %} ! T if river inputs specified analytically
+nriv = {% if RIVER_FRC_SETTINGS.nriv is sameas true or RIVER_FRC_SETTINGS.nriv is sameas false %}{{ RIVER_FRC_SETTINGS.nriv|lower }}{% elif RIVER_FRC_SETTINGS.nriv is string %}"{{ RIVER_FRC_SETTINGS.nriv }}"{% else %}{{ RIVER_FRC_SETTINGS.nriv }}{% endif %} ! Number of rivers
+/
+
+&TIDES_SETTINGS                                                          !tides.F
+bry_tides = {% if TIDES_SETTINGS.bry_tides is sameas true or TIDES_SETTINGS.bry_tides is sameas false %}{{ TIDES_SETTINGS.bry_tides|lower }}{% elif TIDES_SETTINGS.bry_tides is string %}"{{ TIDES_SETTINGS.bry_tides }}"{% else %}{{ TIDES_SETTINGS.bry_tides }}{% endif %} ! Barotropic tides at domain boundaries
+pot_tides = {% if TIDES_SETTINGS.pot_tides is sameas true or TIDES_SETTINGS.pot_tides is sameas false %}{{ TIDES_SETTINGS.pot_tides|lower }}{% elif TIDES_SETTINGS.pot_tides is string %}"{{ TIDES_SETTINGS.pot_tides }}"{% else %}{{ TIDES_SETTINGS.pot_tides }}{% endif %} ! Surface potential tides
+ana_tides = {% if TIDES_SETTINGS.ana_tides is sameas true or TIDES_SETTINGS.ana_tides is sameas false %}{{ TIDES_SETTINGS.ana_tides|lower }}{% elif TIDES_SETTINGS.ana_tides is string %}"{{ TIDES_SETTINGS.ana_tides }}"{% else %}{{ TIDES_SETTINGS.ana_tides }}{% endif %} ! Tidal forcing specified analytically
+ntides = {% if TIDES_SETTINGS.ntides is sameas true or TIDES_SETTINGS.ntides is sameas false %}{{ TIDES_SETTINGS.ntides|lower }}{% elif TIDES_SETTINGS.ntides is string %}"{{ TIDES_SETTINGS.ntides }}"{% else %}{{ TIDES_SETTINGS.ntides }}{% endif %} ! Number of tidal constituents
+/
+
+&BASIC_OUTPUT_SETTINGS                                            !basic_output.F
+!---------------------
+! Previously set in `ocean_vars.opt`
+!---------------------
+!
+! INSTANTANEOUS OUTPUT (history files)
+!
+wrt_file_his = {% if BASIC_OUTPUT_SETTINGS.wrt_file_his is sameas true or BASIC_OUTPUT_SETTINGS.wrt_file_his is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_file_his|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_file_his is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_file_his }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_file_his }}{% endif %} ! Write instantaneous ocean physical state to output
+output_period_his = {% if BASIC_OUTPUT_SETTINGS.output_period_his is sameas true or BASIC_OUTPUT_SETTINGS.output_period_his is sameas false %}{{ BASIC_OUTPUT_SETTINGS.output_period_his|lower }}{% elif BASIC_OUTPUT_SETTINGS.output_period_his is string %}"{{ BASIC_OUTPUT_SETTINGS.output_period_his }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.output_period_his }}{% endif %} ! Frequency of instantaneous output (s)
+nrpf_his = {% if BASIC_OUTPUT_SETTINGS.nrpf_his is sameas true or BASIC_OUTPUT_SETTINGS.nrpf_his is sameas false %}{{ BASIC_OUTPUT_SETTINGS.nrpf_his|lower }}{% elif BASIC_OUTPUT_SETTINGS.nrpf_his is string %}"{{ BASIC_OUTPUT_SETTINGS.nrpf_his }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.nrpf_his }}{% endif %} ! Number of time records in instantaneous output file
+wrt_Z = {% if BASIC_OUTPUT_SETTINGS.wrt_Z is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Z is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Z|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Z is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Z }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Z }}{% endif %} ! Include `zeta`
+wrt_Ub = {% if BASIC_OUTPUT_SETTINGS.wrt_Ub is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Ub is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Ub|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Ub is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Ub }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Ub }}{% endif %} ! Include `ubar`
+wrt_Vb = {% if BASIC_OUTPUT_SETTINGS.wrt_Vb is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Vb is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Vb|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Vb is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Vb }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Vb }}{% endif %} ! Include `vbar`
+wrt_U = {% if BASIC_OUTPUT_SETTINGS.wrt_U is sameas true or BASIC_OUTPUT_SETTINGS.wrt_U is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_U|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_U is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_U }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_U }}{% endif %} ! Include `u`
+wrt_V = {% if BASIC_OUTPUT_SETTINGS.wrt_V is sameas true or BASIC_OUTPUT_SETTINGS.wrt_V is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_V|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_V is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_V }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_V }}{% endif %} ! Include `v`
+wrt_R = {% if BASIC_OUTPUT_SETTINGS.wrt_R is sameas true or BASIC_OUTPUT_SETTINGS.wrt_R is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_R|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_R is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_R }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_R }}{% endif %} ! Include `rho`
+wrt_O = {% if BASIC_OUTPUT_SETTINGS.wrt_O is sameas true or BASIC_OUTPUT_SETTINGS.wrt_O is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_O|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_O is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_O }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_O }}{% endif %} ! Include `omega`
+wrt_W = {% if BASIC_OUTPUT_SETTINGS.wrt_W is sameas true or BASIC_OUTPUT_SETTINGS.wrt_W is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_W|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_W is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_W }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_W }}{% endif %} ! Include `w`
+wrt_Akv = {% if BASIC_OUTPUT_SETTINGS.wrt_Akv is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Akv is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Akv|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Akv is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Akv }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Akv }}{% endif %} ! Include `Akv`
+wrt_Akt = {% if BASIC_OUTPUT_SETTINGS.wrt_Akt is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Akt is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Akt|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Akt is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Akt }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Akt }}{% endif %} ! Include `Akt`
+wrt_Aks = {% if BASIC_OUTPUT_SETTINGS.wrt_Aks is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Aks is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Aks|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Aks is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Aks }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Aks }}{% endif %} ! Include `Aks`
+wrt_Hbls = {% if BASIC_OUTPUT_SETTINGS.wrt_Hbls is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Hbls is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Hbls|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Hbls is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Hbls }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Hbls }}{% endif %} ! Include `hbls`
+wrt_Hbbl = {% if BASIC_OUTPUT_SETTINGS.wrt_Hbbl is sameas true or BASIC_OUTPUT_SETTINGS.wrt_Hbbl is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_Hbbl|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_Hbbl is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_Hbbl }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_Hbbl }}{% endif %} ! Include `hbbl`
+!
+! AVERAGE OUTPUT
+!
+wrt_file_avg = {% if BASIC_OUTPUT_SETTINGS.wrt_file_avg is sameas true or BASIC_OUTPUT_SETTINGS.wrt_file_avg is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_file_avg|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_file_avg is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_file_avg }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_file_avg }}{% endif %} ! Write averages of ocean physical state to output
+output_period_avg = {% if BASIC_OUTPUT_SETTINGS.output_period_avg is sameas true or BASIC_OUTPUT_SETTINGS.output_period_avg is sameas false %}{{ BASIC_OUTPUT_SETTINGS.output_period_avg|lower }}{% elif BASIC_OUTPUT_SETTINGS.output_period_avg is string %}"{{ BASIC_OUTPUT_SETTINGS.output_period_avg }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.output_period_avg }}{% endif %} ! Frequency of averaged output/averaging period (s)
+nrpf_avg = {% if BASIC_OUTPUT_SETTINGS.nrpf_avg is sameas true or BASIC_OUTPUT_SETTINGS.nrpf_avg is sameas false %}{{ BASIC_OUTPUT_SETTINGS.nrpf_avg|lower }}{% elif BASIC_OUTPUT_SETTINGS.nrpf_avg is string %}"{{ BASIC_OUTPUT_SETTINGS.nrpf_avg }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.nrpf_avg }}{% endif %} ! Number of time records in averaged output file
+wrt_avg_Z = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Z is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Z is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Z|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Z is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Z }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Z }}{% endif %} ! Include `zeta`
+wrt_avg_Ub = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Ub is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Ub is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Ub|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Ub is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Ub }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Ub }}{% endif %} ! Inlucde `ubar`
+wrt_avg_Vb = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Vb is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Vb is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Vb|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Vb is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Vb }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Vb }}{% endif %} ! Include `vbar`
+wrt_avg_U = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_U is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_U is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_U|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_U is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_U }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_U }}{% endif %} ! Include `u`
+wrt_avg_V = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_V is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_V is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_V|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_V is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_V }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_V }}{% endif %} ! Include `v`
+wrt_avg_R = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_R is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_R is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_R|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_R is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_R }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_R }}{% endif %} ! Include `rho`
+wrt_avg_O = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_O is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_O is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_O|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_O is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_O }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_O }}{% endif %} ! Include `omega`
+wrt_avg_W = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_W is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_W is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_W|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_W is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_W }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_W }}{% endif %} ! Include `w`
+wrt_avg_Akv = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Akv is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Akv is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Akv|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Akv is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Akv }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Akv }}{% endif %} ! Include `Akv`
+wrt_avg_Akt = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Akt is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Akt is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Akt|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Akt is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Akt }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Akt }}{% endif %} ! Include `Akt`
+wrt_avg_Aks = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Aks is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Aks is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Aks|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Aks is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Aks }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Aks }}{% endif %} ! Include `Aks`
+wrt_avg_Hbls = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Hbls is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Hbls is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Hbls|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Hbls is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Hbls }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Hbls }}{% endif %} ! Include `hbls`
+wrt_avg_Hbbl = {% if BASIC_OUTPUT_SETTINGS.wrt_avg_Hbbl is sameas true or BASIC_OUTPUT_SETTINGS.wrt_avg_Hbbl is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Hbbl|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_avg_Hbbl is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Hbbl }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_avg_Hbbl }}{% endif %} ! Include `hbbl`
+!
+! RESTART FILES
+!
+wrt_file_rst = {% if BASIC_OUTPUT_SETTINGS.wrt_file_rst is sameas true or BASIC_OUTPUT_SETTINGS.wrt_file_rst is sameas false %}{{ BASIC_OUTPUT_SETTINGS.wrt_file_rst|lower }}{% elif BASIC_OUTPUT_SETTINGS.wrt_file_rst is string %}"{{ BASIC_OUTPUT_SETTINGS.wrt_file_rst }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.wrt_file_rst }}{% endif %} ! Write restart files (containing full model state)
+monthly_restarts = {% if BASIC_OUTPUT_SETTINGS.monthly_restarts is sameas true or BASIC_OUTPUT_SETTINGS.monthly_restarts is sameas false %}{{ BASIC_OUTPUT_SETTINGS.monthly_restarts|lower }}{% elif BASIC_OUTPUT_SETTINGS.monthly_restarts is string %}"{{ BASIC_OUTPUT_SETTINGS.monthly_restarts }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.monthly_restarts }}{% endif %} ! Write restart files at start of calendar month
+output_period_rst = {% if BASIC_OUTPUT_SETTINGS.output_period_rst is sameas true or BASIC_OUTPUT_SETTINGS.output_period_rst is sameas false %}{{ BASIC_OUTPUT_SETTINGS.output_period_rst|lower }}{% elif BASIC_OUTPUT_SETTINGS.output_period_rst is string %}"{{ BASIC_OUTPUT_SETTINGS.output_period_rst }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.output_period_rst }}{% endif %} ! Write restart files at regular frequency (s)
+nrpf_rst = {% if BASIC_OUTPUT_SETTINGS.nrpf_rst is sameas true or BASIC_OUTPUT_SETTINGS.nrpf_rst is sameas false %}{{ BASIC_OUTPUT_SETTINGS.nrpf_rst|lower }}{% elif BASIC_OUTPUT_SETTINGS.nrpf_rst is string %}"{{ BASIC_OUTPUT_SETTINGS.nrpf_rst }}"{% else %}{{ BASIC_OUTPUT_SETTINGS.nrpf_rst }}{% endif %} ! Number of time records in restart files
+/
+
+&TS_OUTPUT_SETTINGS
+!------------------------------
+! Previously set in tracers.opt
+!------------------------------
+wrt_temp = {% if TS_OUTPUT_SETTINGS.wrt_temp is sameas true or TS_OUTPUT_SETTINGS.wrt_temp is sameas false %}{{ TS_OUTPUT_SETTINGS.wrt_temp|lower }}{% elif TS_OUTPUT_SETTINGS.wrt_temp is string %}"{{ TS_OUTPUT_SETTINGS.wrt_temp }}"{% else %}{{ TS_OUTPUT_SETTINGS.wrt_temp }}{% endif %} ! Include temperature in output fields
+wrt_salt = {% if TS_OUTPUT_SETTINGS.wrt_salt is sameas true or TS_OUTPUT_SETTINGS.wrt_salt is sameas false %}{{ TS_OUTPUT_SETTINGS.wrt_salt|lower }}{% elif TS_OUTPUT_SETTINGS.wrt_salt is string %}"{{ TS_OUTPUT_SETTINGS.wrt_salt }}"{% else %}{{ TS_OUTPUT_SETTINGS.wrt_salt }}{% endif %} ! Include salinity in output fields
+wrt_temp_dia = {% if TS_OUTPUT_SETTINGS.wrt_temp_dia is sameas true or TS_OUTPUT_SETTINGS.wrt_temp_dia is sameas false %}{{ TS_OUTPUT_SETTINGS.wrt_temp_dia|lower }}{% elif TS_OUTPUT_SETTINGS.wrt_temp_dia is string %}"{{ TS_OUTPUT_SETTINGS.wrt_temp_dia }}"{% else %}{{ TS_OUTPUT_SETTINGS.wrt_temp_dia }}{% endif %} ! Include temperature diagnostics in output fields
+wrt_salt_dia = {% if TS_OUTPUT_SETTINGS.wrt_salt_dia is sameas true or TS_OUTPUT_SETTINGS.wrt_salt_dia is sameas false %}{{ TS_OUTPUT_SETTINGS.wrt_salt_dia|lower }}{% elif TS_OUTPUT_SETTINGS.wrt_salt_dia is string %}"{{ TS_OUTPUT_SETTINGS.wrt_salt_dia }}"{% else %}{{ TS_OUTPUT_SETTINGS.wrt_salt_dia }}{% endif %} ! Include salinity diagnostics in output fields
+/
+
+&FRC_OUTPUT_SETTINGS                                                !frc_output.F
+!-------------------
+! Previously set in `frc_output.opt`
+!-------------------
+wrt_frc = {% if FRC_OUTPUT_SETTINGS.wrt_frc is sameas true or FRC_OUTPUT_SETTINGS.wrt_frc is sameas false %}{{ FRC_OUTPUT_SETTINGS.wrt_frc|lower }}{% elif FRC_OUTPUT_SETTINGS.wrt_frc is string %}"{{ FRC_OUTPUT_SETTINGS.wrt_frc }}"{% else %}{{ FRC_OUTPUT_SETTINGS.wrt_frc }}{% endif %} ! Write model forcing to its own output file
+wrt_frc_avg = {% if FRC_OUTPUT_SETTINGS.wrt_frc_avg is sameas true or FRC_OUTPUT_SETTINGS.wrt_frc_avg is sameas false %}{{ FRC_OUTPUT_SETTINGS.wrt_frc_avg|lower }}{% elif FRC_OUTPUT_SETTINGS.wrt_frc_avg is string %}"{{ FRC_OUTPUT_SETTINGS.wrt_frc_avg }}"{% else %}{{ FRC_OUTPUT_SETTINGS.wrt_frc_avg }}{% endif %} ! Forcing output averaged (T) or instantaneous (F)
+output_period = {% if FRC_OUTPUT_SETTINGS.output_period is sameas true or FRC_OUTPUT_SETTINGS.output_period is sameas false %}{{ FRC_OUTPUT_SETTINGS.output_period|lower }}{% elif FRC_OUTPUT_SETTINGS.output_period is string %}"{{ FRC_OUTPUT_SETTINGS.output_period }}"{% else %}{{ FRC_OUTPUT_SETTINGS.output_period }}{% endif %} ! Frequency/averaging period of forcing output
+nrpf = {% if FRC_OUTPUT_SETTINGS.nrpf is sameas true or FRC_OUTPUT_SETTINGS.nrpf is sameas false %}{{ FRC_OUTPUT_SETTINGS.nrpf|lower }}{% elif FRC_OUTPUT_SETTINGS.nrpf is string %}"{{ FRC_OUTPUT_SETTINGS.nrpf }}"{% else %}{{ FRC_OUTPUT_SETTINGS.nrpf }}{% endif %} ! Number of time records in forcing files
+/
+
+&EXTRACT_DATA_SETTINGS                                            !extract_data.F
+!---------------------
+! Previously set in `extract_data.opt`,
+! require EXTRACT_DATA cppkey
+!---------------------
+do_extract = {% if EXTRACT_DATA_SETTINGS.do_extract is sameas true or EXTRACT_DATA_SETTINGS.do_extract is sameas false %}{{ EXTRACT_DATA_SETTINGS.do_extract|lower }}{% elif EXTRACT_DATA_SETTINGS.do_extract is string %}"{{ EXTRACT_DATA_SETTINGS.do_extract }}"{% else %}{{ EXTRACT_DATA_SETTINGS.do_extract }}{% endif %} ! Generate boundary files for a nested domain
+extract_period = {% if EXTRACT_DATA_SETTINGS.extract_period is sameas true or EXTRACT_DATA_SETTINGS.extract_period is sameas false %}{{ EXTRACT_DATA_SETTINGS.extract_period|lower }}{% elif EXTRACT_DATA_SETTINGS.extract_period is string %}"{{ EXTRACT_DATA_SETTINGS.extract_period }}"{% else %}{{ EXTRACT_DATA_SETTINGS.extract_period }}{% endif %} ! How often to output these files
+nrpf_extract = {% if EXTRACT_DATA_SETTINGS.nrpf_extract is sameas true or EXTRACT_DATA_SETTINGS.nrpf_extract is sameas false %}{{ EXTRACT_DATA_SETTINGS.nrpf_extract|lower }}{% elif EXTRACT_DATA_SETTINGS.nrpf_extract is string %}"{{ EXTRACT_DATA_SETTINGS.nrpf_extract }}"{% else %}{{ EXTRACT_DATA_SETTINGS.nrpf_extract }}{% endif %} ! Number of time records per file
+extract_file = {% if EXTRACT_DATA_SETTINGS.extract_file is sameas true or EXTRACT_DATA_SETTINGS.extract_file is sameas false %}{{ EXTRACT_DATA_SETTINGS.extract_file|lower }}{% elif EXTRACT_DATA_SETTINGS.extract_file is string %}"{{ EXTRACT_DATA_SETTINGS.extract_file }}"{% else %}{{ EXTRACT_DATA_SETTINGS.extract_file }}{% endif %} ! File path containing nesting info
+N_chd = {% if EXTRACT_DATA_SETTINGS.N_chd is sameas true or EXTRACT_DATA_SETTINGS.N_chd is sameas false %}{{ EXTRACT_DATA_SETTINGS.N_chd|lower }}{% elif EXTRACT_DATA_SETTINGS.N_chd is string %}"{{ EXTRACT_DATA_SETTINGS.N_chd }}"{% else %}{{ EXTRACT_DATA_SETTINGS.N_chd }}{% endif %} ! Number of vertical levels in nested domain
+theta_s_chd = {% if EXTRACT_DATA_SETTINGS.theta_s_chd is sameas true or EXTRACT_DATA_SETTINGS.theta_s_chd is sameas false %}{{ EXTRACT_DATA_SETTINGS.theta_s_chd|lower }}{% elif EXTRACT_DATA_SETTINGS.theta_s_chd is string %}"{{ EXTRACT_DATA_SETTINGS.theta_s_chd }}"{% else %}{{ EXTRACT_DATA_SETTINGS.theta_s_chd }}{% endif %} ! `theta_s` of nested domain
+theta_b_chd = {% if EXTRACT_DATA_SETTINGS.theta_b_chd is sameas true or EXTRACT_DATA_SETTINGS.theta_b_chd is sameas false %}{{ EXTRACT_DATA_SETTINGS.theta_b_chd|lower }}{% elif EXTRACT_DATA_SETTINGS.theta_b_chd is string %}"{{ EXTRACT_DATA_SETTINGS.theta_b_chd }}"{% else %}{{ EXTRACT_DATA_SETTINGS.theta_b_chd }}{% endif %} ! `theta_b` of nested domain
+hc_chd = {% if EXTRACT_DATA_SETTINGS.hc_chd is sameas true or EXTRACT_DATA_SETTINGS.hc_chd is sameas false %}{{ EXTRACT_DATA_SETTINGS.hc_chd|lower }}{% elif EXTRACT_DATA_SETTINGS.hc_chd is string %}"{{ EXTRACT_DATA_SETTINGS.hc_chd }}"{% else %}{{ EXTRACT_DATA_SETTINGS.hc_chd }}{% endif %} ! `hc` of nested domain
+/
+
+&SPONGE_TUNE_SETTINGS                                              !sponge_tune.F
+!--------------------
+! Previously set in `sponge_tune.opt`
+! Require SPONGE_TUNE cppkey
+!--------------------
+ub_tune = {% if SPONGE_TUNE_SETTINGS.ub_tune is sameas true or SPONGE_TUNE_SETTINGS.ub_tune is sameas false %}{{ SPONGE_TUNE_SETTINGS.ub_tune|lower }}{% elif SPONGE_TUNE_SETTINGS.ub_tune is string %}"{{ SPONGE_TUNE_SETTINGS.ub_tune }}"{% else %}{{ SPONGE_TUNE_SETTINGS.ub_tune }}{% endif %} ! Tune boundary "sponge" to match parent bry conditions
+sp_timscale = {% if SPONGE_TUNE_SETTINGS.sp_timscale is sameas true or SPONGE_TUNE_SETTINGS.sp_timscale is sameas false %}{{ SPONGE_TUNE_SETTINGS.sp_timscale|lower }}{% elif SPONGE_TUNE_SETTINGS.sp_timscale is string %}"{{ SPONGE_TUNE_SETTINGS.sp_timscale }}"{% else %}{{ SPONGE_TUNE_SETTINGS.sp_timscale }}{% endif %} ! Filtering time scale (s)
+wrt_sponge = {% if SPONGE_TUNE_SETTINGS.wrt_sponge is sameas true or SPONGE_TUNE_SETTINGS.wrt_sponge is sameas false %}{{ SPONGE_TUNE_SETTINGS.wrt_sponge|lower }}{% elif SPONGE_TUNE_SETTINGS.wrt_sponge is string %}"{{ SPONGE_TUNE_SETTINGS.wrt_sponge }}"{% else %}{{ SPONGE_TUNE_SETTINGS.wrt_sponge }}{% endif %} ! Write out sponge tuning values
+spn_avg = {% if SPONGE_TUNE_SETTINGS.spn_avg is sameas true or SPONGE_TUNE_SETTINGS.spn_avg is sameas false %}{{ SPONGE_TUNE_SETTINGS.spn_avg|lower }}{% elif SPONGE_TUNE_SETTINGS.spn_avg is string %}"{{ SPONGE_TUNE_SETTINGS.spn_avg }}"{% else %}{{ SPONGE_TUNE_SETTINGS.spn_avg }}{% endif %} ! Sponge tuning output averaged (T) or instantaneous (F)
+nrpf = {% if SPONGE_TUNE_SETTINGS.nrpf is sameas true or SPONGE_TUNE_SETTINGS.nrpf is sameas false %}{{ SPONGE_TUNE_SETTINGS.nrpf|lower }}{% elif SPONGE_TUNE_SETTINGS.nrpf is string %}"{{ SPONGE_TUNE_SETTINGS.nrpf }}"{% else %}{{ SPONGE_TUNE_SETTINGS.nrpf }}{% endif %} ! Number of records per sponge file
+output_period = {% if SPONGE_TUNE_SETTINGS.output_period is sameas true or SPONGE_TUNE_SETTINGS.output_period is sameas false %}{{ SPONGE_TUNE_SETTINGS.output_period|lower }}{% elif SPONGE_TUNE_SETTINGS.output_period is string %}"{{ SPONGE_TUNE_SETTINGS.output_period }}"{% else %}{{ SPONGE_TUNE_SETTINGS.output_period }}{% endif %} ! Output frequency of sponge tuning file
+/
+
+&CALC_PFLX_SETTINGS                                              !calc_pflx_mod.F
+!---------------------
+! Previously set in `calc_pflx.opt`
+!---------------------
+calc_pflx = {% if CALC_PFLX_SETTINGS.calc_pflx is sameas true or CALC_PFLX_SETTINGS.calc_pflx is sameas false %}{{ CALC_PFLX_SETTINGS.calc_pflx|lower }}{% elif CALC_PFLX_SETTINGS.calc_pflx is string %}"{{ CALC_PFLX_SETTINGS.calc_pflx }}"{% else %}{{ CALC_PFLX_SETTINGS.calc_pflx }}{% endif %} ! Enable baroclinic pressure flux calculation
+timescale = {% if CALC_PFLX_SETTINGS.timescale is sameas true or CALC_PFLX_SETTINGS.timescale is sameas false %}{{ CALC_PFLX_SETTINGS.timescale|lower }}{% elif CALC_PFLX_SETTINGS.timescale is string %}"{{ CALC_PFLX_SETTINGS.timescale }}"{% else %}{{ CALC_PFLX_SETTINGS.timescale }}{% endif %} ! timescale for filtering pressure fluxes (s)
+/
+
+&ZSLICE_SETTINGS                                                 !zslice_output.F
+do_zslice = {% if ZSLICE_SETTINGS.do_zslice is sameas true or ZSLICE_SETTINGS.do_zslice is sameas false %}{{ ZSLICE_SETTINGS.do_zslice|lower }}{% elif ZSLICE_SETTINGS.do_zslice is string %}"{{ ZSLICE_SETTINGS.do_zslice }}"{% else %}{{ ZSLICE_SETTINGS.do_zslice }}{% endif %} ! Output certain variables on regular z-levels
+zslice_avg = {% if ZSLICE_SETTINGS.zslice_avg is sameas true or ZSLICE_SETTINGS.zslice_avg is sameas false %}{{ ZSLICE_SETTINGS.zslice_avg|lower }}{% elif ZSLICE_SETTINGS.zslice_avg is string %}"{{ ZSLICE_SETTINGS.zslice_avg }}"{% else %}{{ ZSLICE_SETTINGS.zslice_avg }}{% endif %} ! Averaged output (T) or instantaneous (F)
+wrt_T_zsl = {% if ZSLICE_SETTINGS.wrt_T_zsl is sameas true or ZSLICE_SETTINGS.wrt_T_zsl is sameas false %}{{ ZSLICE_SETTINGS.wrt_T_zsl|lower }}{% elif ZSLICE_SETTINGS.wrt_T_zsl is string %}"{{ ZSLICE_SETTINGS.wrt_T_zsl }}"{% else %}{{ ZSLICE_SETTINGS.wrt_T_zsl }}{% endif %} ! Write tracers to z-level output
+wrt_U_zsl = {% if ZSLICE_SETTINGS.wrt_U_zsl is sameas true or ZSLICE_SETTINGS.wrt_U_zsl is sameas false %}{{ ZSLICE_SETTINGS.wrt_U_zsl|lower }}{% elif ZSLICE_SETTINGS.wrt_U_zsl is string %}"{{ ZSLICE_SETTINGS.wrt_U_zsl }}"{% else %}{{ ZSLICE_SETTINGS.wrt_U_zsl }}{% endif %} ! Write zonal velocity to z-level output
+wrt_V_zsl = {% if ZSLICE_SETTINGS.wrt_V_zsl is sameas true or ZSLICE_SETTINGS.wrt_V_zsl is sameas false %}{{ ZSLICE_SETTINGS.wrt_V_zsl|lower }}{% elif ZSLICE_SETTINGS.wrt_V_zsl is string %}"{{ ZSLICE_SETTINGS.wrt_V_zsl }}"{% else %}{{ ZSLICE_SETTINGS.wrt_V_zsl }}{% endif %} ! Write meridional velocity to z-level output
+output_period = {% if ZSLICE_SETTINGS.output_period is sameas true or ZSLICE_SETTINGS.output_period is sameas false %}{{ ZSLICE_SETTINGS.output_period|lower }}{% elif ZSLICE_SETTINGS.output_period is string %}"{{ ZSLICE_SETTINGS.output_period }}"{% else %}{{ ZSLICE_SETTINGS.output_period }}{% endif %} ! Frequency of z-level ouput
+nrpf = {% if ZSLICE_SETTINGS.nrpf is sameas true or ZSLICE_SETTINGS.nrpf is sameas false %}{{ ZSLICE_SETTINGS.nrpf|lower }}{% elif ZSLICE_SETTINGS.nrpf is string %}"{{ ZSLICE_SETTINGS.nrpf }}"{% else %}{{ ZSLICE_SETTINGS.nrpf }}{% endif %} ! Number of records per file
+ndep = {% if ZSLICE_SETTINGS.ndep is sameas true or ZSLICE_SETTINGS.ndep is sameas false %}{{ ZSLICE_SETTINGS.ndep|lower }}{% elif ZSLICE_SETTINGS.ndep is string %}"{{ ZSLICE_SETTINGS.ndep }}"{% else %}{{ ZSLICE_SETTINGS.ndep }}{% endif %} ! Number of depth levels on which to write
+vecdep = {% for v in ZSLICE_SETTINGS.vecdep %}{{ v }}{% if not loop.last %}, {% endif %}{% endfor %} ! Depths of levels on which to write
+nt_z = {% if ZSLICE_SETTINGS.nt_z is sameas true or ZSLICE_SETTINGS.nt_z is sameas false %}{{ ZSLICE_SETTINGS.nt_z|lower }}{% elif ZSLICE_SETTINGS.nt_z is string %}"{{ ZSLICE_SETTINGS.nt_z }}"{% else %}{{ ZSLICE_SETTINGS.nt_z }}{% endif %} ! Number of tracers to include
+trc2zsc = {% for v in ZSLICE_SETTINGS.trc2zsc %}{{ v }}{% if not loop.last %}, {% endif %}{% endfor %} ! Indices of tracers to include
+/
+
+&BGC_SETTINGS                                                !bgc_shared_vars.opt
+!------------
+! Previously set in `bgc.opt`
+!------------
+interp_bgc_frc = {% if BGC_SETTINGS.interp_bgc_frc is sameas true or BGC_SETTINGS.interp_bgc_frc is sameas false %}{{ BGC_SETTINGS.interp_bgc_frc|lower }}{% elif BGC_SETTINGS.interp_bgc_frc is string %}"{{ BGC_SETTINGS.interp_bgc_frc }}"{% else %}{{ BGC_SETTINGS.interp_bgc_frc }}{% endif %} ! Interpolate forcing from coarser input grid if T
+!
+wrt_bgc_his = {% if BGC_SETTINGS.wrt_bgc_his is sameas true or BGC_SETTINGS.wrt_bgc_his is sameas false %}{{ BGC_SETTINGS.wrt_bgc_his|lower }}{% elif BGC_SETTINGS.wrt_bgc_his is string %}"{{ BGC_SETTINGS.wrt_bgc_his }}"{% else %}{{ BGC_SETTINGS.wrt_bgc_his }}{% endif %} ! Write instantaneous BGC tracers to output
+output_period_his = {% if BGC_SETTINGS.output_period_his is sameas true or BGC_SETTINGS.output_period_his is sameas false %}{{ BGC_SETTINGS.output_period_his|lower }}{% elif BGC_SETTINGS.output_period_his is string %}"{{ BGC_SETTINGS.output_period_his }}"{% else %}{{ BGC_SETTINGS.output_period_his }}{% endif %} ! Frequency of instantaneous BGC output (s)
+nrpf_his = {% if BGC_SETTINGS.nrpf_his is sameas true or BGC_SETTINGS.nrpf_his is sameas false %}{{ BGC_SETTINGS.nrpf_his|lower }}{% elif BGC_SETTINGS.nrpf_his is string %}"{{ BGC_SETTINGS.nrpf_his }}"{% else %}{{ BGC_SETTINGS.nrpf_his }}{% endif %} ! Number of time records per BGC output file
+!
+wrt_bgc_avg = {% if BGC_SETTINGS.wrt_bgc_avg is sameas true or BGC_SETTINGS.wrt_bgc_avg is sameas false %}{{ BGC_SETTINGS.wrt_bgc_avg|lower }}{% elif BGC_SETTINGS.wrt_bgc_avg is string %}"{{ BGC_SETTINGS.wrt_bgc_avg }}"{% else %}{{ BGC_SETTINGS.wrt_bgc_avg }}{% endif %} ! Write averaged BGC tracers to output
+output_period_avg = {% if BGC_SETTINGS.output_period_avg is sameas true or BGC_SETTINGS.output_period_avg is sameas false %}{{ BGC_SETTINGS.output_period_avg|lower }}{% elif BGC_SETTINGS.output_period_avg is string %}"{{ BGC_SETTINGS.output_period_avg }}"{% else %}{{ BGC_SETTINGS.output_period_avg }}{% endif %} ! Output frequency/averaging period (s)
+nrpf_avg = {% if BGC_SETTINGS.nrpf_avg is sameas true or BGC_SETTINGS.nrpf_avg is sameas false %}{{ BGC_SETTINGS.nrpf_avg|lower }}{% elif BGC_SETTINGS.nrpf_avg is string %}"{{ BGC_SETTINGS.nrpf_avg }}"{% else %}{{ BGC_SETTINGS.nrpf_avg }}{% endif %} ! Number of time records per BGC average file
+!
+wrt_bgc_dia_his = {% if BGC_SETTINGS.wrt_bgc_dia_his is sameas true or BGC_SETTINGS.wrt_bgc_dia_his is sameas false %}{{ BGC_SETTINGS.wrt_bgc_dia_his|lower }}{% elif BGC_SETTINGS.wrt_bgc_dia_his is string %}"{{ BGC_SETTINGS.wrt_bgc_dia_his }}"{% else %}{{ BGC_SETTINGS.wrt_bgc_dia_his }}{% endif %} ! Write instantaneous BGC diagnostics to output
+output_period_his_dia = {% if BGC_SETTINGS.output_period_his_dia is sameas true or BGC_SETTINGS.output_period_his_dia is sameas false %}{{ BGC_SETTINGS.output_period_his_dia|lower }}{% elif BGC_SETTINGS.output_period_his_dia is string %}"{{ BGC_SETTINGS.output_period_his_dia }}"{% else %}{{ BGC_SETTINGS.output_period_his_dia }}{% endif %} ! Frequency of diagnostics output (s)
+nrpf_his_dia = {% if BGC_SETTINGS.nrpf_his_dia is sameas true or BGC_SETTINGS.nrpf_his_dia is sameas false %}{{ BGC_SETTINGS.nrpf_his_dia|lower }}{% elif BGC_SETTINGS.nrpf_his_dia is string %}"{{ BGC_SETTINGS.nrpf_his_dia }}"{% else %}{{ BGC_SETTINGS.nrpf_his_dia }}{% endif %} ! Number of time records per BGC diagnostics file
+!
+wrt_bgc_dia_avg = {% if BGC_SETTINGS.wrt_bgc_dia_avg is sameas true or BGC_SETTINGS.wrt_bgc_dia_avg is sameas false %}{{ BGC_SETTINGS.wrt_bgc_dia_avg|lower }}{% elif BGC_SETTINGS.wrt_bgc_dia_avg is string %}"{{ BGC_SETTINGS.wrt_bgc_dia_avg }}"{% else %}{{ BGC_SETTINGS.wrt_bgc_dia_avg }}{% endif %} ! Write averaged BGC diagnostics to output
+output_period_avg_dia = {% if BGC_SETTINGS.output_period_avg_dia is sameas true or BGC_SETTINGS.output_period_avg_dia is sameas false %}{{ BGC_SETTINGS.output_period_avg_dia|lower }}{% elif BGC_SETTINGS.output_period_avg_dia is string %}"{{ BGC_SETTINGS.output_period_avg_dia }}"{% else %}{{ BGC_SETTINGS.output_period_avg_dia }}{% endif %} ! Frequency/period of averaged diagnostic output
+nrpf_avg_dia = {% if BGC_SETTINGS.nrpf_avg_dia is sameas true or BGC_SETTINGS.nrpf_avg_dia is sameas false %}{{ BGC_SETTINGS.nrpf_avg_dia|lower }}{% elif BGC_SETTINGS.nrpf_avg_dia is string %}"{{ BGC_SETTINGS.nrpf_avg_dia }}"{% else %}{{ BGC_SETTINGS.nrpf_avg_dia }}{% endif %} ! Number of time records per BGC diagnostics file
+/
+
+&MARBL_BIOGEOCHEMISTRY_SETTINGS                                  !marbl_driver.F
+!------------------------------
+! Previously set in `roms.in`
+!------------------------------
+marbl_config_file = {% if MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_config_file is sameas true or MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_config_file is sameas false %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_config_file|lower }}{% elif MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_config_file is string %}"{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_config_file }}"{% else %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_config_file }}{% endif %} ! MARBL configuration file
+marbl_tracers_to_write = {% if MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_tracers_to_write is sameas true or MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_tracers_to_write is sameas false %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_tracers_to_write|lower }}{% elif MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_tracers_to_write is string %}"{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_tracers_to_write }}"{% else %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_tracers_to_write }}{% endif %} ! MARBL tracers to include in BGC output
+marbl_diagnostics_to_write = {% if MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_diagnostics_to_write is sameas true or MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_diagnostics_to_write is sameas false %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_diagnostics_to_write|lower }}{% elif MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_diagnostics_to_write is string %}"{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_diagnostics_to_write }}"{% else %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_diagnostics_to_write }}{% endif %} ! MARBL diagnostics to include in BGC output
+marbl_timestep_ratio = {% if MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_timestep_ratio is sameas true or MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_timestep_ratio is sameas false %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_timestep_ratio|lower }}{% elif MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_timestep_ratio is string %}"{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_timestep_ratio }}"{% else %}{{ MARBL_BIOGEOCHEMISTRY_SETTINGS.marbl_timestep_ratio }}{% endif %} ! If "N", solve BGC equations every N model steps
+/
+
+&CDR_FRC_SETTINGS                                                      !cdr_frc.F
+!----------------
+! Previously set in `cdr_frc.opt`
+! Requires CDR_FORCING cppkey
+!----------------
+cdr_source = {% if CDR_FRC_SETTINGS.cdr_source is sameas true or CDR_FRC_SETTINGS.cdr_source is sameas false %}{{ CDR_FRC_SETTINGS.cdr_source|lower }}{% elif CDR_FRC_SETTINGS.cdr_source is string %}"{{ CDR_FRC_SETTINGS.cdr_source }}"{% else %}{{ CDR_FRC_SETTINGS.cdr_source }}{% endif %} ! Apply CDR perturbation (T) or not (F)
+cdr_file = {% if CDR_FRC_SETTINGS.cdr_file is sameas true or CDR_FRC_SETTINGS.cdr_file is sameas false %}{{ CDR_FRC_SETTINGS.cdr_file|lower }}{% elif CDR_FRC_SETTINGS.cdr_file is string %}"{{ CDR_FRC_SETTINGS.cdr_file }}"{% else %}{{ CDR_FRC_SETTINGS.cdr_file }}{% endif %} ! File path to CDR perturbation
+ncdr_parm = {% if CDR_FRC_SETTINGS.ncdr_parm is sameas true or CDR_FRC_SETTINGS.ncdr_parm is sameas false %}{{ CDR_FRC_SETTINGS.ncdr_parm|lower }}{% elif CDR_FRC_SETTINGS.ncdr_parm is string %}"{{ CDR_FRC_SETTINGS.ncdr_parm }}"{% else %}{{ CDR_FRC_SETTINGS.ncdr_parm }}{% endif %} ! number of CDR releases if `3D`/`parameterized`
+nz_chd = {% if CDR_FRC_SETTINGS.nz_chd is sameas true or CDR_FRC_SETTINGS.nz_chd is sameas false %}{{ CDR_FRC_SETTINGS.nz_chd|lower }}{% elif CDR_FRC_SETTINGS.nz_chd is string %}"{{ CDR_FRC_SETTINGS.nz_chd }}"{% else %}{{ CDR_FRC_SETTINGS.nz_chd }}{% endif %} ! Number of vertical levels in CDR forcing
+forcing_depth_profiles = {% if CDR_FRC_SETTINGS.forcing_depth_profiles is sameas true or CDR_FRC_SETTINGS.forcing_depth_profiles is sameas false %}{{ CDR_FRC_SETTINGS.forcing_depth_profiles|lower }}{% elif CDR_FRC_SETTINGS.forcing_depth_profiles is string %}"{{ CDR_FRC_SETTINGS.forcing_depth_profiles }}"{% else %}{{ CDR_FRC_SETTINGS.forcing_depth_profiles }}{% endif %} ! Apply CDR forcing from a depth profile
+forcing_3d = {% if CDR_FRC_SETTINGS.forcing_3d is sameas true or CDR_FRC_SETTINGS.forcing_3d is sameas false %}{{ CDR_FRC_SETTINGS.forcing_3d|lower }}{% elif CDR_FRC_SETTINGS.forcing_3d is string %}"{{ CDR_FRC_SETTINGS.forcing_3d }}"{% else %}{{ CDR_FRC_SETTINGS.forcing_3d }}{% endif %} ! Apply CDR forcing from a fully 3D distribution
+forcing_parameterized = {% if CDR_FRC_SETTINGS.forcing_parameterized is sameas true or CDR_FRC_SETTINGS.forcing_parameterized is sameas false %}{{ CDR_FRC_SETTINGS.forcing_parameterized|lower }}{% elif CDR_FRC_SETTINGS.forcing_parameterized is string %}"{{ CDR_FRC_SETTINGS.forcing_parameterized }}"{% else %}{{ CDR_FRC_SETTINGS.forcing_parameterized }}{% endif %} ! Apply CDR forcing from Guassian parameters
+time_interpolation = {% if CDR_FRC_SETTINGS.time_interpolation is sameas true or CDR_FRC_SETTINGS.time_interpolation is sameas false %}{{ CDR_FRC_SETTINGS.time_interpolation|lower }}{% elif CDR_FRC_SETTINGS.time_interpolation is string %}"{{ CDR_FRC_SETTINGS.time_interpolation }}"{% else %}{{ CDR_FRC_SETTINGS.time_interpolation }}{% endif %} ! Interpolate linearly between forcing records
+relocate_to_wet_pts = {% if CDR_FRC_SETTINGS.relocate_to_wet_pts is sameas true or CDR_FRC_SETTINGS.relocate_to_wet_pts is sameas false %}{{ CDR_FRC_SETTINGS.relocate_to_wet_pts|lower }}{% elif CDR_FRC_SETTINGS.relocate_to_wet_pts is string %}"{{ CDR_FRC_SETTINGS.relocate_to_wet_pts }}"{% else %}{{ CDR_FRC_SETTINGS.relocate_to_wet_pts }}{% endif %} ! Relocate CDR perturbation to sea if on land
+cdr_volume = {% if CDR_FRC_SETTINGS.cdr_volume is sameas true or CDR_FRC_SETTINGS.cdr_volume is sameas false %}{{ CDR_FRC_SETTINGS.cdr_volume|lower }}{% elif CDR_FRC_SETTINGS.cdr_volume is string %}"{{ CDR_FRC_SETTINGS.cdr_volume }}"{% else %}{{ CDR_FRC_SETTINGS.cdr_volume }}{% endif %} ! Read in volume flux/tracer concentration
+/
+
+&CDR_OUTPUT_SETTINGS                                               !cdr_output.F
+!-------------------
+! Previously set in `cdr_output.opt`
+!-------------------
+do_cdr_output = {% if CDR_OUTPUT_SETTINGS.do_cdr_output is sameas true or CDR_OUTPUT_SETTINGS.do_cdr_output is sameas false %}{{ CDR_OUTPUT_SETTINGS.do_cdr_output|lower }}{% elif CDR_OUTPUT_SETTINGS.do_cdr_output is string %}"{{ CDR_OUTPUT_SETTINGS.do_cdr_output }}"{% else %}{{ CDR_OUTPUT_SETTINGS.do_cdr_output }}{% endif %} ! Output CDR-relevant fields
+wrt_cdr_avg = {% if CDR_OUTPUT_SETTINGS.wrt_cdr_avg is sameas true or CDR_OUTPUT_SETTINGS.wrt_cdr_avg is sameas false %}{{ CDR_OUTPUT_SETTINGS.wrt_cdr_avg|lower }}{% elif CDR_OUTPUT_SETTINGS.wrt_cdr_avg is string %}"{{ CDR_OUTPUT_SETTINGS.wrt_cdr_avg }}"{% else %}{{ CDR_OUTPUT_SETTINGS.wrt_cdr_avg }}{% endif %} ! Write averaged (T) or instantaneous (F) output
+cdr_monthly_averages = {% if CDR_OUTPUT_SETTINGS.cdr_monthly_averages is sameas true or CDR_OUTPUT_SETTINGS.cdr_monthly_averages is sameas false %}{{ CDR_OUTPUT_SETTINGS.cdr_monthly_averages|lower }}{% elif CDR_OUTPUT_SETTINGS.cdr_monthly_averages is string %}"{{ CDR_OUTPUT_SETTINGS.cdr_monthly_averages }}"{% else %}{{ CDR_OUTPUT_SETTINGS.cdr_monthly_averages }}{% endif %} ! Write averaged outputs per calendar month
+output_period = {% if CDR_OUTPUT_SETTINGS.output_period is sameas true or CDR_OUTPUT_SETTINGS.output_period is sameas false %}{{ CDR_OUTPUT_SETTINGS.output_period|lower }}{% elif CDR_OUTPUT_SETTINGS.output_period is string %}"{{ CDR_OUTPUT_SETTINGS.output_period }}"{% else %}{{ CDR_OUTPUT_SETTINGS.output_period }}{% endif %} ! Frequency of CDR-relevant output
+nrpf = {% if CDR_OUTPUT_SETTINGS.nrpf is sameas true or CDR_OUTPUT_SETTINGS.nrpf is sameas false %}{{ CDR_OUTPUT_SETTINGS.nrpf|lower }}{% elif CDR_OUTPUT_SETTINGS.nrpf is string %}"{{ CDR_OUTPUT_SETTINGS.nrpf }}"{% else %}{{ CDR_OUTPUT_SETTINGS.nrpf }}{% endif %} ! Time records per output file
+/
+
+&UPSCALE_SETTINGS                                              !upscale_output.F
+!----------------
+! Previously set in `upscale_output.opt`
+! Requires UPSCALING cppkey
+!----------------
+do_upscale = {% if UPSCALE_SETTINGS.do_upscale is sameas true or UPSCALE_SETTINGS.do_upscale is sameas false %}{{ UPSCALE_SETTINGS.do_upscale|lower }}{% elif UPSCALE_SETTINGS.do_upscale is string %}"{{ UPSCALE_SETTINGS.do_upscale }}"{% else %}{{ UPSCALE_SETTINGS.do_upscale }}{% endif %} ! Record CDR tracer fluxes thru domain boundaries
+nrpf_uscl = {% if UPSCALE_SETTINGS.nrpf_uscl is sameas true or UPSCALE_SETTINGS.nrpf_uscl is sameas false %}{{ UPSCALE_SETTINGS.nrpf_uscl|lower }}{% elif UPSCALE_SETTINGS.nrpf_uscl is string %}"{{ UPSCALE_SETTINGS.nrpf_uscl }}"{% else %}{{ UPSCALE_SETTINGS.nrpf_uscl }}{% endif %} ! Number of records per file
+output_period_uscl = {% if UPSCALE_SETTINGS.output_period_uscl is sameas true or UPSCALE_SETTINGS.output_period_uscl is sameas false %}{{ UPSCALE_SETTINGS.output_period_uscl|lower }}{% elif UPSCALE_SETTINGS.output_period_uscl is string %}"{{ UPSCALE_SETTINGS.output_period_uscl }}"{% else %}{{ UPSCALE_SETTINGS.output_period_uscl }}{% endif %} ! Output frequency
+/
+
+&LIN_RHO_EOS_SETTINGS                                                  !scalars.F
+!-----------------------------------
+! Unused if NONLIN_EOS cppkey active
+!-----------------------------------
+Tcoef = {% if LIN_RHO_EOS_SETTINGS.Tcoef is sameas true or LIN_RHO_EOS_SETTINGS.Tcoef is sameas false %}{{ LIN_RHO_EOS_SETTINGS.Tcoef|lower }}{% elif LIN_RHO_EOS_SETTINGS.Tcoef is string %}"{{ LIN_RHO_EOS_SETTINGS.Tcoef }}"{% else %}{{ LIN_RHO_EOS_SETTINGS.Tcoef }}{% endif %} ! Thermal expansion coefficient    (kg/m2/K)
+T0 = {% if LIN_RHO_EOS_SETTINGS.T0 is sameas true or LIN_RHO_EOS_SETTINGS.T0 is sameas false %}{{ LIN_RHO_EOS_SETTINGS.T0|lower }}{% elif LIN_RHO_EOS_SETTINGS.T0 is string %}"{{ LIN_RHO_EOS_SETTINGS.T0 }}"{% else %}{{ LIN_RHO_EOS_SETTINGS.T0 }}{% endif %} ! Reference temperature            (*C)
+Scoef = {% if LIN_RHO_EOS_SETTINGS.Scoef is sameas true or LIN_RHO_EOS_SETTINGS.Scoef is sameas false %}{{ LIN_RHO_EOS_SETTINGS.Scoef|lower }}{% elif LIN_RHO_EOS_SETTINGS.Scoef is string %}"{{ LIN_RHO_EOS_SETTINGS.Scoef }}"{% else %}{{ LIN_RHO_EOS_SETTINGS.Scoef }}{% endif %} ! Saline contraction coefficient   (kg/m3/psu)
+S0 = {% if LIN_RHO_EOS_SETTINGS.S0 is sameas true or LIN_RHO_EOS_SETTINGS.S0 is sameas false %}{{ LIN_RHO_EOS_SETTINGS.S0|lower }}{% elif LIN_RHO_EOS_SETTINGS.S0 is string %}"{{ LIN_RHO_EOS_SETTINGS.S0 }}"{% else %}{{ LIN_RHO_EOS_SETTINGS.S0 }}{% endif %} ! Reference salinity               (psu)
+/
+
+&RHO0_SETTINGS                                                         !scalars.F
+!-------------
+! Requires SOLVE3D cppkey
+!-------------
+rho0 = {% if RHO0_SETTINGS.rho0 is sameas true or RHO0_SETTINGS.rho0 is sameas false %}{{ RHO0_SETTINGS.rho0|lower }}{% elif RHO0_SETTINGS.rho0 is string %}"{{ RHO0_SETTINGS.rho0 }}"{% else %}{{ RHO0_SETTINGS.rho0 }}{% endif %} ! Boussinesq reference density (kg/m3)
+/
+
+&GAMMA2_SETTINGS                                                       !scalars.F
+!---------------
+gamma2 = {% if GAMMA2_SETTINGS.gamma2 is sameas true or GAMMA2_SETTINGS.gamma2 is sameas false %}{{ GAMMA2_SETTINGS.gamma2|lower }}{% elif GAMMA2_SETTINGS.gamma2 is string %}"{{ GAMMA2_SETTINGS.gamma2 }}"{% else %}{{ GAMMA2_SETTINGS.gamma2 }}{% endif %} ! Sliperiness parameter (free-slip = +1, no-slip = -1)
+/
+
+&TRACER_DIFF2                                                          !scalars.F
+!------------
+! Requires SOLVE3D and TS_DIF2 cppkeys
+!------------
+tnu2={%- for v in TRACER_DIFF2.tnu2 %} {{ v }}{%- if not loop.last %} {%- endif %}{%- endfor %} ! Horizontal Laplacian diffusion (m2/s) for each tracer
+/
+
+&BOTTOM_DRAG_SETTINGS                                                  !scalars.F
+!--------------------
+rdrg = {% if BOTTOM_DRAG_SETTINGS.rdrg is sameas true or BOTTOM_DRAG_SETTINGS.rdrg is sameas false %}{{ BOTTOM_DRAG_SETTINGS.rdrg|lower }}{% elif BOTTOM_DRAG_SETTINGS.rdrg is string %}"{{ BOTTOM_DRAG_SETTINGS.rdrg }}"{% else %}{{ BOTTOM_DRAG_SETTINGS.rdrg }}{% endif %} ! Linear bottom drag co-efficient (m/s)
+rdrg2 = {% if BOTTOM_DRAG_SETTINGS.rdrg2 is sameas true or BOTTOM_DRAG_SETTINGS.rdrg2 is sameas false %}{{ BOTTOM_DRAG_SETTINGS.rdrg2|lower }}{% elif BOTTOM_DRAG_SETTINGS.rdrg2 is string %}"{{ BOTTOM_DRAG_SETTINGS.rdrg2 }}"{% else %}{{ BOTTOM_DRAG_SETTINGS.rdrg2 }}{% endif %} ! Quadratic bottom drag co-efficient (dimensionless)
+zob = {% if BOTTOM_DRAG_SETTINGS.zob is sameas true or BOTTOM_DRAG_SETTINGS.zob is sameas false %}{{ BOTTOM_DRAG_SETTINGS.zob|lower }}{% elif BOTTOM_DRAG_SETTINGS.zob is string %}"{{ BOTTOM_DRAG_SETTINGS.zob }}"{% else %}{{ BOTTOM_DRAG_SETTINGS.zob }}{% endif %} ! Bottom roughness height (m)
+/
+
+&VERTICAL_MIXING_SETTINGS                                              !scalars.F
+!------------------------
+!Requires SOLVE3D cppkey (and MY_BAK_MIXING cppkey for akq_bak)
+!------------------------
+akv_bak = {% if VERTICAL_MIXING_SETTINGS.akv_bak is sameas true or VERTICAL_MIXING_SETTINGS.akv_bak is sameas false %}{{ VERTICAL_MIXING_SETTINGS.akv_bak|lower }}{% elif VERTICAL_MIXING_SETTINGS.akv_bak is string %}"{{ VERTICAL_MIXING_SETTINGS.akv_bak }}"{% else %}{{ VERTICAL_MIXING_SETTINGS.akv_bak }}{% endif %} ! Vertical viscosity (m2/s)
+akt_bak={%- for v in VERTICAL_MIXING_SETTINGS.akt_bak %} {{ v }}{%- if not loop.last %} {%- endif %}{%- endfor %} ! Vertical mixing (m2/s) for each tracer
+!akq_bak = 0.        ! Background vertical mixing for TKE (m2/s, if MY_BAK_MIXING)
+/
+
+&LATERAL_VISC_SETTINGS                                                 !scalars.F
+!---------------------
+! Requires UV_VIS2 cppkey
+!---------------------
+visc2 = {% if LATERAL_VISC_SETTINGS.visc2 is sameas true or LATERAL_VISC_SETTINGS.visc2 is sameas false %}{{ LATERAL_VISC_SETTINGS.visc2|lower }}{% elif LATERAL_VISC_SETTINGS.visc2 is string %}"{{ LATERAL_VISC_SETTINGS.visc2 }}"{% else %}{{ LATERAL_VISC_SETTINGS.visc2 }}{% endif %} ! Horizontal Laplacian kinematic viscosity (m2/s)
+/
+
+&UBIND_SETTINGS                                                        !scalars.F
+!--------------
+!Requires T_FRC_BRY, M2_FRC_BRY, Z_FRC_BRY, M3_FRC_BRY, or M2NUDGING cppkeys
+!--------------
+ubind = {% if UBIND_SETTINGS.ubind is sameas true or UBIND_SETTINGS.ubind is sameas false %}{{ UBIND_SETTINGS.ubind|lower }}{% elif UBIND_SETTINGS.ubind is string %}"{{ UBIND_SETTINGS.ubind }}"{% else %}{{ UBIND_SETTINGS.ubind }}{% endif %} ! Open boundary binding velocity (m/s)
+/
+
+&V_SPONGE_SETTINGS                                                     !scalars.F
+!-----------------
+!Requires SPONGE cppkey
+!-----------------
+v_sponge = {% if V_SPONGE_SETTINGS.v_sponge is sameas true or V_SPONGE_SETTINGS.v_sponge is sameas false %}{{ V_SPONGE_SETTINGS.v_sponge|lower }}{% elif V_SPONGE_SETTINGS.v_sponge is string %}"{{ V_SPONGE_SETTINGS.v_sponge }}"{% else %}{{ V_SPONGE_SETTINGS.v_sponge }}{% endif %} ! Maximum viscosity in sponge layer (m2/s)
+/
+
+&SSS_CORRECTION                                                       !surf_flx.F
+!--------------
+! Requires SFLX_CORR and SALINITY cppkeys
+!--------------
+dSSSdt = {% if SSS_CORRECTION.dSSSdt is sameas true or SSS_CORRECTION.dSSSdt is sameas false %}{{ SSS_CORRECTION.dSSSdt|lower }}{% elif SSS_CORRECTION.dSSSdt is string %}"{{ SSS_CORRECTION.dSSSdt }}"{% else %}{{ SSS_CORRECTION.dSSSdt }}{% endif %} ! SSS correction co-efficient as piston velocity (cm/day)
+/
+
+&SST_CORRECTION                                                       !surf_flx.F
+!--------------
+! Requires QCORRECTION cppkey
+!--------------
+dSSTdt = {% if SST_CORRECTION.dSSTdt is sameas true or SST_CORRECTION.dSSTdt is sameas false %}{{ SST_CORRECTION.dSSTdt|lower }}{% elif SST_CORRECTION.dSSTdt is string %}"{{ SST_CORRECTION.dSSTdt }}"{% else %}{{ SST_CORRECTION.dSSTdt }}{% endif %} ! SST correction co-efficient as piston velocity (cm/day)
+/
+
+&DIAGNOSTICS_SETTINGS                                              !diagnostics.F
+!--------------------
+! Previously set in `diagnostics.opt`
+! Requires DIAGNOSTICS cppkey
+!--------------------
+diag_avg = {% if DIAGNOSTICS_SETTINGS.diag_avg is sameas true or DIAGNOSTICS_SETTINGS.diag_avg is sameas false %}{{ DIAGNOSTICS_SETTINGS.diag_avg|lower }}{% elif DIAGNOSTICS_SETTINGS.diag_avg is string %}"{{ DIAGNOSTICS_SETTINGS.diag_avg }}"{% else %}{{ DIAGNOSTICS_SETTINGS.diag_avg }}{% endif %} ! Output physics diags as avgs (T) or snapshots (F)
+diag_uv = {% if DIAGNOSTICS_SETTINGS.diag_uv is sameas true or DIAGNOSTICS_SETTINGS.diag_uv is sameas false %}{{ DIAGNOSTICS_SETTINGS.diag_uv|lower }}{% elif DIAGNOSTICS_SETTINGS.diag_uv is string %}"{{ DIAGNOSTICS_SETTINGS.diag_uv }}"{% else %}{{ DIAGNOSTICS_SETTINGS.diag_uv }}{% endif %} ! Output momentum diagnostics
+diag_trc = {% if DIAGNOSTICS_SETTINGS.diag_trc is sameas true or DIAGNOSTICS_SETTINGS.diag_trc is sameas false %}{{ DIAGNOSTICS_SETTINGS.diag_trc|lower }}{% elif DIAGNOSTICS_SETTINGS.diag_trc is string %}"{{ DIAGNOSTICS_SETTINGS.diag_trc }}"{% else %}{{ DIAGNOSTICS_SETTINGS.diag_trc }}{% endif %} ! Output tracer diagnostics
+output_period = {% if DIAGNOSTICS_SETTINGS.output_period is sameas true or DIAGNOSTICS_SETTINGS.output_period is sameas false %}{{ DIAGNOSTICS_SETTINGS.output_period|lower }}{% elif DIAGNOSTICS_SETTINGS.output_period is string %}"{{ DIAGNOSTICS_SETTINGS.output_period }}"{% else %}{{ DIAGNOSTICS_SETTINGS.output_period }}{% endif %} ! Output frequency (s)
+nrpf = {% if DIAGNOSTICS_SETTINGS.nrpf is sameas true or DIAGNOSTICS_SETTINGS.nrpf is sameas false %}{{ DIAGNOSTICS_SETTINGS.nrpf|lower }}{% elif DIAGNOSTICS_SETTINGS.nrpf is string %}"{{ DIAGNOSTICS_SETTINGS.nrpf }}"{% else %}{{ DIAGNOSTICS_SETTINGS.nrpf }}{% endif %} ! Number of records per output file
+code_check_mode = {% if DIAGNOSTICS_SETTINGS.code_check_mode is sameas true or DIAGNOSTICS_SETTINGS.code_check_mode is sameas false %}{{ DIAGNOSTICS_SETTINGS.code_check_mode|lower }}{% elif DIAGNOSTICS_SETTINGS.code_check_mode is string %}"{{ DIAGNOSTICS_SETTINGS.code_check_mode }}"{% else %}{{ DIAGNOSTICS_SETTINGS.code_check_mode }}{% endif %} ! diagnostics in stdout formatted for code testing
+/
+
+&STDOUT_DIAG_SETTINGS
+!-----------------------------
+! Previously set in `diag.opt`
+!-----------------------------
+code_check_mode = {% if STDOUT_DIAG_SETTINGS.code_check_mode is sameas true or STDOUT_DIAG_SETTINGS.code_check_mode is sameas false %}{{ STDOUT_DIAG_SETTINGS.code_check_mode|lower }}{% elif STDOUT_DIAG_SETTINGS.code_check_mode is string %}"{{ STDOUT_DIAG_SETTINGS.code_check_mode }}"{% else %}{{ STDOUT_DIAG_SETTINGS.code_check_mode }}{% endif %}
+/
+
+&RANDOM_OUTPUT_SETTINGS
+!----------------------
+! Previously set in `random_output.opt`
+!----------------------
+do_random = {% if RANDOM_OUTPUT_SETTINGS.do_random is sameas true or RANDOM_OUTPUT_SETTINGS.do_random is sameas false %}{{ RANDOM_OUTPUT_SETTINGS.do_random|lower }}{% elif RANDOM_OUTPUT_SETTINGS.do_random is string %}"{{ RANDOM_OUTPUT_SETTINGS.do_random }}"{% else %}{{ RANDOM_OUTPUT_SETTINGS.do_random }}{% endif %} ! Output user-customized output fields
+output_period = {% if RANDOM_OUTPUT_SETTINGS.output_period is sameas true or RANDOM_OUTPUT_SETTINGS.output_period is sameas false %}{{ RANDOM_OUTPUT_SETTINGS.output_period|lower }}{% elif RANDOM_OUTPUT_SETTINGS.output_period is string %}"{{ RANDOM_OUTPUT_SETTINGS.output_period }}"{% else %}{{ RANDOM_OUTPUT_SETTINGS.output_period }}{% endif %} ! Frequency of custom output (s)
+nrpf = {% if RANDOM_OUTPUT_SETTINGS.nrpf is sameas true or RANDOM_OUTPUT_SETTINGS.nrpf is sameas false %}{{ RANDOM_OUTPUT_SETTINGS.nrpf|lower }}{% elif RANDOM_OUTPUT_SETTINGS.nrpf is string %}"{{ RANDOM_OUTPUT_SETTINGS.nrpf }}"{% else %}{{ RANDOM_OUTPUT_SETTINGS.nrpf }}{% endif %} ! Number of records per output file
+/
+
+&SURF_FLX_SETTINGS
+!-----------------
+! Previously set in `surf_flx.opt`
+!-----------------
+wrt_smflx = {% if SURF_FLX_SETTINGS.wrt_smflx is sameas true or SURF_FLX_SETTINGS.wrt_smflx is sameas false %}{{ SURF_FLX_SETTINGS.wrt_smflx|lower }}{% elif SURF_FLX_SETTINGS.wrt_smflx is string %}"{{ SURF_FLX_SETTINGS.wrt_smflx }}"{% else %}{{ SURF_FLX_SETTINGS.wrt_smflx }}{% endif %} ! Output surface momentum flux
+wrt_stflx = {% if SURF_FLX_SETTINGS.wrt_stflx is sameas true or SURF_FLX_SETTINGS.wrt_stflx is sameas false %}{{ SURF_FLX_SETTINGS.wrt_stflx|lower }}{% elif SURF_FLX_SETTINGS.wrt_stflx is string %}"{{ SURF_FLX_SETTINGS.wrt_stflx }}"{% else %}{{ SURF_FLX_SETTINGS.wrt_stflx }}{% endif %} ! Output surface tracer flux
+wrt_swflx = {% if SURF_FLX_SETTINGS.wrt_swflx is sameas true or SURF_FLX_SETTINGS.wrt_swflx is sameas false %}{{ SURF_FLX_SETTINGS.wrt_swflx|lower }}{% elif SURF_FLX_SETTINGS.wrt_swflx is string %}"{{ SURF_FLX_SETTINGS.wrt_swflx }}"{% else %}{{ SURF_FLX_SETTINGS.wrt_swflx }}{% endif %} ! Output surface water flux (P-E)
+sflx_avg = {% if SURF_FLX_SETTINGS.sflx_avg is sameas true or SURF_FLX_SETTINGS.sflx_avg is sameas false %}{{ SURF_FLX_SETTINGS.sflx_avg|lower }}{% elif SURF_FLX_SETTINGS.sflx_avg is string %}"{{ SURF_FLX_SETTINGS.sflx_avg }}"{% else %}{{ SURF_FLX_SETTINGS.sflx_avg }}{% endif %} ! Output average (T) or instantaneous (F) fields
+output_period = {% if SURF_FLX_SETTINGS.output_period is sameas true or SURF_FLX_SETTINGS.output_period is sameas false %}{{ SURF_FLX_SETTINGS.output_period|lower }}{% elif SURF_FLX_SETTINGS.output_period is string %}"{{ SURF_FLX_SETTINGS.output_period }}"{% else %}{{ SURF_FLX_SETTINGS.output_period }}{% endif %} ! Frequency of surface flux output (s)
+nrpf = {% if SURF_FLX_SETTINGS.nrpf is sameas true or SURF_FLX_SETTINGS.nrpf is sameas false %}{{ SURF_FLX_SETTINGS.nrpf|lower }}{% elif SURF_FLX_SETTINGS.nrpf is string %}"{{ SURF_FLX_SETTINGS.nrpf }}"{% else %}{{ SURF_FLX_SETTINGS.nrpf }}{% endif %} ! Number of records per surface flux file
+/
+
+&PIPE_FRC_SETTINGS
+pipe_source = {% if PIPE_FRC_SETTINGS.pipe_source is sameas true or PIPE_FRC_SETTINGS.pipe_source is sameas false %}{{ PIPE_FRC_SETTINGS.pipe_source|lower }}{% elif PIPE_FRC_SETTINGS.pipe_source is string %}"{{ PIPE_FRC_SETTINGS.pipe_source }}"{% else %}{{ PIPE_FRC_SETTINGS.pipe_source }}{% endif %} ! T if pipe inputs used, else F
+p_analytical = {% if PIPE_FRC_SETTINGS.p_analytical is sameas true or PIPE_FRC_SETTINGS.p_analytical is sameas false %}{{ PIPE_FRC_SETTINGS.p_analytical|lower }}{% elif PIPE_FRC_SETTINGS.p_analytical is string %}"{{ PIPE_FRC_SETTINGS.p_analytical }}"{% else %}{{ PIPE_FRC_SETTINGS.p_analytical }}{% endif %} ! T if pipe inputs specified analytically
+npip = {% if PIPE_FRC_SETTINGS.npip is sameas true or PIPE_FRC_SETTINGS.npip is sameas false %}{{ PIPE_FRC_SETTINGS.npip|lower }}{% elif PIPE_FRC_SETTINGS.npip is string %}"{{ PIPE_FRC_SETTINGS.npip }}"{% else %}{{ PIPE_FRC_SETTINGS.npip }}{% endif %} ! Number of pipe inputs
+/
+
+&PARTICLES_SETTINGS
+floats = {% if PARTICLES_SETTINGS.floats is sameas true or PARTICLES_SETTINGS.floats is sameas false %}{{ PARTICLES_SETTINGS.floats|lower }}{% elif PARTICLES_SETTINGS.floats is string %}"{{ PARTICLES_SETTINGS.floats }}"{% else %}{{ PARTICLES_SETTINGS.floats }}{% endif %} ! Release Lagrangian particles (T) or not (F)
+np = {% if PARTICLES_SETTINGS.np is sameas true or PARTICLES_SETTINGS.np is sameas false %}{{ PARTICLES_SETTINGS.np|lower }}{% elif PARTICLES_SETTINGS.np is string %}"{{ PARTICLES_SETTINGS.np }}"{% else %}{{ PARTICLES_SETTINGS.np }}{% endif %} ! Local number of particles
+extra_space_fac = {% if PARTICLES_SETTINGS.extra_space_fac is sameas true or PARTICLES_SETTINGS.extra_space_fac is sameas false %}{{ PARTICLES_SETTINGS.extra_space_fac|lower }}{% elif PARTICLES_SETTINGS.extra_space_fac is string %}"{{ PARTICLES_SETTINGS.extra_space_fac }}"{% else %}{{ PARTICLES_SETTINGS.extra_space_fac }}{% endif %} ! Buffer space to receive extra exchanged particles
+exchange_facx = {% if PARTICLES_SETTINGS.exchange_facx is sameas true or PARTICLES_SETTINGS.exchange_facx is sameas false %}{{ PARTICLES_SETTINGS.exchange_facx|lower }}{% elif PARTICLES_SETTINGS.exchange_facx is string %}"{{ PARTICLES_SETTINGS.exchange_facx }}"{% else %}{{ PARTICLES_SETTINGS.exchange_facx }}{% endif %} ! Maximum number of particles for transfer in N-S
+exchange_facy = {% if PARTICLES_SETTINGS.exchange_facy is sameas true or PARTICLES_SETTINGS.exchange_facy is sameas false %}{{ PARTICLES_SETTINGS.exchange_facy|lower }}{% elif PARTICLES_SETTINGS.exchange_facy is string %}"{{ PARTICLES_SETTINGS.exchange_facy }}"{% else %}{{ PARTICLES_SETTINGS.exchange_facy }}{% endif %} ! Maximum number of particles for transfer in E-W
+exchange_facc = {% if PARTICLES_SETTINGS.exchange_facc is sameas true or PARTICLES_SETTINGS.exchange_facc is sameas false %}{{ PARTICLES_SETTINGS.exchange_facc|lower }}{% elif PARTICLES_SETTINGS.exchange_facc is string %}"{{ PARTICLES_SETTINGS.exchange_facc }}"{% else %}{{ PARTICLES_SETTINGS.exchange_facc }}{% endif %} ! Maximum number of particles for transfer in corners
+output_period = {% if PARTICLES_SETTINGS.output_period is sameas true or PARTICLES_SETTINGS.output_period is sameas false %}{{ PARTICLES_SETTINGS.output_period|lower }}{% elif PARTICLES_SETTINGS.output_period is string %}"{{ PARTICLES_SETTINGS.output_period }}"{% else %}{{ PARTICLES_SETTINGS.output_period }}{% endif %} ! Frequency of outputs
+nrpf = {% if PARTICLES_SETTINGS.nrpf is sameas true or PARTICLES_SETTINGS.nrpf is sameas false %}{{ PARTICLES_SETTINGS.nrpf|lower }}{% elif PARTICLES_SETTINGS.nrpf is string %}"{{ PARTICLES_SETTINGS.nrpf }}"{% else %}{{ PARTICLES_SETTINGS.nrpf }}{% endif %} ! Number of records per file
+ppm3 = {% if PARTICLES_SETTINGS.ppm3 is sameas true or PARTICLES_SETTINGS.ppm3 is sameas false %}{{ PARTICLES_SETTINGS.ppm3|lower }}{% elif PARTICLES_SETTINGS.ppm3 is string %}"{{ PARTICLES_SETTINGS.ppm3 }}"{% else %}{{ PARTICLES_SETTINGS.ppm3 }}{% endif %} ! Target particles per cubic meter
+pmin = {% if PARTICLES_SETTINGS.pmin is sameas true or PARTICLES_SETTINGS.pmin is sameas false %}{{ PARTICLES_SETTINGS.pmin|lower }}{% elif PARTICLES_SETTINGS.pmin is string %}"{{ PARTICLES_SETTINGS.pmin }}"{% else %}{{ PARTICLES_SETTINGS.pmin }}{% endif %} ! Minimum of allocated space for particle array
+/
+

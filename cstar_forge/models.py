@@ -15,7 +15,6 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, PrivateAttr, model_v
 
 import cstar.applications.roms_marbl.models as models
 from cstar.applications.roms_marbl.models import CodeRepository, ROMSCompositeCodeRepository
-from . import config
 
         
 
@@ -285,39 +284,23 @@ class SettingsStage(BaseModel):
         default_config_yaml = data.pop("_default_config_yaml", data.pop("default_config_yaml", ""))
         if not default_config_yaml:
             raise ValueError("_default_config_yaml is required for SettingsStage")
-        
-        # Template variables should already be resolved by caller, but check anyway
-        if "{{" in default_config_yaml:
-            from . import config
-            default_config_yaml = default_config_yaml.replace("{{ config.path.model_configs }}", str(config.paths.model_configs))
-            # Note: model.name should be resolved by caller before creating SettingsStage
-        
-        # Load settings from YAML file
-        settings_dict = {}
+
+        # Load settings from YAML file (path should already be resolved to absolute by caller)
         yaml_path = Path(default_config_yaml)
         if yaml_path.exists():
             with yaml_path.open('r') as f:
                 settings_dict = yaml.safe_load(f) or {}
         else:
-            # Try relative to model_configs if path doesn't exist
-            from . import config
-            if not yaml_path.is_absolute():
-                yaml_path = config.paths.model_configs / default_config_yaml
-            if yaml_path.exists():
-                with yaml_path.open('r') as f:
-                    settings_dict = yaml.safe_load(f) or {}
-            else:
-                raise FileNotFoundError(
-                    f"Settings YAML file not found: {default_config_yaml} "
-                    f"(resolved to: {yaml_path})"
-                )
-        
-        # Update data with loaded settings (remove _default_config_yaml from data)
+            raise FileNotFoundError(
+                f"Settings YAML file not found: {default_config_yaml}"
+            )
+
+        # Update data with loaded settings
         data["settings_dict"] = settings_dict
-        
+
         # Initialize the model first
         super().__init__(**data)
-        
+
         # Set the private attribute after initialization
         object.__setattr__(self, "_default_config_yaml", default_config_yaml)
     
@@ -441,49 +424,47 @@ class ModelSpec(BaseModel):
     def _validate_settings_templates_cross_ref(self) -> "ModelSpec":
         """
         Cross-validate that template files have corresponding settings keys.
-        
-        Only files ending with .j2 in templates.compile_time.filter.files are validated.
-        Each .j2 template file should have a corresponding key in settings.compile_time.settings_dict.
-        Non-template files are skipped.
+
+        Only ``.j2`` templates are validated. Keys are resolved the same way as
+        ``render_roms_settings`` (e.g. ``namelist.nml.j2`` -> ``namelist.nml``,
+        ``bgc.opt.j2`` -> ``bgc``).
         """
+        from .settings import settings_key_for_template
+
         if self.templates is None or self.settings is None:
             return self
-        
-        # Validate compile_time
-        if (self.templates.compile_time is not None and 
-            self.templates.compile_time.filter is not None and
-            self.settings.compile_time is not None):
-            
-            template_files = self.templates.compile_time.filter.files or []
-            # Only validate .j2 template files - skip non-template files
-            # Remove .j2 extension and extract base name for comparison with settings keys
-            # e.g., "bgc.opt.j2" -> "bgc.opt" -> should match "bgc" key in settings_dict
-            template_base_names = set()
-            for f in template_files:
-                # Only process files that end with .j2 (template files)
-                if not f.endswith('.j2'):
-                    continue
-                # Remove .j2 extension
-                base_name = f.replace('.j2', '')
-                # Extract the section name (before first dot) for settings_dict key
-                # e.g., "bgc.opt" -> "bgc", "cppdefs.opt" -> "cppdefs"
-                if '.' in base_name:
-                    section_name = base_name.split('.')[0]
-                    template_base_names.add(section_name)
-                else:
-                    # If no dot, use the whole name
-                    template_base_names.add(base_name)
-            
-            settings_keys = set(self.settings.compile_time.settings_dict.keys())
-            
-            # Check that each template file section has a corresponding settings key
-            missing_keys = template_base_names - settings_keys
+
+        def _validate_stage(stage_name: str, template_repo: Any, settings_stage: Any) -> None:
+            if template_repo is None or template_repo.filter is None or settings_stage is None:
+                return
+
+            template_files = template_repo.filter.files or []
+            settings_dict = settings_stage.settings_dict
+            template_keys = {
+                settings_key_for_template(f, settings_dict)
+                for f in template_files
+                if f.endswith(".j2")
+            }
+            template_keys.discard(None)
+            settings_keys = set(settings_dict.keys())
+            missing_keys = template_keys - settings_keys
             if missing_keys:
                 raise ValueError(
                     f"Template files with sections {sorted(missing_keys)} do not have corresponding keys "
-                    f"in settings.compile_time.settings_dict. Available keys: {sorted(settings_keys)}"
+                    f"in settings.{stage_name}.settings_dict. Available keys: {sorted(settings_keys)}"
                 )
-        
+
+        _validate_stage(
+            "compile_time",
+            self.templates.compile_time,
+            self.settings.compile_time,
+        )
+        _validate_stage(
+            "run_time",
+            self.templates.run_time,
+            self.settings.run_time,
+        )
+
         return self
     
     @model_validator(mode="after")
@@ -673,10 +654,13 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
     with path.open() as f:
         data = yaml.safe_load(f) or {}
     
-    if model_name not in data:
+    _SINGLE_MODEL_KEYS = frozenset({"templates", "settings", "code", "inputs"})
+    if model_name in data:
+        block = data[model_name]  # multi-model file (e.g., models.yml)
+    elif _SINGLE_MODEL_KEYS.intersection(data.keys()):
+        block = data  # single-model file: content at top level, filename is model name
+    else:
         raise KeyError(f"Model '{model_name}' not found in models YAML file: {path}")
-    
-    block = data[model_name]
     
     # Parse code
     if "code" not in block:
@@ -712,22 +696,25 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
     # Collect datasets
     datasets = _collect_datasets(block, model_inputs)
     
-    # Helper function to resolve template variables in paths
-    def resolve_template_path(path_str: str, model_name: str) -> str:
-        """Resolve template variables in path strings."""
+    # Helper function to resolve relative paths against the model directory
+    model_dir = path.parent
+
+    def resolve_relative_path(path_str: str, model_dir: Path) -> str:
+        """Resolve a path string relative to the model directory, or return as-is if absolute."""
         if not path_str:
             return path_str
-        path_str = path_str.replace("{{ config.path.model_configs }}", str(config.paths.model_configs))
-        path_str = path_str.replace("{{ model.name }}", model_name)
-        return path_str
-    
+        p = Path(path_str)
+        if p.is_absolute():
+            return path_str
+        return str(model_dir / p)
+
     # Parse templates (optional) as TemplatesSpec - now uses CodeRepository structure
     templates_spec: Optional[TemplatesSpec] = None
     if "templates" in block:
         templates_dict = block["templates"]
         compile_time_repo = None
         run_time_repo = None
-        
+
         # Parse compile_time as CodeRepository
         if "compile_time" in templates_dict:
             compile_time_dict = templates_dict["compile_time"]
@@ -736,13 +723,13 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
                 filter_files = compile_time_dict["filter"].get("files", [])
                 if filter_files:
                     compile_time_filter = models.PathFilter(files=filter_files)
-            
-            # Resolve template variables in location
-            location = resolve_template_path(
+
+            # Resolve relative path in location
+            location = resolve_relative_path(
                 compile_time_dict.get("location", ""),
-                model_name
+                model_dir
             )
-            
+
             # Create CodeRepository for compile_time
             compile_time_repo_kwargs = {
                 "location": location,
@@ -754,9 +741,9 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
             elif "commit" in compile_time_dict:
                 compile_time_repo_kwargs["commit"] = str(compile_time_dict["commit"])
                 compile_time_repo_kwargs.pop("branch")
-            
+
             compile_time_repo = CodeRepository(**compile_time_repo_kwargs)
-        
+
         # Parse run_time as CodeRepository
         if "run_time" in templates_dict:
             run_time_dict = templates_dict["run_time"]
@@ -765,13 +752,13 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
                 filter_files = run_time_dict["filter"].get("files", [])
                 if filter_files:
                     run_time_filter = models.PathFilter(files=filter_files)
-            
-            # Resolve template variables in location
-            location = resolve_template_path(
+
+            # Resolve relative path in location
+            location = resolve_relative_path(
                 run_time_dict.get("location", ""),
-                model_name
+                model_dir
             )
-            
+
             # Create CodeRepository for run_time
             run_time_repo_kwargs = {
                 "location": location,
@@ -783,15 +770,15 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
             elif "commit" in run_time_dict:
                 run_time_repo_kwargs["commit"] = str(run_time_dict["commit"])
                 run_time_repo_kwargs.pop("branch")
-            
+
             run_time_repo = CodeRepository(**run_time_repo_kwargs)
-        
+
         if compile_time_repo or run_time_repo:
             templates_spec = TemplatesSpec(
                 compile_time=compile_time_repo,
                 run_time=run_time_repo
             )
-    
+
     # Parse settings as SettingsSpec (required; build empty if missing)
     settings_spec: SettingsSpec
     if "settings" in block:
@@ -799,38 +786,38 @@ def load_models_yaml(path: Path, model_name: str) -> ModelSpec:
         properties_spec = None
         compile_time_settings = None
         run_time_settings = None
-        
+
         # Parse properties
         if "properties" in settings_dict:
             properties_dict = settings_dict["properties"]
             properties_spec = PropertiesSpec(**properties_dict)
-        
+
         # Parse compile_time settings
         if "compile_time" in settings_dict:
             compile_time_settings_dict = settings_dict["compile_time"]
-            # Resolve template variables in _default_config_yaml
-            default_config_yaml = resolve_template_path(
+            # Resolve relative path in _default_config_yaml
+            default_config_yaml = resolve_relative_path(
                 compile_time_settings_dict.get("_default_config_yaml", ""),
-                model_name
+                model_dir
             )
-            
+
             compile_time_settings = SettingsStage(
                 _default_config_yaml=default_config_yaml
             )
-        
+
         # Parse run_time settings
         if "run_time" in settings_dict:
             run_time_settings_dict = settings_dict["run_time"]
-            # Resolve template variables in _default_config_yaml
-            default_config_yaml = resolve_template_path(
+            # Resolve relative path in _default_config_yaml
+            default_config_yaml = resolve_relative_path(
                 run_time_settings_dict.get("_default_config_yaml", ""),
-                model_name
+                model_dir
             )
-            
+
             run_time_settings = SettingsStage(
                 _default_config_yaml=default_config_yaml
             )
-        
+
         if properties_spec or compile_time_settings or run_time_settings:
             settings_spec = SettingsSpec(
                 properties=properties_spec,

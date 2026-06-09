@@ -1,6 +1,19 @@
-roms.in:
-  time_stepping:
+namelist.nml:
+  TIME_STEPPING:
     ntimes: 10000
     dt: 120  # seconds
     ndtfast: 60
     ninfo: 1
+
+  CDR_OUTPUT_SETTINGS:
+    do_cdr: false
+    do_avg: true
+    monthly_averages: false
+    output_period: 3600
+    nrpf: 24
+
+  UPSCALE_SETTINGS:
+    do_upscale: false
+    nrpf_uscl: 24
+    output_period_uscl: 3600
+    uscl_prec: 'nf90_double'
