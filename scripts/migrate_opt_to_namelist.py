@@ -484,8 +484,7 @@ def migrate(opt_dir: Path, roms_in: Path, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # namelist.nml
-    write_roms_namelist(settings_compile_time=ct, settings_run_time=rt,
-                        output_dir=out_dir, n_tracers=n_tracers)
+    write_roms_namelist(settings_run_time=rt, output_dir=out_dir, n_tracers=n_tracers)
     print(f"✓ wrote {out_dir / 'namelist.nml'}")
 
     # cppdefs.opt (re-render the current template; merge run-time sections the
