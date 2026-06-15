@@ -1,3 +1,9 @@
+time_stepping:
+  ntimes: 10000
+  dt: 60  # seconds
+  ndtfast: 60
+  ninfo: 1
+
 cdr_output:
   do_cdr: true
   do_avg: true
