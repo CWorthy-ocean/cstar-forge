@@ -132,10 +132,13 @@ def _opt_scalar(text: str, key: str):
 
 
 # (file stem, target run-time section, {opt_var: dict_key})
-# opt_var == dict_key unless noted. Only keys consumed by write_roms_namelist
-# (plus those needed to derive n_tracers / calc_pflx) are listed.
+# opt_var matches the variable name in the .opt file; dict_key is the settings
+# key. They differ where settings keys are lowercased (``{k: k.lower()}`` for
+# the historically-uppercase param/ocean_vars/extract keys) or explicitly
+# renamed. Only keys consumed by write_roms_namelist (plus those needed to
+# derive n_tracers / calc_pflx) are listed.
 _OPT_SECTIONS = [
-    ("param", "param", {k: k for k in
+    ("param", "param", {k: k.lower() for k in
         ["LLm", "MMm", "N", "NP_XI", "NP_ETA", "NSUB_X", "NSUB_E", "nt_passive", "ntrc_bio"]}),
     ("blk_frc", "blk_frc", {"interp_frc": "interp_frc", "do_check_units": "check_bulk_frc_units"}),
     ("bgc", "bgc", {k: k for k in
@@ -144,7 +147,7 @@ _OPT_SECTIONS = [
          "wrt_avg_dia", "output_period_avg_dia", "nrpf_avg_dia", "interp_frc"]}),
     ("tides", "tides", {k: k for k in ["ntides", "bry_tides", "pot_tides", "ana_tides"]}),
     ("river_frc", "river_frc", {k: k for k in ["river_source", "analytical", "nriv"]}),
-    ("ocean_vars", "ocean_vars", {k: k for k in
+    ("ocean_vars", "ocean_vars", {k: k.lower() for k in
         ["wrt_file_rst", "output_period_rst", "monthly_restarts", "nrpf_rst",
          "wrt_file_his", "output_period_his", "nrpf_his",
          "wrt_Z", "wrt_Ub", "wrt_Vb", "wrt_U", "wrt_V", "wrt_R", "wrt_O", "wrt_W",
@@ -163,7 +166,7 @@ _OPT_SECTIONS = [
          "cdr_volume", "nz_chd"]}),
     ("cdr_output", "cdr_output", {k: k for k in
         ["do_cdr", "do_avg", "monthly_averages", "output_period", "nrpf"]}),
-    ("extract_data", "extract_data", {k: k for k in
+    ("extract_data", "extract_data", {k: k.lower() for k in
         ["do_extract", "extract_file", "nrpf", "N_chd", "theta_s_chd", "theta_b_chd",
          "hc_chd", "extract_period"]}),
     ("sponge_tune", "sponge_tune", {k: k for k in
