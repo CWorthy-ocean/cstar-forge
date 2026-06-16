@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """
+WARNING: this script is not fully tested or robust. It's a starting point for
+possible future work if such a script is needed. It does most of the right things
+but also misses some things. Use with caution, check your outputs.
+
 Migrate a legacy filled ``.opt`` + ``roms.in`` build into the new
 ``cppdefs.opt`` + ``namelist.nml`` format.
 
