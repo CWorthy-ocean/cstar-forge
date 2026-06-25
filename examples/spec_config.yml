@@ -8,6 +8,7 @@ identity:
 run:
   start_date: '2012-01-01T00:00:00'
   end_date: '2012-01-02T00:00:00'
+  model_reference_date: '2000-01-01T00:00:00'
 domain:
   grid_kwargs:
     nx: 6
@@ -33,6 +34,7 @@ domain:
   grid_kwargs_parent: null
   grid_kwargs_child: null
   metadata_child: null
+  nesting_include_pressure_fluxes: false
 sources:
   initial_conditions:
     source:
@@ -45,6 +47,8 @@ sources:
       dataset_key: UNIFIED_BGC
       climatology: true
       glorys_layout: null
+    use_density_interpolation: false
+    allow_flex_time: false
   forcing:
     surface:
     - source:
@@ -56,6 +60,7 @@ sources:
       correct_radiation: true
       coarse_grid_mode: never
       restoring_forces: null
+      wind_dropoff: false
     - source:
         name: UNIFIED
         dataset_key: UNIFIED_BGC
@@ -65,6 +70,7 @@ sources:
       correct_radiation: false
       coarse_grid_mode: never
       restoring_forces: null
+      wind_dropoff: false
     boundary:
     - source:
         name: GLORYS
@@ -72,12 +78,16 @@ sources:
         climatology: false
         glorys_layout: regional
       type: physics
+      apply_2d_horizontal_fill: false
+      use_density_interpolation: false
     - source:
         name: UNIFIED
         dataset_key: UNIFIED_BGC
         climatology: true
         glorys_layout: null
       type: bgc
+      apply_2d_horizontal_fill: false
+      use_density_interpolation: false
     tidal:
     - source:
         name: TPXO
@@ -92,6 +102,8 @@ sources:
         climatology: false
         glorys_layout: null
       include_bgc: true
+      convert_to_climatology: if_any_missing
+      bgc_source: null
   cdr_forcing: null
   resolved_datasets:
     GLORYS:
@@ -425,8 +437,8 @@ composition:
     origin: custom
     modified: false
   forcing:
-    name: null
-    origin: model_default
+    name: glorys-era5-unified
+    origin: catalog
     modified: false
   output:
     name: standard
@@ -438,5 +450,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: 0fbb45690b0dd20ac31f116d3d371340956ae48c0f0098617f8bcb719bbbb1d6
+  content_hash: 3af3b4ecc0f4752764e9ebe5f3c538a387803afdc7c70670f1823e0498ba4a4f
   notes: null
