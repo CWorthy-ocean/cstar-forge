@@ -10,6 +10,12 @@
 #   ./dev-setup.sh --c-star-ref main          # pip install C-Star from that git ref
 #   (refs are branch names or full commit hashes; default for both is main)
 #
+# roms-tools and C-Star are installed from GitHub with `pip install --no-deps`, so
+# pip never resolves or replaces the conda-forge dependency tree (all dependencies
+# come from environment.yml). A final `pip check` / import smoke test is advisory
+# only: while C-Star's roms-tools pin lags behind roms-tools main (4.x), pip check
+# will report a version complaint but the script does not fail on it.
+#
 # Package Manager:
 #   Uses micromamba if available, then mamba, then conda.
 #   If none are found, the script will automatically download and
@@ -151,8 +157,8 @@ fi
 echo ""
 echo "  Environment:"
 echo "    • Environment Name: $KERNEL_NAME"
-echo "    • roms-tools (pip): git ref $ROMS_TOOLS_GIT_REF"
-echo "    • C-Star (pip):   git ref $C_STAR_GIT_REF"
+echo "    • roms-tools (pip): git ref $ROMS_TOOLS_GIT_REF (--no-deps)"
+echo "    • C-Star (pip):   git ref $C_STAR_GIT_REF (--no-deps)"
 if [[ ${#LOCAL_PYTHON_PACKAGES[@]} -eq 1 ]] && [[ "${LOCAL_PYTHON_PACKAGES[0]}" == "." ]]; then
   echo "    • Python Package:   cstar-forge (from current directory)"
 else
@@ -421,11 +427,17 @@ else
   fi
 fi
 
-echo "Installing roms-tools and cstar-ocean from GitHub via pip..."
-echo "  roms-tools @ ${ROMS_TOOLS_GIT_REF}"
-pip install "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
-echo "  C-Star @ ${C_STAR_GIT_REF}"
-pip install "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
+echo "Installing cstar-ocean and roms-tools from GitHub via pip (--no-deps)..."
+echo "  All dependencies come from conda-forge (environment.yml); pip installs only"
+echo "  the package code, never resolving or replacing the conda dependency tree."
+# C-Star first; --no-deps means its (possibly stale) roms-tools pin is NOT enforced,
+# so pip will not downgrade/replace the roms-tools we install next.
+echo "  C-Star @ ${C_STAR_GIT_REF} (--no-deps)"
+pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
+# roms-tools last so the requested ref is the final resident, overwriting the
+# conda-forge package that was installed only to source dependencies.
+echo "  roms-tools @ ${ROMS_TOOLS_GIT_REF} (--no-deps, installed last so it wins)"
+pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
 echo "✓ roms-tools and C-Star pip installs completed."
 
 #--------------------------------------------------------
@@ -467,7 +479,12 @@ for package_dir in "${LOCAL_PYTHON_PACKAGES[@]}"; do
   
   echo "  Installing: $package_display"
   cd "$install_dir"
-  pip install -e .
+  # --no-deps: the local package depends on cstar-ocean, which pins roms_tools<4.
+  # Without --no-deps, pip would re-resolve that chain and DOWNGRADE the roms-tools
+  # git build we just installed (and pull other deps as pip wheels). All of this
+  # package's dependencies are provided by conda-forge (environment.yml) plus the
+  # --no-deps git installs above, so installing code-only is correct here.
+  pip install -e . --no-deps
   
   # Verify installation by checking if the package can be imported
   # For the root package, check for cstar_forge module
@@ -534,6 +551,36 @@ if [[ "$KERNEL_EXISTS" == "false" ]]; then
   python -m ipykernel install --user --name "$KERNEL_NAME" --display-name "$KERNEL_NAME"
   echo "✓ Jupyter kernel installation completed successfully!"
 fi
+
+#--------------------------------------------------------
+# Verify installation (advisory only — never fatal)
+#--------------------------------------------------------
+echo ""
+echo "Verifying installation (warnings only)..."
+python - <<'PY' || true
+import importlib.metadata as m
+
+def _ver(dist):
+    try:
+        return m.version(dist)
+    except Exception:
+        return "(not found)"
+
+print(f"  roms-tools : {_ver('roms-tools')}")
+print(f"  cstar-ocean: {_ver('cstar-ocean')}")
+try:
+    import roms_tools  # noqa: F401
+    import cstar  # noqa: F401
+    print("  ✓ roms_tools and cstar import cleanly")
+except Exception as e:
+    print(f"  ⚠ import smoke test failed: {e!r}")
+    print("    (roms-tools 4.x removed some APIs; C-Star may need an update to match.)")
+PY
+
+echo "Running 'pip check' (advisory)..."
+echo "  A 'cstar-ocean requires roms-tools<4' style complaint is expected while"
+echo "  C-Star's pin lags roms-tools main; it is not fatal."
+pip check || echo "  ⚠ pip check reported inconsistencies (see above) — not fatal."
 
 echo ""
 echo "✓ Environment setup completed successfully!"
