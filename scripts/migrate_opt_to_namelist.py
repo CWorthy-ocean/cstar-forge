@@ -320,7 +320,7 @@ def ingest_roms_in(roms_in: Path, rt: dict) -> None:
         for p in forcing_paths:
             key = _classify_forcing(p)
             if key is None:
-                _warn(f"could not classify forcing path (left out of frcfile): {p}")
+                _warn(f"could not classify forcing path (left out of frcfiles): {p}")
                 continue
             if rt["forcing"].get(key) is not None:
                 _warn(f"multiple forcing paths matched '{key}'; keeping first, dropping: {p}")
@@ -329,13 +329,9 @@ def ingest_roms_in(roms_in: Path, rt: dict) -> None:
 
     if sec.get("initial"):
         vals = sec["initial"]
-        if vals:
+        if vals and len(vals) >= 2:
             rt.setdefault("initial", {})
-            nrrec = _parse_fortran_value(vals[0])
-            if isinstance(nrrec, int):
-                rt["initial"]["nrrec"] = nrrec
-            if len(vals) >= 2:
-                rt["initial"]["initial_file"] = vals[1]
+            rt["initial"]["initial_file"] = vals[1]
     if first("output_root_name"):
         rt.setdefault("output_root_name", {})["output_root_name"] = first("output_root_name")
     if sec.get("lateral_visc"):
