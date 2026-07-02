@@ -18,7 +18,7 @@ domain:
     size_y: 8000.0
     center_lon: 60.0
     center_lat: -4.0
-    rot: 6.0
+    rot: 0.0
   topography_source: ETOPO5
   open_boundaries:
     north: true
@@ -42,7 +42,7 @@ forcing:
       name: UNIFIED
       climatology: true
       glorys_layout: null
-    use_density_interpolation: false
+    bgc_interpolation_method: depth
     allow_flex_time: false
   surface:
   - source:
@@ -69,15 +69,23 @@ forcing:
       climatology: false
       glorys_layout: regional
     type: physics
-    apply_2d_horizontal_fill: false
-    use_density_interpolation: false
+    bgc_interpolation_method: depth
+    prefill: null
+    prefill_kwargs: null
+    regrid_method: null
+    extrap_method: null
+    extrap_kwargs: null
   - source:
       name: UNIFIED
       climatology: true
       glorys_layout: null
     type: bgc
-    apply_2d_horizontal_fill: false
-    use_density_interpolation: false
+    bgc_interpolation_method: depth
+    prefill: null
+    prefill_kwargs: null
+    regrid_method: null
+    extrap_method: null
+    extrap_kwargs: null
   tidal:
   - source:
       name: TPXO
@@ -92,6 +100,8 @@ forcing:
     include_bgc: true
     convert_to_climatology: if_any_missing
     bgc_source: null
+    coast_snap_buffer_km: null
+    domain_edge_buffer: 20
   cdr_forcing: null
   resolved_datasets:
     GLORYS:
@@ -126,8 +136,8 @@ forcing:
       streamable: false
 model_settings:
   time_stepping:
-    ntimes: 3
-    dt: 28800.0
+    ntimes: 12
+    dt: 7200.0
     ndtfast: 60
     ninfo: 1
   lateral_visc:
@@ -152,10 +162,10 @@ model_settings:
     n: 10
     np_xi: 2
     np_eta: 5
-    nsub_x: 1
-    nsub_e: 1
     nt_passive: 0
     ntrc_bio: 32
+    nsub_x: 1
+    nsub_e: 1
   bgc:
     wrt_his: false
     output_period_his: 86400
@@ -171,6 +181,7 @@ model_settings:
     nrpf_avg_dia: 1
     nbgc_flx: 2
     interp_frc: 1
+    xco2air_default: 284.7
   blk_frc:
     interp_frc: 0
     check_bulk_frc_units: false
@@ -183,7 +194,7 @@ model_settings:
   ocean_vars:
     wrt_file_rst: true
     output_period_rst: 86400
-    monthly_restarts: true
+    monthly_restarts: false
     nrpf_rst: 2
     wrt_file_his: false
     output_period_his: 86400
@@ -220,6 +231,7 @@ model_settings:
   surf_flux:
     wrt_smflx: false
     wrt_stflx: false
+    wrt_rstflx: false
     wrt_swflx: false
     sflx_avg: false
     output_period: 31536000
@@ -355,9 +367,11 @@ model_settings:
     scoef: 0.822
     s0: 1.0
   sss_correction:
-    dsssdt: 0.0
+    dsssdt: 7.777
   sst_correction:
-    dsstdt: 0.0
+    dsstdt: 7.777
+  dic_alk_correction:
+    dcdt: 7.777
   marbl_bgc:
     marbl_config_file: marbl_in
     marbl_tracers_to_write:
@@ -378,7 +392,7 @@ model_settings:
     - pCO2SURF
     - FG_CO2
     - FG_ALT_CO2
-    marbl_timestep_ratio: 1
+    marbl_timestep: 3600.0
   cppdefs:
     obc_west: true
     obc_east: true
@@ -391,7 +405,7 @@ model_settings:
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: 391de2798ca9d6e9b63ba5471b6e62e96043e177
+    commit: 0.2.0
     branch: null
   marbl:
     location: https://github.com/marbl-ecosys/MARBL.git
@@ -428,13 +442,11 @@ composition:
     name: standard
     origin: catalog
     modified: false
-  overrides:
-    ocean_vars:
-      monthly_restarts: true
+  overrides: {}
 provenance:
   generated_at: null
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: 8f31ef4bc57cf001560ea79f20764c95474e5bfcfdda0937c2cd4657e1a76447
+  content_hash: a01badd3e72bee9acdf873068453e38597e44e116d03ce7b8688bfa61b39d5b4
   notes: null

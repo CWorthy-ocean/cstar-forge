@@ -83,10 +83,12 @@ dependencies:
   - xgcm>=0.9.0
   - zarr
   # Source the full ROMS-Tools transitive dependency closure from conda-forge.
-  # conda-forge has no 4.x yet; the exact version here is unimportant because
-  # dev-setup.sh overwrites the roms-tools *package* (not its deps) with a git
-  # build via `pip install --no-deps`. Keep this so --no-deps has every dep present.
-  - roms-tools>=3.4.0,<4
+  # Forge now targets roms-tools 4.x (see --roms-tools-ref); conda-forge has no 4.x
+  # yet, so this resolves to the newest 3.x for its dependency closure. The exact
+  # version is unimportant because dev-setup.sh overwrites the roms-tools *package*
+  # (not its deps) with a git build via `pip install --no-deps`. Keep this so
+  # --no-deps has every dep present.
+  - roms-tools>=3.4.0,<5
   # The roms-tools and cstar-ocean *packages* are (re)installed from GitHub by
   # dev-setup.sh (or CI) via `pip install --no-deps` after the conda env is created,
   # so pip never resolves/replaces conda-forge dependencies. See --roms-tools-ref /
