@@ -18,16 +18,19 @@ dependencies:
   - dask-jobqueue
   - distributed
   - esmpy
+  - f90nml  # cstar-forge runtime dep; needed because cstar-forge is pip-installed with --no-deps
   - ffmpeg
   - flake8
   - fakeredis<2.35
   - gcm_filters>=0.5.1
   - gcsfs
+  - gsw
   - gdown
   - h5py
   - holoviews
   - ipykernel
   - ipywidgets
+  - jinja2  # cstar-forge runtime dep (pip-installed with --no-deps); also a transitive jupyter dep
   - jupyter-book
   - jupyterlab
   - jupyter_client
@@ -50,6 +53,7 @@ dependencies:
   - pyco2sys
   - pydantic[version=">2,<3"]
   - prefect>=3.6.1
+  - psutil>=7.2.2  # C-Star runtime dep; listed here because C-Star is pip-installed with --no-deps
   - pytimeparse>=1.1.8
   - pytest>=7.0.0
   - pytest-asyncio>=1.3.0
@@ -78,7 +82,12 @@ dependencies:
   - xesmf
   - xgcm>=0.9.0
   - zarr
-  # Ensure ROMS-Tools runtime deps resolve from conda-forge first.
+  # Source the full ROMS-Tools transitive dependency closure from conda-forge.
+  # conda-forge has no 4.x yet; the exact version here is unimportant because
+  # dev-setup.sh overwrites the roms-tools *package* (not its deps) with a git
+  # build via `pip install --no-deps`. Keep this so --no-deps has every dep present.
   - roms-tools>=3.4.0,<4
-  # roms-tools and cstar-ocean from GitHub are installed by dev-setup.sh (or CI) via pip
-  # after the conda env is created; see --roms-tools-ref / --c-star-ref in dev-setup.sh.
+  # The roms-tools and cstar-ocean *packages* are (re)installed from GitHub by
+  # dev-setup.sh (or CI) via `pip install --no-deps` after the conda env is created,
+  # so pip never resolves/replaces conda-forge dependencies. See --roms-tools-ref /
+  # --c-star-ref in dev-setup.sh.

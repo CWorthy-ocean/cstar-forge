@@ -10,7 +10,8 @@ project:
      
   toc:
     - file: README.md
-    - file: docs/overview.md    
+    - file: docs/overview.md
+    - file: docs/releases.md
     
     - title: Get Started
       children:
