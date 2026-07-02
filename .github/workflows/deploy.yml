@@ -17,6 +17,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 # Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
 # However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
@@ -39,6 +40,18 @@ jobs:
         run: npm install -g jupyter-book
       - name: Build HTML Assets
         run: jupyter-book build --html
+      - name: Remove stale Pages artifacts from prior attempts of this run
+        # If a failed job in this run is re-run, the previous attempt's
+        # github-pages artifact is left behind, and deploy-pages refuses to
+        # pick between it and the new one ("Multiple artifacts named
+        # github-pages were unexpectedly found"). Clear any existing ones
+        # before uploading a fresh artifact.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" \
+            --jq '.artifacts[] | select(.name == "github-pages") | .id' |
+          xargs -r -n1 -I{} gh api -X DELETE "repos/${{ github.repository }}/actions/artifacts/{}"
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
