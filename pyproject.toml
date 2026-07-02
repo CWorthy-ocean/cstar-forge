@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
     "jinja2",
+    "f90nml",
     "pandas",
     "pyyaml>=6.0",
     "copernicusmarine",

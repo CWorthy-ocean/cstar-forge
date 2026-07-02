@@ -11,58 +11,45 @@ description_inner = "Pacific 1/8 deg (nested)"
 
 model_name= "cson_roms-marbl_v0.1"
 
-grid_name_outer_down  = "P0p5_down_"
-grid_name_middle_down = "P0p25_down_"
-grid_name_inner       = "P0p125_"
-grid_name_middle_up   = "P0p25_up_"
-grid_name_outer_up    = "P0p5_up_"
+grid_name_outer_down  = "P0p5_down"
+grid_name_middle_down = "P0p25_down"
+grid_name_inner       = "P0p125"
+grid_name_middle_up   = "P0p25_up"
+grid_name_outer_up    = "P0p5_up"
 
 start_time_outer_down = "2010-01-02"
 start_time_middle_down= "2010-01-03"
 start_time_inner      = "2010-01-04"
-start_time_middle_up  = "2010-01-05"
-start_time_outer_up   = "2010-01-06"
+start_time_middle_up  = "2010-01-04"
+start_time_outer_up   = "2010-01-04"
 end_time              = "2010-01-07" ## note that the end_time variable is the same for all 3 grids
 
 
 ####################################
 
 _macos_dir = Path(__file__).resolve().parent
-compile_settings_outer_down_path  = _macos_dir / "compile_outer_down.yml"
-compile_settings_middle_down_path = _macos_dir / "compile_middle_down.yml"
-compile_settings_inner_path       = _macos_dir / "compile_inner.yml"
-compile_settings_middle_up_path   = _macos_dir / "compile_middle_up.yml"
-compile_settings_outer_up_path    = _macos_dir / "compile_outer_up.yml"
-
-runtime_settings_outer_path  = _macos_dir / "runtime_outer.yml"
-runtime_settings_middle_path = _macos_dir / "runtime_middle.yml"
-runtime_settings_inner_path  = _macos_dir / "runtime_inner.yml"
+runtime_settings_outer_down_path  = _macos_dir / "runtime_outer_down.yml"
+runtime_settings_middle_down_path = _macos_dir / "runtime_middle_down.yml"
+runtime_settings_inner_path       = _macos_dir / "runtime_inner.yml"
+runtime_settings_middle_up_path   = _macos_dir / "runtime_middle_up.yml"
+runtime_settings_outer_up_path    = _macos_dir / "runtime_outer_up.yml"
 
 
-with compile_settings_outer_down_path.open("r", encoding="utf-8") as f:
-    compile_settings_outer_down = yaml.safe_load(f) or {}
+with runtime_settings_outer_down_path.open("r", encoding="utf-8") as f:
+    runtime_settings_outer_down = yaml.safe_load(f) or {}
 
-with compile_settings_middle_down_path.open("r", encoding="utf-8") as f:
-    compile_settings_middle_down = yaml.safe_load(f) or {}
-
-with compile_settings_inner_path.open("r", encoding="utf-8") as f:
-    compile_settings_inner = yaml.safe_load(f) or {}
-
-with compile_settings_middle_up_path.open("r", encoding="utf-8") as f:
-    compile_settings_middle_up = yaml.safe_load(f) or {}
-
-with compile_settings_outer_up_path.open("r", encoding="utf-8") as f:
-    compile_settings_outer_up = yaml.safe_load(f) or {}
-
-
-with runtime_settings_outer_path.open("r", encoding="utf-8") as f:
-    runtime_settings_outer = yaml.safe_load(f) or {}
-
-with runtime_settings_middle_path.open("r", encoding="utf-8") as f:
-    runtime_settings_middle = yaml.safe_load(f) or {}
+with runtime_settings_middle_down_path.open("r", encoding="utf-8") as f:
+    runtime_settings_middle_down = yaml.safe_load(f) or {}
 
 with runtime_settings_inner_path.open("r", encoding="utf-8") as f:
     runtime_settings_inner = yaml.safe_load(f) or {}
+
+with runtime_settings_middle_up_path.open("r", encoding="utf-8") as f:
+    runtime_settings_middle_up = yaml.safe_load(f) or {}
+
+with runtime_settings_outer_up_path.open("r", encoding="utf-8") as f:
+    runtime_settings_outer_up = yaml.safe_load(f) or {}
+
 
 
 ###################################
@@ -273,31 +260,28 @@ ocn_outer_up = cstar_forge.CstarSpecBuilder(
 #####################################
 
 sim = [ocn_outer_down, ocn_middle_down, ocn_inner, ocn_middle_up, ocn_outer_up]
-compile = [compile_settings_outer_down, compile_settings_middle_down, compile_settings_inner,
-           compile_settings_middle_up, compile_settings_outer_up]
-runtime = [runtime_settings_outer, runtime_settings_middle, runtime_settings_inner,
-           runtime_settings_middle, runtime_settings_outer]
+runtime = [runtime_settings_outer_down, runtime_settings_middle_down, runtime_settings_inner,
+           runtime_settings_middle_up, runtime_settings_outer_up]
 
-for ocn,ct,rt in zip(sim,compile,runtime):
+for ocn,rt in zip(sim,runtime):
     # ensure that source data is staged locally
     ocn.ensure_source_data()
 
     # prepare model input
-    ocn.generate_inputs(clobber=False) # setting clobber=True will overwrite existing files
+    ocn.generate_inputs(clobber=False, prompt_if_files_exist=False) # setting clobber=True will overwrite existing files
 
     # configure and build the model
     ocn.configure_build(
-        compile_time_settings=ct,
         run_time_settings=rt,
     )
 
-    ocn.prep_cstar_environment(
-        account_key = None,  # None gets from machine config or override here
-        queue_name = None,  # None gets from machine config or override here
-        walltime = "00:10:00",
-        clobber = True,  # recommend True, but it will clear previous results from this run
-        n_procs_available = 0,  # 0 is auto-detect, change if on a login or shared node to not overuse resources
-    )
+    # ocn.prep_cstar_environment(
+    #     account_key = None,  # None gets from machine config or override here
+    #     queue_name = None,  # None gets from machine config or override here
+    #     walltime = "00:10:00",
+    #     clobber = True,  # recommend True, but it will clear previous results from this run
+    #     n_procs_available = 0,  # 0 is auto-detect, change if on a login or shared node to not overuse resources
+    # )
 
 #    handler = ocn.run()
 #    print(handler)
