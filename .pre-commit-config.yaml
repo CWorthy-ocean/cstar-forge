@@ -21,6 +21,13 @@ repos:
       - id: check-added-large-files
         args: ['--maxkb=200']
 
+  - repo: https://github.com/MarcoGorelli/absolufy-imports
+    rev: v0.3.1
+    hooks:
+      - id: absolufy-imports
+        # Treat the repo root as the app dir so cstar_forge.* is the absolute root.
+        args: ['--application-directories=.']
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.14
     hooks:
