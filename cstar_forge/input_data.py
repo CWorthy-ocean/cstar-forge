@@ -512,7 +512,21 @@ class RomsMarblInputData(InputData):
                 )
         else:
             raise TypeError(f"Unsupported source block type: {type(block)}")
-        
+
+        # SourceSpec now carries an optional ``path`` (default None). Drop a None path
+        # so ``setdefault`` below can still inject the SourceData path for registered
+        # datasets; an explicit (non-None) path from the YAML — e.g. for GLOFAS/RIVR2O —
+        # is preserved.
+        if out.get("path") is None:
+            out.pop("path", None)
+
+        # An explicit path short-circuits SourceData lookup. Required for user-path
+        # datasets that SourceData never stages (e.g. GLOFAS/RIVR2O), whose
+        # ``path_for_source`` would otherwise raise; also lets any source override its
+        # staged path directly from the model spec.
+        if out.get("path"):
+            return out
+
         glorys_layout = (
             out.get("glorys_layout") if name.upper() == "GLORYS" else None
         )
@@ -846,6 +860,24 @@ class RomsMarblInputData(InputData):
         else:
             self._settings_run_time["forcing"]["surface_forcing_path"] = paths[0] if isinstance(paths, (list, tuple)) else paths
     
+    def _get_physics_boundary_forcing(self) -> Optional["rt.BoundaryForcing"]:
+        """Return the physics BoundaryForcing to use as ``physics_forcing`` for bgc density.
+
+        Returns the instance cached during physics-boundary generation. If only the
+        physics NetCDF was reused (no object was built), reconstruct it from the cached
+        physics input args so density-space bgc interpolation still has its target T/S.
+        Returns None if no physics boundary item was processed.
+        """
+        cached = getattr(self, "_physics_boundary_forcing", None)
+        if cached is not None:
+            return cached
+        physics_args = getattr(self, "_physics_boundary_input_args", None)
+        if physics_args is None:
+            return None
+        physics_bry = rt.BoundaryForcing(grid=self.grid, **physics_args)
+        self._physics_boundary_forcing = physics_bry
+        return physics_bry
+
     @register_input(name="forcing.boundary", order=40, label="Generating boundary forcing")
     def _generate_boundary_forcing(self, key: str = "forcing.boundary", **kwargs):
         """Generate boundary forcing input files."""
@@ -875,10 +907,35 @@ class RomsMarblInputData(InputData):
                 f"Invalid 'type' value '{type}' in input_args for '{key}'. "
                 f"Expected 'type' to be 'physics' or 'bgc'."
             )
-        
+
+        # Density-space BGC boundary interpolation needs the physics BoundaryForcing as
+        # ``physics_forcing`` (target T/S on sigma levels). The physics boundary item is
+        # generated before the bgc item (list order is preserved), so reuse it here;
+        # reconstruct it if only its NetCDF was reused (no in-memory object was built).
+        if type == "physics":
+            self._physics_boundary_input_args = dict(input_args)
+        elif (
+            input_args.get("bgc_interpolation_method") in ("density", "density_mld")
+            and "physics_forcing" not in input_args
+        ):
+            physics_bry = self._get_physics_boundary_forcing()
+            if physics_bry is not None:
+                input_args["physics_forcing"] = physics_bry
+            else:
+                warnings.warn(
+                    f"bgc_interpolation_method="
+                    f"{input_args.get('bgc_interpolation_method')!r} was requested for "
+                    "boundary BGC forcing, but no physics boundary forcing is available "
+                    "to supply 'physics_forcing'; roms-tools will fall back to depth-space "
+                    "interpolation.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
         yaml_path = self._yaml_filename(f"{key}-{type}")
         output_path = self._forcing_filename(input_name=f"boundary-{type}")
-       
+
+        bry = None
         existing_paths = self._existing_output_paths(output_path)
         if existing_paths:
             print(f"   ↪ Reusing existing file(s): {', '.join(existing_paths)}")
@@ -910,6 +967,12 @@ class RomsMarblInputData(InputData):
                     UserWarning,
                     stacklevel=2,
                 )
+
+        # Cache the physics BoundaryForcing so a subsequent bgc density item can use it
+        # as ``physics_forcing`` (may be None if the physics file was fully reused).
+        if type == "physics":
+            self._physics_boundary_forcing = bry
+
         # Append Resources directly to blueprint_elements.forcing[subkey]
         if isinstance(paths, (list, tuple)):
             for path in paths:

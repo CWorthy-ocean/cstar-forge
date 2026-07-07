@@ -112,6 +112,12 @@ SOURCE_ALIAS: Dict[str, str] = {
     "WOA": "WOA",
     # Rivers, etc. (placeholder – add real dataset handlers as needed)
     "DAI": "DAI",  # expected to correspond to a DAI dataset if/when added
+    # River discharge (GLOFAS) and river BGC export (RIVR2O). These are user-path
+    # datasets: not staged by SourceData, so provide an explicit ``path`` in the model
+    # spec's river source/bgc_source blocks. Aliased here only so name→key mapping is
+    # well-defined; they are intentionally absent from DATASET_REGISTRY.
+    "GLOFAS": "GLOFAS",
+    "RIVR2O": "RIVR2O",
 }
 
 # List of source names that are streamable and do not need to be prepared unless explicitly requested.

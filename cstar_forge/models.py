@@ -34,13 +34,17 @@ class SourceSpec(BaseModel):
     """
     
     model_config = ConfigDict(extra="forbid")
-    
+
     name: str
     climatology: bool = Field(default=False, validate_default=False)
     glorys_layout: Optional[Literal["global", "regional"]] = Field(
         default=None,
         validate_default=False,
     )
+    path: Optional[str] = Field(default=None, validate_default=False)
+    """Explicit path to the source data. Normally injected by SourceData for
+    registered datasets; provide it directly for user-path datasets such as
+    ``GLOFAS`` and ``RIVR2O`` that are not staged by SourceData."""
 
     @model_validator(mode="after")
     def _glorys_layout_only_for_glorys(self) -> "SourceSpec":
@@ -173,6 +177,12 @@ class RiverForcingItem(BaseModel):
     include_bgc : bool, optional
         Whether to include biogeochemical components. Default is False.
 
+    bgc_source : dict, optional
+        River BGC source configuration passed to ``RiverForcing`` (e.g.
+        ``{"name": "RIVR2O", "path": ..., "fill": {"name": "CONSTANTS"}}``). Kept as a
+        permissive mapping so the nested ``fill`` block round-trips unchanged; ``name``/
+        ``path`` are resolved through :class:`SourceData` like other source blocks.
+
     Any additional keyword arguments are passed directly to the roms-tools
     RiverForcing constructor.
     """
@@ -181,6 +191,7 @@ class RiverForcingItem(BaseModel):
 
     source: SourceSpec
     include_bgc: bool = Field(default=False, validate_default=False)
+    bgc_source: Optional[Dict[str, Any]] = Field(default=None, validate_default=False)
 
 
 class ForcingInput(BaseModel):
