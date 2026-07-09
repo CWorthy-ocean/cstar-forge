@@ -47,7 +47,7 @@ packages = ["cstar_forge"]
 # Rule selection follows roms-tools (the library Forge wraps): I, E, W, F, D, RUF, UP.
 # TCH (flake8-type-checking) is intentionally NOT enabled — it moves annotation-only
 # imports into `TYPE_CHECKING` blocks, which breaks Pydantic's runtime annotation
-# evaluation, and this codebase is Pydantic-heavy (models.py, spec_config.py).
+# evaluation, and this codebase is Pydantic-heavy (models.py, forge_blueprint.py).
 [tool.ruff]
 fix = true
 show-fixes = true

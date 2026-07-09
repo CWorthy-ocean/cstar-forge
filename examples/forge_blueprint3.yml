@@ -1,24 +1,24 @@
-spec_config_version: 2
+forge_blueprint_version: 2
 application: roms_marbl
 identity:
   model_name: cson_roms-marbl_v0.1
-  grid_name: wio-toy
+  grid_name: hvalfjordur-0
   ensemble_id: null
   description: Generated blueprint
 run:
-  start_date: '2012-01-01T00:00:00'
-  end_date: '2012-01-02T00:00:00'
+  start_date: '2024-01-01T00:00:00'
+  end_date: '2024-01-02T00:00:00'
   model_reference_date: '2000-01-01T00:00:00'
 domain:
   grid_kwargs:
-    nx: 20
-    ny: 20
-    N: 10
-    size_x: 8000.0
-    size_y: 8000.0
-    center_lon: 60.0
-    center_lat: -4.0
-    rot: 0.0
+    nx: 512
+    ny: 384
+    N: 100
+    size_x: 1280.0
+    size_y: 1280.0
+    center_lon: -25.0
+    center_lat: 63.0
+    rot: 20.0
   topography_source: ETOPO5
   open_boundaries:
     north: true
@@ -26,8 +26,8 @@ domain:
     east: true
     west: true
   partitioning:
-    n_procs_x: 2
-    n_procs_y: 5
+    n_procs_x: 16
+    n_procs_y: 16
   grid_kwargs_parent: null
   grid_kwargs_child: null
   metadata_child: null
@@ -42,7 +42,6 @@ forcing:
       name: UNIFIED
       climatology: true
       glorys_layout: null
-    bgc_interpolation_method: depth
     allow_flex_time: false
   surface:
   - source:
@@ -69,23 +68,11 @@ forcing:
       climatology: false
       glorys_layout: regional
     type: physics
-    bgc_interpolation_method: depth
-    prefill: null
-    prefill_kwargs: null
-    regrid_method: null
-    extrap_method: null
-    extrap_kwargs: null
   - source:
       name: UNIFIED
       climatology: true
       glorys_layout: null
     type: bgc
-    bgc_interpolation_method: depth
-    prefill: null
-    prefill_kwargs: null
-    regrid_method: null
-    extrap_method: null
-    extrap_kwargs: null
   tidal:
   - source:
       name: TPXO
@@ -100,8 +87,6 @@ forcing:
     include_bgc: true
     convert_to_climatology: if_any_missing
     bgc_source: null
-    coast_snap_buffer_km: null
-    domain_edge_buffer: 20
   cdr_forcing: null
   resolved_datasets:
     GLORYS:
@@ -136,8 +121,8 @@ forcing:
       streamable: false
 model_settings:
   time_stepping:
-    ntimes: 12
-    dt: 7200.0
+    ntimes: 3
+    dt: 28800.0
     ndtfast: 60
     ninfo: 1
   lateral_visc:
@@ -153,21 +138,21 @@ model_settings:
     rdrg2: 0.001
     zob: 0.01
   v_sponge:
-    v_sponge: 40000.0
+    v_sponge: 250.0
   gamma2: 1.0
-  ubind: 0.1
+  ubind: 0.0
   param:
-    llm: 20
-    mmm: 20
-    n: 10
-    np_xi: 2
-    np_eta: 5
-    nt_passive: 0
-    ntrc_bio: 32
+    llm: 512
+    mmm: 384
+    n: 100
+    np_xi: 16
+    np_eta: 16
     nsub_x: 1
     nsub_e: 1
+    nt_passive: 0
+    ntrc_bio: 32
   bgc:
-    wrt_his: false
+    wrt_his: true
     output_period_his: 86400
     nrpf_his: 7
     wrt_avg: false
@@ -181,7 +166,6 @@ model_settings:
     nrpf_avg_dia: 1
     nbgc_flx: 2
     interp_frc: 1
-    xco2air_default: 284.7
   blk_frc:
     interp_frc: 0
     check_bulk_frc_units: false
@@ -231,7 +215,6 @@ model_settings:
   surf_flux:
     wrt_smflx: false
     wrt_stflx: false
-    wrt_rstflx: false
     wrt_swflx: false
     sflx_avg: false
     output_period: 31536000
@@ -367,11 +350,9 @@ model_settings:
     scoef: 0.822
     s0: 1.0
   sss_correction:
-    dsssdt: 7.777
+    dsssdt: 0.0
   sst_correction:
-    dsstdt: 7.777
-  dic_alk_correction:
-    dcdt: 7.777
+    dsstdt: 0.0
   marbl_bgc:
     marbl_config_file: marbl_in
     marbl_tracers_to_write:
@@ -392,7 +373,7 @@ model_settings:
     - pCO2SURF
     - FG_CO2
     - FG_ALT_CO2
-    marbl_timestep: 3600.0
+    marbl_timestep_ratio: 1
   cppdefs:
     obc_west: true
     obc_east: true
@@ -402,10 +383,11 @@ model_settings:
     cdr_forcing: false
     co2_tvarying: false
     sal_restore: false
+  description: Standard output settings (model defaults)
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: 0.2.0
+    commit: 391de2798ca9d6e9b63ba5471b6e62e96043e177
     branch: null
   marbl:
     location: https://github.com/marbl-ecosys/MARBL.git
@@ -431,7 +413,7 @@ composition:
     origin: catalog
     modified: false
   domain:
-    name: wio-toy
+    name: hvalfjordur-0
     origin: catalog
     modified: false
   forcing:
@@ -442,11 +424,14 @@ composition:
     name: standard
     origin: catalog
     modified: false
-  overrides: {}
+  overrides:
+    ubind: 0.0
+    bgc:
+      wrt_his: true
 provenance:
   generated_at: null
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: a01badd3e72bee9acdf873068453e38597e44e116d03ce7b8688bfa61b39d5b4
+  content_hash: b17701bcce4640ef6f286f7b4eec030d462bb97c34d5846237999db5c28cea22
   notes: null

@@ -1,10 +1,10 @@
-spec_config_version: 2
-application: forge
+forge_blueprint_version: 2
+application: roms_marbl
 identity:
   model_name: cson_roms-marbl_v0.1
-  grid_name: test-tiny
+  grid_name: my-grid
   ensemble_id: null
-  description: Test tiny
+  description: Generated blueprint
 run:
   start_date: '2012-01-01T00:00:00'
   end_date: '2012-01-02T00:00:00'
@@ -13,12 +13,12 @@ domain:
   grid_kwargs:
     nx: 6
     ny: 2
-    size_x: 500
-    size_y: 1000
-    center_lon: 0
-    center_lat: 55
-    rot: 10
     N: 3
+    size_x: 500.0
+    size_y: 1000.0
+    center_lon: 0.0
+    center_lat: 55.0
+    rot: 10.0
     theta_s: 5.0
     theta_b: 2.0
     hc: 250.0
@@ -45,62 +45,43 @@ forcing:
       name: UNIFIED
       climatology: true
       glorys_layout: null
-    bgc_interpolation_method: depth
     allow_flex_time: false
-    options: {}
   surface:
   - source:
-      name: ERA5
+      name: CESM_REGRIDDED
       climatology: false
-      glorys_layout: null
-    type: physics
+      glorys_layout: regional
+    type: bgc
     correct_radiation: true
     coarse_grid_mode: never
     restoring_forces: null
     wind_dropoff: false
-    options: {}
   - source:
       name: UNIFIED
       climatology: true
-      glorys_layout: null
-    type: bgc
+      glorys_layout: global
+    type: restoring
     correct_radiation: false
     coarse_grid_mode: never
     restoring_forces: null
     wind_dropoff: false
-    options: {}
   boundary:
   - source:
       name: GLORYS
       climatology: false
       glorys_layout: regional
     type: physics
-    bgc_interpolation_method: depth
-    prefill: null
-    prefill_kwargs: null
-    regrid_method: null
-    extrap_method: null
-    extrap_kwargs: null
-    options: {}
   - source:
       name: UNIFIED
       climatology: true
       glorys_layout: null
     type: bgc
-    bgc_interpolation_method: depth
-    prefill: null
-    prefill_kwargs: null
-    regrid_method: null
-    extrap_method: null
-    extrap_kwargs: null
-    options: {}
   tidal:
   - source:
       name: TPXO
       climatology: false
       glorys_layout: null
     ntides: 15
-    options: {}
   river:
   - source:
       name: DAI
@@ -109,230 +90,7 @@ forcing:
     include_bgc: true
     convert_to_climatology: if_any_missing
     bgc_source: null
-    coast_snap_buffer_km: null
-    domain_edge_buffer: 20
-    options: {}
-  cdr_forcing:
-    start_time: '2012-01-01T00:00:00'
-    end_time: '2012-01-02T00:00:00'
-    model_reference_date: '2000-01-01T00:00:00'
-    releases:
-    - name: my_cdr
-      lat: 59.0
-      lon: 1.0
-      depth: 1.0
-      hsc: 10.0
-      vsc: 10.0
-      times:
-      - '2012-01-01T00:00:00'
-      - '2012-01-02T00:00:00'
-      release_type: tracer_perturbation
-      tracer_fluxes:
-        ALK:
-        - 2000000.0
-        - 2000000.0
-        temp:
-        - 0.0
-        - 0.0
-        salt:
-        - 0.0
-        - 0.0
-        PO4:
-        - 0.0
-        - 0.0
-        NO3:
-        - 0.0
-        - 0.0
-        SiO3:
-        - 0.0
-        - 0.0
-        NH4:
-        - 0.0
-        - 0.0
-        Fe:
-        - 0.0
-        - 0.0
-        Lig:
-        - 0.0
-        - 0.0
-        O2:
-        - 0.0
-        - 0.0
-        DIC:
-        - 0.0
-        - 0.0
-        DIC_ALT_CO2:
-        - 0.0
-        - 0.0
-        ALK_ALT_CO2:
-        - 0.0
-        - 0.0
-        DOC:
-        - 0.0
-        - 0.0
-        DON:
-        - 0.0
-        - 0.0
-        DOP:
-        - 0.0
-        - 0.0
-        DOPr:
-        - 0.0
-        - 0.0
-        DONr:
-        - 0.0
-        - 0.0
-        DOCr:
-        - 0.0
-        - 0.0
-        zooC:
-        - 0.0
-        - 0.0
-        spChl:
-        - 0.0
-        - 0.0
-        spC:
-        - 0.0
-        - 0.0
-        spP:
-        - 0.0
-        - 0.0
-        spFe:
-        - 0.0
-        - 0.0
-        spCaCO3:
-        - 0.0
-        - 0.0
-        diatChl:
-        - 0.0
-        - 0.0
-        diatC:
-        - 0.0
-        - 0.0
-        diatP:
-        - 0.0
-        - 0.0
-        diatFe:
-        - 0.0
-        - 0.0
-        diatSi:
-        - 0.0
-        - 0.0
-        diazChl:
-        - 0.0
-        - 0.0
-        diazC:
-        - 0.0
-        - 0.0
-        diazP:
-        - 0.0
-        - 0.0
-        diazFe:
-        - 0.0
-        - 0.0
-    _tracer_metadata:
-      temp:
-        units: degrees Celsius/s
-        long_name: potential temperature
-      salt:
-        units: PSU/s
-        long_name: salinity
-      PO4:
-        units: mmol/s
-        long_name: dissolved inorganic phosphate
-      NO3:
-        units: mmol/s
-        long_name: dissolved inorganic nitrate
-      SiO3:
-        units: mmol/s
-        long_name: dissolved inorganic silicate
-      NH4:
-        units: mmol/s
-        long_name: dissolved ammonia
-      Fe:
-        units: mmol/s
-        long_name: dissolved inorganic iron
-      Lig:
-        units: mmol/s
-        long_name: iron binding ligand
-      O2:
-        units: mmol/s
-        long_name: dissolved oxygen
-      DIC:
-        units: mmol/s
-        long_name: dissolved inorganic carbon
-      DIC_ALT_CO2:
-        units: meq/s
-        long_name: dissolved inorganic carbon, alternative CO2
-      ALK:
-        units: meq/s
-        long_name: alkalinity
-      ALK_ALT_CO2:
-        units: meq/s
-        long_name: alkalinity, alternative CO2
-      DOC:
-        units: mmol/s
-        long_name: dissolved organic carbon
-      DON:
-        units: mmol/s
-        long_name: dissolved organic nitrogen
-      DOP:
-        units: mmol/s
-        long_name: dissolved organic phosphorus
-      DOPr:
-        units: mmol/s
-        long_name: refractory dissolved organic phosphorus
-      DONr:
-        units: mmol/s
-        long_name: refractory dissolved organic nitrogen
-      DOCr:
-        units: mmol/s
-        long_name: refractory dissolved organic carbon
-      zooC:
-        units: mmol/s
-        long_name: zooplankton carbon
-      spChl:
-        units: mg/s
-        long_name: small phytoplankton chlorophyll
-      spC:
-        units: mmol/s
-        long_name: small phytoplankton carbon
-      spP:
-        units: mmol/s
-        long_name: small phytoplankton phosphorous
-      spFe:
-        units: mmol/s
-        long_name: small phytoplankton iron
-      spCaCO3:
-        units: mmol/s
-        long_name: small phytoplankton CaCO3
-      diatChl:
-        units: mg/s
-        long_name: diatom chloropyll
-      diatC:
-        units: mmol/s
-        long_name: diatom carbon
-      diatP:
-        units: mmol/s
-        long_name: diatom phosphorus
-      diatFe:
-        units: mmol/s
-        long_name: diatom iron
-      diatSi:
-        units: mmol/s
-        long_name: diatom silicate
-      diazChl:
-        units: mg/s
-        long_name: diazotroph chloropyll
-      diazC:
-        units: mmol/s
-        long_name: diazotroph carbon
-      diazP:
-        units: mmol/s
-        long_name: diazotroph phosphorus
-      diazFe:
-        units: mmol/s
-        long_name: diazotroph iron
+  cdr_forcing: null
   resolved_datasets:
     GLORYS:
       dataset_key: GLORYS_REGIONAL
@@ -344,11 +102,11 @@ forcing:
       dataset_id: null
       url: https://drive.google.com/uc?id=1wUNwVeJsd6yM7o-5kCx-vM3wGwlnGSiq
       streamable: false
-    ERA5:
-      dataset_key: ERA5
+    CESM_REGRIDDED:
+      dataset_key: CESM_REGRIDDED
       dataset_id: null
       url: null
-      streamable: true
+      streamable: false
     TPXO:
       dataset_key: TPXO
       dataset_id: null
@@ -367,7 +125,7 @@ forcing:
 model_settings:
   time_stepping:
     ntimes: 12
-    dt: 7200
+    dt: 7200.0
     ndtfast: 60
     ninfo: 1
   lateral_visc:
@@ -625,7 +383,7 @@ model_settings:
     obc_north: true
     obc_south: false
     marbl: true
-    cdr_forcing: true
+    cdr_forcing: false
     co2_tvarying: false
     sal_restore: false
 code:
@@ -657,25 +415,22 @@ composition:
     origin: catalog
     modified: false
   domain:
-    name: test-tiny
+    name: my-grid
     origin: custom
     modified: false
   forcing:
     name: null
-    origin: model_default
-    modified: false
+    origin: custom
+    modified: true
   output:
     name: null
     origin: model_default
     modified: false
   overrides: {}
 provenance:
-  generated_at: '2026-06-23T12:00:00'
+  generated_at: null
   forge_version: null
-  roms_tools_version: 3.6.1.dev17+g97b5fe39e
+  roms_tools_version: null
   override_files_applied: []
-  content_hash: 2baf8fcacccb1ec10efc8a4ad6b3a1247b013584c6b5e282714c3917e7328e43
-  notes: Built by cstar_forge.spec_config_resolve.build_spec_config from the demo
-    notebook inputs (test-tiny). Machine/paths and naming are NOT stored (resolved
-    at processing / derived). s_coord + file paths are processing outputs. provenance.overrides
-    records manual edits on top of the pieces.
+  content_hash: 6c1df4e9f5e77beae5b57886d572766395f5241ddccf7e0fa6f658d28bca67df
+  notes: null

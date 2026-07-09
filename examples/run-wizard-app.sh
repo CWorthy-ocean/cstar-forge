@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Launch the SpecConfig builder as a standalone Voilà web app (code hidden).
+# Launch the ForgeBlueprint builder as a standalone Voilà web app (code hidden).
 #
 # Local laptop:
 #   ./examples/run-wizard-app.sh
@@ -16,7 +16,7 @@
 # Requires: voila (pip install voila) in the active environment.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec voila "${HERE}/spec-config-wizard-app.ipynb" \
+exec voila "${HERE}/forge-blueprint-wizard-app.ipynb" \
   --port=8866 \
   --Voila.tornado_settings='{"allow_origin": "*"}' \
   "$@"

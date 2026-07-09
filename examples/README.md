@@ -1,25 +1,25 @@
 # Examples
 
-Interactive front-ends for assembling a `SpecConfig` (the authoritative input to
-processing — see `docs/spec-config-inventory.md`). Both are thin shells over
-`cstar_forge.spec_config_resolve.build_spec_config`; all resolution/validation lives
+Interactive front-ends for assembling a `ForgeBlueprint` (the authoritative input to
+processing — see `docs/forge-blueprint-inventory.md`). Both are thin shells over
+`cstar_forge.forge_blueprint_resolve.build_forge_blueprint`; all resolution/validation lives
 in the resolver.
 
 ## In a Jupyter notebook
 
-- **`spec-config-wizard.ipynb`** — run the wizard inline, then inspect `wiz.config`.
+- **`forge-blueprint-wizard.ipynb`** — run the wizard inline, then inspect `wiz.config`.
   Good for exploring / scripting.
 
 ```python
-from cstar_forge.spec_config_wizard import SpecConfigWizard
-wiz = SpecConfigWizard()
+from cstar_forge.forge_blueprint_wizard import ForgeBlueprintWizard
+wiz = ForgeBlueprintWizard()
 wiz.display()
 # ... build & review ...  then:  cfg = wiz.config
 ```
 
 ## As a standalone web app (Voilà)
 
-- **`spec-config-wizard-app.ipynb`** — a code-free "form" view, served by
+- **`forge-blueprint-wizard-app.ipynb`** — a code-free "form" view, served by
   [Voilà](https://voila.readthedocs.io/) (pure Python, `pip install voila`, no admin).
 
 ```bash
@@ -37,7 +37,7 @@ ssh -N -L 8866:localhost:8866 <user>@<login-node>
 # then open http://localhost:8866 locally
 ```
 
-Use the **Download** link to save `spec_config.yml` to your machine (works in the
+Use the **Download** link to save `forge_blueprint.yml` to your machine (works in the
 browser without server file access), or **Save to disk** to write it on the host
 running Voilà. Take the file to the machine of your choice to run the processing
 step.
