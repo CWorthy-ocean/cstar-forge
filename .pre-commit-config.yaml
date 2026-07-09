@@ -1,11 +1,11 @@
-# Pre-commit hooks for cstar-forge. Scoped to the cstar_forge/ package so vendored
-# code under external/ and generated trees (docs/, workflows/) are left untouched.
-# Ruff config (rule selection, ignores) lives in pyproject.toml [tool.ruff].
+# Pre-commit hooks for cstar-forge. Scoped to the cstar_forge/ package and the test
+# suite so vendored code under external/ and generated trees (docs/, workflows/) are
+# left untouched. Ruff config (rule selection, ignores) lives in pyproject.toml [tool.ruff].
 ci:
   autoupdate_schedule: monthly
 
-# Only our package; excludes external/ (C-Star submodule) and everything else.
-files: '^cstar_forge/'
+# Our package + tests; excludes external/ (C-Star submodule) and everything else.
+files: '^(cstar_forge|tests)/'
 exclude: '\.ipynb_checkpoints/'
 
 repos:
