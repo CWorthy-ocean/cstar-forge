@@ -67,6 +67,27 @@ forcing:
     restoring_forces: null
     wind_dropoff: false
     options: {}
+  - source:
+      name: MBL_co2
+      climatology: false
+      glorys_layout: null
+    type: bgc
+    correct_radiation: false
+    coarse_grid_mode: never
+    restoring_forces: null
+    wind_dropoff: false
+    options: {}
+  - source:
+      name: WOA
+      climatology: true
+      glorys_layout: null
+    type: restoring
+    correct_radiation: false
+    coarse_grid_mode: never
+    restoring_forces:
+    - sss
+    wind_dropoff: false
+    options: {}
   boundary:
   - source:
       name: GLORYS
@@ -127,6 +148,16 @@ forcing:
       dataset_id: null
       url: null
       streamable: true
+    MBL_co2:
+      dataset_key: MBL_CO2
+      dataset_id: null
+      url: https://gml.noaa.gov/ccgg/mbl/tmp/co2_GHGreference.1785677502_surface.txt
+      streamable: false
+    WOA:
+      dataset_key: WOA
+      dataset_id: null
+      url: https://www.ncei.noaa.gov/data/oceans/woa/WOA18/DATA/salinity/netcdf/decav/0.25/
+      streamable: false
     TPXO:
       dataset_key: TPXO
       dataset_id: null
@@ -147,8 +178,10 @@ datasets:
 - ERA5
 - ETOPO5
 - GLORYS_REGIONAL
+- MBL_CO2
 - TPXO
 - UNIFIED_BGC
+- WOA
 model_settings:
   time_stepping:
     ntimes: 12
@@ -415,8 +448,8 @@ model_settings:
     obc_south: true
     marbl: true
     cdr_forcing: false
-    co2_tvarying: false
-    sal_restore: false
+    co2_tvarying: true
+    sal_restore: true
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
@@ -428,15 +461,15 @@ code:
     branch: null
   templates_compile_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
-    commit: null
-    branch: main
+    commit: c61d654f4b3d5708d5ba3eee3fa07fe90474cee6
+    branch: null
     directory: templates/compile-time
     files:
     - cppdefs.opt.j2
   templates_run_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
-    commit: null
-    branch: main
+    commit: c61d654f4b3d5708d5ba3eee3fa07fe90474cee6
+    branch: null
     directory: templates/run-time
     files:
     - marbl_in
@@ -450,8 +483,8 @@ composition:
     origin: catalog
     modified: false
   forcing:
-    name: glorys-era5-unified
-    origin: catalog
+    name: null
+    origin: model_default
     modified: false
   output:
     name: standard
@@ -463,5 +496,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: 85a52d2ff6dd1c75d54c3232ccefaee00b9121b6404a16a20b5a4a2555df60ea
+  content_hash: 44bca19fbde36ccb67fa607c61f4a5fe641a756b5f635f3e2d7b68c98e5f9c82
   notes: null
