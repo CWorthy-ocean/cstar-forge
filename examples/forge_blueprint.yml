@@ -1,5 +1,6 @@
 forge_blueprint_version: 2
-application: roms_marbl
+application: forge
+working_dir: ~/cstar-forge-data
 identity:
   model_name: cson_roms-marbl_v0.1
   grid_name: wio-toy
@@ -44,6 +45,7 @@ forcing:
       glorys_layout: null
     bgc_interpolation_method: depth
     allow_flex_time: false
+    options: {}
   surface:
   - source:
       name: ERA5
@@ -54,6 +56,7 @@ forcing:
     coarse_grid_mode: never
     restoring_forces: null
     wind_dropoff: false
+    options: {}
   - source:
       name: UNIFIED
       climatology: true
@@ -63,6 +66,7 @@ forcing:
     coarse_grid_mode: never
     restoring_forces: null
     wind_dropoff: false
+    options: {}
   boundary:
   - source:
       name: GLORYS
@@ -75,6 +79,7 @@ forcing:
     regrid_method: null
     extrap_method: null
     extrap_kwargs: null
+    options: {}
   - source:
       name: UNIFIED
       climatology: true
@@ -86,12 +91,14 @@ forcing:
     regrid_method: null
     extrap_method: null
     extrap_kwargs: null
+    options: {}
   tidal:
   - source:
       name: TPXO
       climatology: false
       glorys_layout: null
     ntides: 15
+    options: {}
   river:
   - source:
       name: DAI
@@ -102,6 +109,7 @@ forcing:
     bgc_source: null
     coast_snap_buffer_km: null
     domain_edge_buffer: 20
+    options: {}
   cdr_forcing: null
   resolved_datasets:
     GLORYS:
@@ -134,6 +142,13 @@ forcing:
       dataset_id: null
       url: null
       streamable: false
+datasets:
+- DAI
+- ERA5
+- ETOPO5
+- GLORYS_REGIONAL
+- TPXO
+- UNIFIED_BGC
 model_settings:
   time_stepping:
     ntimes: 12
@@ -448,5 +463,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: a01badd3e72bee9acdf873068453e38597e44e116d03ce7b8688bfa61b39d5b4
+  content_hash: 85a52d2ff6dd1c75d54c3232ccefaee00b9121b6404a16a20b5a4a2555df60ea
   notes: null
