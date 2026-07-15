@@ -318,6 +318,48 @@ _ensure_env_pip() {
   echo "  Using: $py -m pip ($("$py" -m pip --version))"
 }
 
+# A partial/interrupted env create leaves a named env that later runs skip recreating.
+# Verify a few environment.yml packages; if missing, sync from the yaml (heal in place).
+_ensure_env_complete() {
+  local py miss mod
+  py="$(_env_python)"
+  miss=()
+  for mod in pydantic jupyter_client ipykernel pandas; do
+    if ! "$py" -c "import ${mod}" >/dev/null 2>&1; then
+      miss+=("$mod")
+    fi
+  done
+  if ((${#miss[@]} == 0)); then
+    return 0
+  fi
+
+  echo ""
+  echo "Environment '$KERNEL_NAME' is incomplete (cannot import: ${miss[*]})."
+  echo "This usually means a previous env create was interrupted; syncing from ${env_file}..."
+  if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
+    if [[ -n "${CONDA_PREFIX:-}" ]]; then
+      "$MICROMAMBA_CMD" install -y -p "$CONDA_PREFIX" -f "$env_file"
+    else
+      "$MICROMAMBA_CMD" install -y -n "$KERNEL_NAME" -f "$env_file"
+    fi
+  else
+    "$CONDA_LIKE_CMD" env update -n "$KERNEL_NAME" -f "$env_file"
+  fi
+
+  miss=()
+  for mod in pydantic jupyter_client ipykernel pandas; do
+    if ! "$py" -c "import ${mod}" >/dev/null 2>&1; then
+      miss+=("$mod")
+    fi
+  done
+  if ((${#miss[@]} > 0)); then
+    echo "Error: environment still incomplete after sync (missing: ${miss[*]})." >&2
+    echo "  Remove and rebuild with: $0 --clean --batch" >&2
+    exit 1
+  fi
+  echo "✓ Environment dependencies synced from ${env_file}."
+}
+
 # Initialize and activate environment
 set +u
 if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
@@ -416,6 +458,29 @@ else
   fi
 fi
 
+# Catch interrupted/partial env creates before pip/editable installs paper over them
+_ensure_env_complete
+
+# C-Star ships .env files for generic linux_* platforms but (as of main) no matching
+# .lmod stubs. On HPC hosts where Lmod is present, import-time CStarSystemManager
+# looks for <system_name>.lmod and FileNotFoundErrors. Empty stubs mean "load nothing".
+_ensure_cstar_generic_lmod_stubs() {
+  local py root stub name
+  py="$(_env_python)"
+  root="$("$py" -c "import cstar, pathlib; print(pathlib.Path(cstar.__file__).resolve().parent / 'additional_files' / 'lmod_lists')" 2>/dev/null || true)"
+  if [[ -z "$root" || ! -d "$root" ]]; then
+    echo "  Warning: could not locate cstar/additional_files/lmod_lists; skipping lmod stubs."
+    return 0
+  fi
+  for name in linux_x86_64 linux_aarch64; do
+    stub="$root/${name}.lmod"
+    if [[ ! -f "$stub" ]]; then
+      : > "$stub"
+      echo "  Created empty C-Star lmod stub: $stub"
+    fi
+  done
+}
+
 INSTALL_FORTRAN_LIBS="false"
 if [[ "$BATCH_MODE" == "true" ]]; then
   echo "Batch mode enabled: skipping interactive compiler/library install prompt."
@@ -471,6 +536,7 @@ _ensure_env_pip
 # so pip will not downgrade/replace the roms-tools we install next.
 echo "  C-Star @ ${C_STAR_GIT_REF} (--no-deps)"
 _pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
+_ensure_cstar_generic_lmod_stubs
 # roms-tools last so the requested ref is the final resident, overwriting the
 # conda-forge package that was installed only to source dependencies.
 echo "  roms-tools @ ${ROMS_TOOLS_GIT_REF} (--no-deps, installed last so it wins)"
@@ -527,10 +593,18 @@ for package_dir in "${LOCAL_PYTHON_PACKAGES[@]}"; do
   # For the root package, check for cstar_forge module
   echo "Activating and testing kernel in environment $KERNEL_NAME... this may take a few minutes."
   if [[ "$package_dir" == "." ]]; then
-    if python -c "import cstar_forge" 2>/dev/null; then
+    if import_err="$("$(_env_python)" -c "import cstar_forge" 2>&1)"; then
       echo "  ✓ cstar-forge installed successfully"
     else
       echo "  ✗ cstar-forge installation failed (cannot import cstar_forge)"
+      echo "    $import_err"
+      if [[ "$import_err" == *".lmod"* ]]; then
+        echo "  Hint: C-Star expected a missing generic .lmod stub; re-run setup or touch"
+        echo "    \$CONDA_PREFIX/lib/python*/site-packages/cstar/additional_files/lmod_lists/linux_x86_64.lmod"
+      else
+        echo "  Hint: if conda deps are missing, try: $0 --clean --batch"
+      fi
+      exit 1
     fi
   else
     echo "  ✓ $package_display installed"
@@ -560,8 +634,10 @@ else
   fi
 fi
 
+ENV_PYTHON="$(_env_python)"
+
 # Check if kernel exists
-if python - "$KERNEL_NAME" <<'PY'
+if "$ENV_PYTHON" - "$KERNEL_NAME" <<'PY'
 from jupyter_client.kernelspec import KernelSpecManager
 import sys
 name = sys.argv[1]
@@ -577,7 +653,7 @@ fi
 # Remove kernel if --clean is specified and it exists
 if [[ "$CLEAN_MODE" == "true" && "$KERNEL_EXISTS" == "true" ]]; then
   echo "Removing existing Jupyter kernel: $KERNEL_NAME"
-  python -m ipykernel uninstall -y --name "$KERNEL_NAME" 2>/dev/null || true
+  "$ENV_PYTHON" -m ipykernel uninstall -y --name "$KERNEL_NAME" 2>/dev/null || true
   KERNEL_EXISTS="false"
 fi
 
@@ -585,7 +661,7 @@ fi
 if [[ "$KERNEL_EXISTS" == "false" ]]; then
   echo "Installing Jupyter kernel: $KERNEL_NAME"
   # Use --user flag to make kernel visible globally (not just within the environment)
-  python -m ipykernel install --user --name "$KERNEL_NAME" --display-name "$KERNEL_NAME"
+  "$ENV_PYTHON" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "$KERNEL_NAME"
   echo "✓ Jupyter kernel installation completed successfully!"
 fi
 
