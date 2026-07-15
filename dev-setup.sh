@@ -282,6 +282,42 @@ _activate_env() {
   exit 1
 }
 
+# Prefer "$CONDA_PREFIX/bin/python -m pip" so HPC module Pythons (e.g. EasyBuild
+# Python/*/bin/pip) cannot shadow a missing/broken env pip and cause:
+#   ModuleNotFoundError: No module named 'pip'
+_env_python() {
+  if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
+    echo "${CONDA_PREFIX}/bin/python"
+  else
+    command -v python
+  fi
+}
+
+_pip() {
+  local py
+  py="$(_env_python)"
+  "$py" -m pip "$@"
+}
+
+# Ensure the active env can run pip. If conda omittted the pip package (or the
+# env was left without it), bootstrap via ensurepip before git/editable installs.
+_ensure_env_pip() {
+  local py
+  py="$(_env_python)"
+  if ! "$py" -m pip --version >/dev/null 2>&1; then
+    echo "  pip not found in active env; bootstrapping with ensurepip..."
+    "$py" -m ensurepip --upgrade
+  fi
+  if ! "$py" -m pip --version >/dev/null 2>&1; then
+    echo "Error: Could not import pip for: $py" >&2
+    echo "  CONDA_PREFIX=${CONDA_PREFIX:-<unset>}" >&2
+    echo "  which pip -> $(command -v pip 2>/dev/null || echo none)" >&2
+    echo "  Install pip into the env (e.g. conda install -n $KERNEL_NAME pip) and retry." >&2
+    exit 1
+  fi
+  echo "  Using: $py -m pip ($("$py" -m pip --version))"
+}
+
 # Initialize and activate environment
 set +u
 if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
@@ -430,14 +466,15 @@ fi
 echo "Installing cstar-ocean and roms-tools from GitHub via pip (--no-deps)..."
 echo "  All dependencies come from conda-forge (environment.yml); pip installs only"
 echo "  the package code, never resolving or replacing the conda dependency tree."
+_ensure_env_pip
 # C-Star first; --no-deps means its (possibly stale) roms-tools pin is NOT enforced,
 # so pip will not downgrade/replace the roms-tools we install next.
 echo "  C-Star @ ${C_STAR_GIT_REF} (--no-deps)"
-pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
+_pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
 # roms-tools last so the requested ref is the final resident, overwriting the
 # conda-forge package that was installed only to source dependencies.
 echo "  roms-tools @ ${ROMS_TOOLS_GIT_REF} (--no-deps, installed last so it wins)"
-pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
+_pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
 echo "✓ roms-tools and C-Star pip installs completed."
 
 #--------------------------------------------------------
@@ -484,7 +521,7 @@ for package_dir in "${LOCAL_PYTHON_PACKAGES[@]}"; do
   # git build we just installed (and pull other deps as pip wheels). All of this
   # package's dependencies are provided by conda-forge (environment.yml) plus the
   # --no-deps git installs above, so installing code-only is correct here.
-  pip install -e . --no-deps
+  _pip install -e . --no-deps
   
   # Verify installation by checking if the package can be imported
   # For the root package, check for cstar_forge module
@@ -580,7 +617,7 @@ PY
 echo "Running 'pip check' (advisory)..."
 echo "  A 'cstar-ocean requires roms-tools<4' style complaint is expected while"
 echo "  C-Star's pin lags roms-tools main; it is not fatal."
-pip check || echo "  ⚠ pip check reported inconsistencies (see above) — not fatal."
+_pip check || echo "  ⚠ pip check reported inconsistencies (see above) — not fatal."
 
 echo ""
 echo "✓ Environment setup completed successfully!"
