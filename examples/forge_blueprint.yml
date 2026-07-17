@@ -57,6 +57,18 @@ forcing:
     restoring_forces: null
     wind_dropoff: false
     options: {}
+  - source:
+      name: WOA
+      climatology: true
+      glorys_layout: null
+      path: null
+    type: restoring
+    correct_radiation: false
+    coarse_grid_mode: never
+    restoring_forces:
+    - sss
+    wind_dropoff: false
+    options: {}
   boundary:
   - source:
       name: GLORYS
@@ -103,6 +115,11 @@ forcing:
       dataset_id: null
       url: null
       streamable: true
+    WOA:
+      dataset_key: WOA
+      dataset_id: null
+      url: https://www.ncei.noaa.gov/data/oceans/woa/WOA18/DATA/salinity/netcdf/decav/0.25/
+      streamable: false
     TPXO:
       dataset_key: TPXO
       dataset_id: null
@@ -124,6 +141,7 @@ datasets:
 - ETOPO5
 - GLORYS_REGIONAL
 - TPXO
+- WOA
 model_settings:
   cppdefs:
     obc_west: true
@@ -133,8 +151,8 @@ model_settings:
     marbl: false
     cdr_forcing: false
     co2_tvarying: false
-    use_pio: true
-    sal_restore: false
+    use_pio: false
+    sal_restore: true
   lateral_visc:
     visc2: 0.0
     rho0: 1000.0
@@ -396,13 +414,10 @@ model_settings:
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: 0.2.0
+    commit: 7b9e477b819d8cea5d379288343927765984f7bd
     branch: null
   marbl: null
-  pio:
-    location: https://github.com/NCAR/ParallelIO.git
-    commit: pio2_7_0
-    branch: null
+  pio: null
   templates_compile_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
     commit: a2167c72ddc265203c9a3af69952e12469c640ec
@@ -440,5 +455,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: 77993c6c6e758eac864fd91f0d5f7d73a31c660a6841e2f2a514957f0f76ceb5
+  content_hash: 2eb6c7d25713d39f5d67188797da57a1a5e9b0901e3ffe4b26c65212bacad86d
   notes: null
