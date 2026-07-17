@@ -76,7 +76,7 @@ fi
 # This occurs when cstar_forge package imports nb_engine before running as module
 export PYTHONWARNINGS="ignore::RuntimeWarning:runpy"
 
-cmd=(python -m cstar_forge.nb_engine)
+cmd=(python -m cstar_forge.legacy_notebook.nb_engine)
 if $force_recompute; then
   cmd+=(--force-recompute)
 fi

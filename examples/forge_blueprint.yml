@@ -1,6 +1,6 @@
 forge_blueprint_version: 2
 application: forge
-working_dir: ~/cstar-forge-data
+working_dir: ~/cstar-forge-data/cson_roms-marbl_v0.1_wio-toy_10procs
 identity:
   model_name: cson_roms-marbl_v0.1
   grid_name: wio-toy
@@ -21,6 +21,7 @@ domain:
     center_lat: -4.0
     rot: 0.0
   topography_source: ETOPO5
+  topography_path: null
   open_boundaries:
     north: true
     south: true
@@ -39,10 +40,8 @@ forcing:
       name: GLORYS
       climatology: false
       glorys_layout: regional
-    bgc_source:
-      name: UNIFIED
-      climatology: true
-      glorys_layout: null
+      path: null
+    bgc_source: null
     bgc_interpolation_method: depth
     allow_flex_time: false
     options: {}
@@ -51,41 +50,11 @@ forcing:
       name: ERA5
       climatology: false
       glorys_layout: null
+      path: null
     type: physics
     correct_radiation: true
     coarse_grid_mode: never
     restoring_forces: null
-    wind_dropoff: false
-    options: {}
-  - source:
-      name: UNIFIED
-      climatology: true
-      glorys_layout: null
-    type: bgc
-    correct_radiation: false
-    coarse_grid_mode: never
-    restoring_forces: null
-    wind_dropoff: false
-    options: {}
-  - source:
-      name: MBL_co2
-      climatology: false
-      glorys_layout: null
-    type: bgc
-    correct_radiation: false
-    coarse_grid_mode: never
-    restoring_forces: null
-    wind_dropoff: false
-    options: {}
-  - source:
-      name: WOA
-      climatology: true
-      glorys_layout: null
-    type: restoring
-    correct_radiation: false
-    coarse_grid_mode: never
-    restoring_forces:
-    - sss
     wind_dropoff: false
     options: {}
   boundary:
@@ -93,19 +62,8 @@ forcing:
       name: GLORYS
       climatology: false
       glorys_layout: regional
+      path: null
     type: physics
-    bgc_interpolation_method: depth
-    prefill: null
-    prefill_kwargs: null
-    regrid_method: null
-    extrap_method: null
-    extrap_kwargs: null
-    options: {}
-  - source:
-      name: UNIFIED
-      climatology: true
-      glorys_layout: null
-    type: bgc
     bgc_interpolation_method: depth
     prefill: null
     prefill_kwargs: null
@@ -118,6 +76,7 @@ forcing:
       name: TPXO
       climatology: false
       glorys_layout: null
+      path: null
     ntides: 15
     options: {}
   river:
@@ -125,7 +84,8 @@ forcing:
       name: DAI
       climatology: false
       glorys_layout: null
-    include_bgc: true
+      path: null
+    include_bgc: false
     convert_to_climatology: if_any_missing
     bgc_source: null
     coast_snap_buffer_km: null
@@ -138,26 +98,11 @@ forcing:
       dataset_id: cmems_mod_glo_phy_my_0.083deg_P1D-m
       url: null
       streamable: false
-    UNIFIED:
-      dataset_key: UNIFIED_BGC
-      dataset_id: null
-      url: https://drive.google.com/uc?id=1wUNwVeJsd6yM7o-5kCx-vM3wGwlnGSiq
-      streamable: false
     ERA5:
       dataset_key: ERA5
       dataset_id: null
       url: null
       streamable: true
-    MBL_co2:
-      dataset_key: MBL_CO2
-      dataset_id: null
-      url: https://gml.noaa.gov/ccgg/mbl/tmp/co2_GHGreference.1785677502_surface.txt
-      streamable: false
-    WOA:
-      dataset_key: WOA
-      dataset_id: null
-      url: https://www.ncei.noaa.gov/data/oceans/woa/WOA18/DATA/salinity/netcdf/decav/0.25/
-      streamable: false
     TPXO:
       dataset_key: TPXO
       dataset_id: null
@@ -178,16 +123,18 @@ datasets:
 - ERA5
 - ETOPO5
 - GLORYS_REGIONAL
-- MBL_CO2
 - TPXO
-- UNIFIED_BGC
-- WOA
 model_settings:
-  time_stepping:
-    ntimes: 12
-    dt: 7200.0
-    ndtfast: 60
-    ninfo: 1
+  cppdefs:
+    obc_west: true
+    obc_east: true
+    obc_north: true
+    obc_south: true
+    marbl: false
+    cdr_forcing: false
+    co2_tvarying: false
+    use_pio: true
+    sal_restore: false
   lateral_visc:
     visc2: 0.0
     rho0: 1000.0
@@ -200,8 +147,6 @@ model_settings:
     rdrg: 0.0
     rdrg2: 0.001
     zob: 0.01
-  v_sponge:
-    v_sponge: 40000.0
   gamma2: 1.0
   ubind: 0.1
   param:
@@ -215,6 +160,9 @@ model_settings:
     nsub_x: 1
     nsub_e: 1
   bgc:
+    nbgc_flx: 2
+    interp_frc: 0
+    xco2air_default: 284.7
     wrt_his: false
     output_period_his: 86400
     nrpf_his: 7
@@ -227,18 +175,127 @@ model_settings:
     wrt_avg_dia: false
     output_period_avg_dia: 60
     nrpf_avg_dia: 1
-    nbgc_flx: 2
-    interp_frc: 1
-    xco2air_default: 284.7
   blk_frc:
     interp_frc: 0
     check_bulk_frc_units: false
-  cdr_output:
-    do_cdr: false
-    do_avg: true
-    monthly_averages: false
-    output_period: 3600
+  tides:
+    ntides: 15
+    bry_tides: true
+    pot_tides: true
+    ana_tides: false
+  river_frc:
+    river_source: false
+    analytical: false
+    nriv: 0
+    rvol_vname: river_volume
+    rvol_tname: river_time
+    rtrc_vname: river_tracer
+    rtrc_tname: river_time
+  cdr_frc:
+    cdr_source: false
+    cdr_file: cdr.nc
+    ncdr_parm: 1
+    forcing_depth_profiles: false
+    forcing_3d: false
+    forcing_parameterized: true
+    time_interpolation: false
+    relocate_to_wet_pts: true
+    cdr_volume: false
+    cdrvol_vname: cdr_volume
+    cdrvol_tname: cdr_time
+    cdrtrc_vname: cdr_tracer
+    cdrtrc_tname: cdr_time
+    cdrflx_vname: cdr_trcflx
+    cdrflx_tname: cdr_time
+    cdr_loc_lon: cdr_lon
+    cdr_loc_lat: cdr_lat
+    cdr_loc_dep: cdr_dep
+    cdr_scl_hor: cdr_hsc
+    cdr_scl_vrt: cdr_vsc
+    nz_chd: 50
+  extract_data:
+    do_extract: false
+    extract_file: sample_edata.nc
     nrpf: 24
+    n_chd: 90
+    theta_s_chd: 5.0
+    theta_b_chd: 2.0
+    hc_chd: 250.0
+    extract_period: 3600.0
+  sponge_tune:
+    pflx_w_vname: up_west
+    pflx_w_tname: bry_time
+    pflx_e_vname: up_east
+    pflx_e_tname: bry_time
+    pflx_s_vname: vp_south
+    pflx_s_tname: bry_time
+    pflx_n_vname: vp_north
+    pflx_n_tname: bry_time
+    ub_tune: false
+    spn_avg: true
+    sp_timscale: 86400
+    wrt_sponge: false
+    nrpf: 7
+    output_period: 86400
+  flux_frc:
+    interp_flux_frc: true
+  calc_pflx:
+    calc_pflx: true
+    timescale: 86400
+  pipe_frc:
+    pipe_source: false
+    p_analytical: false
+    npip: 1
+  particles:
+    floats: false
+    np: 50
+    extra_space_fac: 1.5
+    exchange_facx: 0.1
+    exchange_facy: 0.1
+    exchange_facc: 0.01
+    output_period: 400
+    nrpf: 100
+    ppm3: 1.0e-06
+    pmin: 200
+  lin_rho_eos:
+    tcoef: 0.2
+    t0: 1.0
+    scoef: 0.822
+    s0: 1.0
+  sss_correction:
+    dsssdt: 7.777
+  sst_correction:
+    dsstdt: 7.777
+  dic_alk_correction:
+    dcdt: 7.777
+  marbl_bgc:
+    marbl_config_file: marbl_in
+    marbl_timestep: 3600.0
+    marbl_tracers_to_write:
+    - PO4
+    - NO3
+    - SiO3
+    - NH4
+    - Fe
+    - O2
+    - DIC
+    - ALK
+    - spChl
+    - diatChl
+    marbl_diagnostics_to_write:
+    - PH
+    - PH_ALT_CO2
+    - pCO2SURF_ALT_CO2
+    - pCO2SURF
+    - FG_CO2
+    - FG_ALT_CO2
+  time_stepping:
+    ntimes: 12
+    dt: 7200.0
+    ndtfast: 60
+    ninfo: 1
+  v_sponge:
+    v_sponge: 40000.0
   ocean_vars:
     wrt_file_rst: true
     output_period_rst: 86400
@@ -288,77 +345,14 @@ model_settings:
     sst_tname: sst_time
     sss_vname: sss
     sss_tname: sss_time
-  tides:
-    ntides: 10
-    bry_tides: true
-    pot_tides: true
-    ana_tides: false
-  river_frc:
-    river_source: false
-    analytical: false
-    nriv: 0
-    rvol_vname: river_volume
-    rvol_tname: river_time
-    rtrc_vname: river_tracer
-    rtrc_tname: river_time
   diagnostics:
     diag_avg: false
     output_period: 86400
     nrpf: 7
     diag_uv: false
     diag_trc: false
-  cdr_frc:
-    cdr_source: false
-    cdr_file: cdr.nc
-    ncdr_parm: 1
-    forcing_depth_profiles: false
-    forcing_3d: false
-    forcing_parameterized: true
-    time_interpolation: false
-    relocate_to_wet_pts: true
-    cdr_volume: false
-    cdrvol_vname: cdr_volume
-    cdrvol_tname: cdr_time
-    cdrtrc_vname: cdr_tracer
-    cdrtrc_tname: cdr_time
-    cdrflx_vname: cdr_trcflx
-    cdrflx_tname: cdr_time
-    cdr_loc_lon: cdr_lon
-    cdr_loc_lat: cdr_lat
-    cdr_loc_dep: cdr_dep
-    cdr_scl_hor: cdr_hsc
-    cdr_scl_vrt: cdr_vsc
-    nz_chd: 50
-  extract_data:
-    do_extract: false
-    extract_file: sample_edata.nc
-    nrpf: 24
-    n_chd: 90
-    theta_s_chd: 5.0
-    theta_b_chd: 2.0
-    hc_chd: 250.0
-    extract_period: 3600.0
-  sponge_tune:
-    pflx_w_vname: up_west
-    pflx_w_tname: bry_time
-    pflx_e_vname: up_east
-    pflx_e_tname: bry_time
-    pflx_s_vname: vp_south
-    pflx_s_tname: bry_time
-    pflx_n_vname: vp_north
-    pflx_n_tname: bry_time
-    ub_tune: false
-    spn_avg: true
-    sp_timscale: 86400
-    wrt_sponge: false
-    nrpf: 7
-    output_period: 86400
-  upscale_output:
-    do_upscale: false
-    nrpf_uscl: 48
-    output_period_uscl: 3600
-  flux_frc:
-    interp_flux_frc: true
+  stdout_diag:
+    code_check_mode: false
   ts_output:
     wrt_temp: false
     wrt_salt: false
@@ -369,9 +363,16 @@ model_settings:
     wrt_frc_avg: false
     output_period: 3600.0
     nrpf: 4
-  calc_pflx:
-    calc_pflx: true
-    timescale: 86400
+  cdr_output:
+    do_cdr: false
+    do_avg: true
+    monthly_averages: false
+    output_period: 3600
+    nrpf: 24
+  upscale_output:
+    do_upscale: false
+    nrpf_uscl: 48
+    output_period_uscl: 3600
   zslice:
     do_zslice: false
     zslice_avg: false
@@ -388,87 +389,30 @@ model_settings:
     trc2zsc:
     - 1
     - 2
-  stdout_diag:
-    code_check_mode: false
   random_output:
     do_random: false
     output_period: 3600
     nrpf: 10
-  pipe_frc:
-    pipe_source: false
-    p_analytical: false
-    npip: 1
-  particles:
-    floats: false
-    np: 50
-    extra_space_fac: 1.5
-    exchange_facx: 0.1
-    exchange_facy: 0.1
-    exchange_facc: 0.01
-    output_period: 400
-    nrpf: 100
-    ppm3: 1.0e-06
-    pmin: 200
-  lin_rho_eos:
-    tcoef: 0.2
-    t0: 1.0
-    scoef: 0.822
-    s0: 1.0
-  sss_correction:
-    dsssdt: 7.777
-  sst_correction:
-    dsstdt: 7.777
-  dic_alk_correction:
-    dcdt: 7.777
-  marbl_bgc:
-    marbl_config_file: marbl_in
-    marbl_tracers_to_write:
-    - PO4
-    - NO3
-    - SiO3
-    - NH4
-    - Fe
-    - O2
-    - DIC
-    - ALK
-    - spChl
-    - diatChl
-    marbl_diagnostics_to_write:
-    - PH
-    - PH_ALT_CO2
-    - pCO2SURF_ALT_CO2
-    - pCO2SURF
-    - FG_CO2
-    - FG_ALT_CO2
-    marbl_timestep: 3600.0
-  cppdefs:
-    obc_west: true
-    obc_east: true
-    obc_north: true
-    obc_south: true
-    marbl: true
-    cdr_forcing: false
-    co2_tvarying: true
-    sal_restore: true
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
     commit: 0.2.0
     branch: null
-  marbl:
-    location: https://github.com/marbl-ecosys/MARBL.git
-    commit: marbl0.45.0
+  marbl: null
+  pio:
+    location: https://github.com/NCAR/ParallelIO.git
+    commit: pio2_7_0
     branch: null
   templates_compile_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
-    commit: c61d654f4b3d5708d5ba3eee3fa07fe90474cee6
+    commit: a2167c72ddc265203c9a3af69952e12469c640ec
     branch: null
     directory: templates/compile-time
     files:
     - cppdefs.opt.j2
   templates_run_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
-    commit: c61d654f4b3d5708d5ba3eee3fa07fe90474cee6
+    commit: a2167c72ddc265203c9a3af69952e12469c640ec
     branch: null
     directory: templates/run-time
     files:
@@ -483,9 +427,9 @@ composition:
     origin: catalog
     modified: false
   forcing:
-    name: null
-    origin: model_default
-    modified: false
+    name: glorys-era5-unified
+    origin: catalog
+    modified: true
   output:
     name: standard
     origin: catalog
@@ -496,5 +440,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: 44bca19fbde36ccb67fa607c61f4a5fe641a756b5f635f3e2d7b68c98e5f9c82
+  content_hash: 77993c6c6e758eac864fd91f0d5f7d73a31c660a6841e2f2a514957f0f76ceb5
   notes: null
