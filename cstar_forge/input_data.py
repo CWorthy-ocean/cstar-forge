@@ -25,6 +25,7 @@ from . import models as forge_models
 from . import source_data
 from .util import roms_tools_nesting_writer
 import roms_tools as rt
+from roms_tools import NetCDFFormat
 
 # Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name must contain the
 # substring ``cdr.nc`` so C-Star's ROMS build check on ``cdr_frc.opt`` passes.
@@ -211,6 +212,7 @@ class RomsMarblInputData(InputData):
     grid_child: Optional[rt.Grid] = None
     metadata_child: Optional[dict[str, Any]] = None
     use_dask: bool = True
+    netcdf_format: NetCDFFormat = "NETCDF4"
     input_data_dir_override: Optional[Path] = None
     """If set, NetCDF inputs are written here; otherwise under ``config.paths.input_data`` using a
     sanitized ``domain_name`` (same rule as NetCDF basenames: no ``.`` in the dirname)."""
@@ -579,7 +581,7 @@ class RomsMarblInputData(InputData):
         if self._should_reuse_existing_output(out_path):
             print(f"   ↪ Reusing existing file: {out_path}")
         else:
-            self.grid.save(out_path)
+            self.grid.save(out_path, format=self.netcdf_format)
 
         try:
             self.grid.to_yaml(yaml_path)
@@ -596,7 +598,7 @@ class RomsMarblInputData(InputData):
             if self._should_reuse_existing_output(out_path_child):
                 print(f"   ↪ Reusing existing file: {out_path_child}")
             else:
-                self.grid_child.save(out_path_child)
+                self.grid_child.save(out_path_child, format=self.netcdf_format)
             yaml_path_child = self._yaml_filename(key + "_child")
 
             try:
@@ -626,6 +628,8 @@ class RomsMarblInputData(InputData):
                 ).parameters:
                     # ROMS-Tools: include_bgc=True sets output_vars to include "bgc" on nesting.nc.
                     nesting_kwargs.setdefault("include_bgc", True)
+                if "format" in inspect.signature(nesting_writer).parameters:
+                    nesting_kwargs.setdefault("format", self.netcdf_format)
                 nesting_writer(
                     self.grid,
                     self.grid_child,
@@ -692,7 +696,7 @@ class RomsMarblInputData(InputData):
             ic = None
         else:
             ic = rt.InitialConditions(grid=self.grid, **input_args)
-            paths = ic.save(output_path)
+            paths = ic.save(output_path, format=self.netcdf_format)
 
         # See here: https://github.com/CWorthy-ocean/roms-tools/issues/553
         if ic is not None:
@@ -773,7 +777,7 @@ class RomsMarblInputData(InputData):
                     )
         else:
             frc = rt.SurfaceForcing(grid=self.grid, **input_args)
-            paths = frc.save(output_path)
+            paths = frc.save(output_path, format=self.netcdf_format)
             try:
                 frc.to_yaml(yaml_path)
             except Exception as e:
@@ -901,7 +905,7 @@ class RomsMarblInputData(InputData):
                     )
         else:
             bry = rt.BoundaryForcing(grid=self.grid, **input_args)
-            paths = bry.save(output_path)
+            paths = bry.save(output_path, format=self.netcdf_format)
             try:
                 bry.to_yaml(yaml_path)
             except Exception as e:
@@ -976,7 +980,7 @@ class RomsMarblInputData(InputData):
                 )
         else:
             tidal = rt.TidalForcing(grid=self.grid, **input_args)
-            paths = tidal.save(output_path)
+            paths = tidal.save(output_path, format=self.netcdf_format)
             try:
                 tidal.to_yaml(yaml_path)
             except Exception as e:
@@ -1073,7 +1077,7 @@ class RomsMarblInputData(InputData):
                 stacklevel=2,
             )
         else:
-            paths = river.save(output_path)
+            paths = river.save(output_path, format=self.netcdf_format)
         if isinstance(paths, (list, tuple)) and len(paths) == 0:
             if self.blueprint_elements.forcing is not None:
                 self.blueprint_elements.forcing.river = None
@@ -1135,7 +1139,7 @@ class RomsMarblInputData(InputData):
             print(f"   ↪ Reusing existing file: {output_path}")
             paths = [str(output_path)]
         else:
-            paths = cdr.save(output_path)
+            paths = cdr.save(output_path, format=self.netcdf_format)
 
         # Normalize output paths to absolute strings so downstream template
         # settings can reliably embed full file locations.
@@ -1191,6 +1195,7 @@ class RomsMarblInputData(InputData):
             np_xi=self.partitioning.n_procs_x,
             output_dir=self.input_data_dir,
             include_coarse_dims=self.include_coarse_dims,
+            format=self.netcdf_format,
         )
         
         for function_key, _ in self.input_list:

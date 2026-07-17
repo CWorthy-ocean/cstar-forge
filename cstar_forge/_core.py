@@ -40,6 +40,7 @@ from . import input_data
 from .settings import render_roms_settings, write_roms_namelist
 from .util import compute_timestep_from_cfl, compute_v_sponge_from_grid, roms_tools_default_nesting_period_seconds
 import roms_tools as rt
+from roms_tools import NetCDFFormat
 
 
 def resolve_catalog_dir(catalog_root: Optional[Union[str, Path]]) -> Path:
@@ -243,6 +244,7 @@ class CstarSpecBuilder(BaseModel):
         alias="CDR_forcing",
         validate_default=False,
     )
+    netcdf_format: NetCDFFormat = "NETCDF4"
     override: Optional[List[Union[str, Path]]] = Field(default=None, validate_default=False)
     ensemble_id: Optional[int] = Field(default=None, validate_default=False)
     catalog_root: Optional[Union[str, Path]] = Field(
@@ -1824,6 +1826,7 @@ class CstarSpecBuilder(BaseModel):
                 partitioning=self.partitioning,
                 cdr_forcing=self.cdr_forcing,
                 use_dask=use_dask,
+                netcdf_format=self.netcdf_format,
             ).generate_all(partition_files=partition_files, clobber=clobber, test=test)
             
             if blueprint_elements is None:

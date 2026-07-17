@@ -702,12 +702,39 @@ class TestRomsMarblInputDataGeneration:
             with patch('xarray.open_dataset', return_value=mock_ds):
                 sample_roms_marbl_input_data._generate_grid()
             
-            # Check that grid.save was called
+            # Check that grid.save was called with the configured NetCDF format
             mock_grid.save.assert_called_once()
+            _, save_kwargs = mock_grid.save.call_args
+            assert save_kwargs.get("format", "NETCDF4") == sample_roms_marbl_input_data.netcdf_format
             mock_grid.to_yaml.assert_called_once()
             
             # Check that resource was added to blueprint_elements
             assert len(sample_roms_marbl_input_data.blueprint_elements.grid.data) > 0
+
+    @patch('cstar_forge.input_data.rt.Grid')
+    def test_generate_grid_netcdf3_format(self, mock_grid_class, sample_roms_marbl_input_data, tmp_path):
+        """Test _generate_grid passes netcdf_format to grid.save()."""
+        sample_roms_marbl_input_data.netcdf_format = "NETCDF3_64BIT_DATA"
+        mock_grid = MagicMock()
+        mock_grid_class.return_value = sample_roms_marbl_input_data.grid
+        sample_roms_marbl_input_data.grid = mock_grid
+
+        with patch('cstar_forge.input_data.config.paths', _create_mock_paths(tmp_path)):
+            sample_roms_marbl_input_data.input_data_dir = tmp_path / f"{sample_roms_marbl_input_data.domain_name}"
+            sample_roms_marbl_input_data.input_data_dir.mkdir(parents=True, exist_ok=True)
+
+            out_path = sample_roms_marbl_input_data._forcing_filename(input_name="grid")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.touch()
+
+            mock_ds = xr.Dataset({"var": (["x"], [1, 2, 3])})
+            with patch('xarray.open_dataset', return_value=mock_ds):
+                sample_roms_marbl_input_data._generate_grid()
+
+            mock_grid.save.assert_called_once_with(
+                out_path,
+                format="NETCDF3_64BIT_DATA",
+            )
     
     @patch('cstar_forge.input_data.rt.InitialConditions')
     def test_generate_initial_conditions(self, mock_ic_class, sample_roms_marbl_input_data, tmp_path):
