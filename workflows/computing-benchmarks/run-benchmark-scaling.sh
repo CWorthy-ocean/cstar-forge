@@ -84,7 +84,7 @@ for ensemble_id in 10 20 30 40; do
     
     "$PYTHON_EXE" "$SCRIPT_DIR/benchmark_scaling.py" \
         --ensemble-id "${ensemble_id}" \
-        --domains-file "$SCRIPT_DIR/domains-bm-scaling-no-bgc.yml" \
+        --domains-file "$SCRIPT_DIR/domains-bm-scaling-no-bgc.yaml" \
         ${clobber_inputs_flag}
     
     echo ""

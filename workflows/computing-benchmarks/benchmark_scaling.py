@@ -10,7 +10,7 @@ Usage:
     python benchmark_scaling.py [OPTIONS]
 
 Example:
-    python benchmark_scaling.py --domains-file domains-bm-scaling.yml --clobber-inputs
+    python benchmark_scaling.py --domains-file domains-bm-scaling.yaml --clobber-inputs
 """
 
 import argparse
@@ -35,8 +35,8 @@ def main():
     parser.add_argument(
         "--domains-file",
         type=str,
-        default="domains-bm-scaling.yml",
-        help="Path to domains YAML file (default: domains-bm-scaling.yml)",
+        default="domains-bm-scaling.yaml",
+        help="Path to domains YAML file (default: domains-bm-scaling.yaml)",
     )
     
     parser.add_argument(

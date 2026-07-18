@@ -37,7 +37,7 @@ ssh -N -L 8866:localhost:8866 <user>@<login-node>
 # then open http://localhost:8866 locally
 ```
 
-Use the **Download** link to save `forge_blueprint.yml` to your machine (works in the
+Use the **Download** link to save `forge_blueprint.yaml` to your machine (works in the
 browser without server file access), or **Save to disk** to write it on the host
 running Voilà. Take the file to the machine of your choice to run the processing
 step.

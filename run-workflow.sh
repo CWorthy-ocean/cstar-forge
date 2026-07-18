@@ -23,7 +23,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 --workflow-dir <directory> [--force-recompute]"
       echo ""
       echo "Arguments:"
-      echo "  --workflow-dir <directory>  Directory containing workflow.yml (required)"
+      echo "  --workflow-dir <directory>  Directory containing workflow.yaml (required)"
       echo "  --force-recompute           Force recomputation of already executed notebooks"
       exit 1
       ;;
@@ -49,10 +49,13 @@ if [[ ! -d "$workflow_dir" ]]; then
   fi
 fi
 
-# Check if workflow.yml exists
-workflow_yml="$workflow_dir/workflow.yml"
+# Check if workflow.yaml exists (fall back to legacy workflow.yml)
+workflow_yml="$workflow_dir/workflow.yaml"
 if [[ ! -f "$workflow_yml" ]]; then
-  echo "Error: workflow.yml not found in $workflow_dir"
+  workflow_yml="$workflow_dir/workflow.yml"
+fi
+if [[ ! -f "$workflow_yml" ]]; then
+  echo "Error: workflow.yaml not found in $workflow_dir"
   exit 1
 fi
 

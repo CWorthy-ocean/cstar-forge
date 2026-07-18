@@ -42,7 +42,7 @@ def make_script(year, month, script_dir=None, test=False):
     if account is None and not test:
         raise ValueError(
             "No SLURM account configured for this system. "
-            "Add this host to cstar_forge/machines.yml or run with test=True."
+            "Add this host to cstar_forge/machines.yaml or run with test=True."
         )
 
     job_suffix = f"{year}-{month:02d}"
