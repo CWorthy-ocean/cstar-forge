@@ -11,11 +11,16 @@ in the resolver.
   Good for exploring / scripting.
 
 ```python
-from cstar_forge.forge_blueprint_wizard import ForgeBlueprintWizard
-wiz = ForgeBlueprintWizard()
-wiz.display()
-# ... build & review ...  then:  cfg = wiz.config
+from cstar_forge.forge_blueprint_wizard import ForgeBlueprintWizardApp
+app = ForgeBlueprintWizardApp()
+app.display()
+# ... build & review ...  then:  cfg = app.inner.config
 ```
+
+`ForgeBlueprintWizardApp` adds a catalog-location bar above the wizard: it auto-loads
+the bundled in-repo catalog (`catalog/`) by default, or you can enter a different
+local path, `"local"`, a GitHub URL, or an http URL and click **Reload catalog** to
+rebuild the wizard against it.
 
 ## As a standalone web app (Voilà)
 
