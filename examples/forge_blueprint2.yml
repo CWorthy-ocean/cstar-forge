@@ -1,9 +1,7 @@
-forge_blueprint_version: 2
+forge_blueprint_version: 3
 application: roms_marbl
 identity:
-  model_name: cson_roms-marbl_v0.1
-  grid_name: my-grid
-  ensemble_id: null
+  name: cson_roms-marbl_v0.1_my-grid_1procs
   description: Generated blueprint
 run:
   start_date: '2012-01-01T00:00:00'
@@ -35,6 +33,7 @@ domain:
   grid_kwargs_child: null
   metadata_child: null
   nesting_include_pressure_fluxes: false
+  grid_name: my-grid
 forcing:
   initial_conditions:
     source:

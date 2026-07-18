@@ -1,15 +1,15 @@
-forge_blueprint_version: 2
+forge_blueprint_version: 3
 application: roms_marbl
+working_dir: ~/cstar-forge-data/cson_roms-marbl_v0.1_hvalfjordur-0_256procs
 identity:
-  model_name: cson_roms-marbl_v0.1
-  grid_name: hvalfjordur-0
-  ensemble_id: null
+  name: cson_roms-marbl_v0.1_hvalfjordur-0_256procs
   description: Generated blueprint
 run:
   start_date: '2024-01-01T00:00:00'
   end_date: '2024-01-02T00:00:00'
   model_reference_date: '2000-01-01T00:00:00'
 domain:
+  grid_name: hvalfjordur-0
   grid_kwargs:
     nx: 512
     ny: 384
@@ -20,6 +20,7 @@ domain:
     center_lat: 63.0
     rot: 20.0
   topography_source: ETOPO5
+  topography_path: null
   open_boundaries:
     north: true
     south: true
@@ -38,55 +39,85 @@ forcing:
       name: GLORYS
       climatology: false
       glorys_layout: regional
+      path: null
     bgc_source:
       name: UNIFIED
       climatology: true
       glorys_layout: null
+      path: null
+    bgc_interpolation_method: depth
     allow_flex_time: false
+    options: {}
   surface:
   - source:
       name: ERA5
       climatology: false
       glorys_layout: null
+      path: null
     type: physics
     correct_radiation: true
     coarse_grid_mode: never
     restoring_forces: null
     wind_dropoff: false
+    options: {}
   - source:
       name: UNIFIED
       climatology: true
       glorys_layout: null
+      path: null
     type: bgc
     correct_radiation: false
     coarse_grid_mode: never
     restoring_forces: null
     wind_dropoff: false
+    options: {}
   boundary:
   - source:
       name: GLORYS
       climatology: false
       glorys_layout: regional
+      path: null
     type: physics
+    bgc_interpolation_method: depth
+    prefill: null
+    prefill_kwargs: null
+    regrid_method: null
+    extrap_method: null
+    extrap_kwargs: null
+    options: {}
   - source:
       name: UNIFIED
       climatology: true
       glorys_layout: null
+      path: null
     type: bgc
+    bgc_interpolation_method: depth
+    prefill: null
+    prefill_kwargs: null
+    regrid_method: null
+    extrap_method: null
+    extrap_kwargs: null
+    options: {}
   tidal:
   - source:
       name: TPXO
       climatology: false
       glorys_layout: null
+      path: null
     ntides: 15
+    options: {}
   river:
   - source:
       name: DAI
       climatology: false
       glorys_layout: null
+      path: null
     include_bgc: true
     convert_to_climatology: if_any_missing
     bgc_source: null
+    coast_snap_buffer_km: null
+    domain_edge_buffer: 20
+    options: {}
   cdr_forcing: null
   resolved_datasets:
     GLORYS:
@@ -119,6 +150,7 @@ forcing:
       dataset_id: null
       url: null
       streamable: false
+datasets: []
 model_settings:
   time_stepping:
     ntimes: 3
@@ -393,6 +425,7 @@ code:
     location: https://github.com/marbl-ecosys/MARBL.git
     commit: marbl0.45.0
     branch: null
+  pio: null
   templates_compile_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
     commit: null
@@ -433,5 +466,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: b17701bcce4640ef6f286f7b4eec030d462bb97c34d5846237999db5c28cea22
+  content_hash: 0644c9f6ae24b5951b322202ebbeb9e23febb0084a9ddeab7177c1d6dd71677d
   notes: null

@@ -1,16 +1,15 @@
-forge_blueprint_version: 2
+forge_blueprint_version: 3
 application: forge
-working_dir: ~/cstar-forge-data
+working_dir: ~/cstar-forge-data/cson_roms-marbl_v0.1_wio-toy_10procs
 identity:
-  model_name: cson_roms-marbl_v0.1
-  grid_name: wio-toy
-  ensemble_id: null
+  name: cson_roms-marbl_v0.1_wio-toy_10procs
   description: Generated blueprint
 run:
   start_date: '2012-01-01T00:00:00'
   end_date: '2012-01-02T00:00:00'
   model_reference_date: '2000-01-01T00:00:00'
 domain:
+  grid_name: wio-toy
   grid_kwargs:
     nx: 20
     ny: 20
@@ -476,5 +475,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: 4275a7cb2218fc15ff32b6ef1a7349745790b6bbc2ae237a58f63e8bfe6343ba
+  content_hash: 3c33cc88e41bbb8c5e7c9651667cebce4b21e79e8fbc754d910f3b51a4347b2a
   notes: null

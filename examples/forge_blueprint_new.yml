@@ -1,16 +1,15 @@
-forge_blueprint_version: 2
+forge_blueprint_version: 3
 application: forge
-working_dir: ~/cstar-forge-data
+working_dir: ~/cstar-forge-data/cson_roms-marbl_v0.1_wio-toy_10procs
 identity:
-  model_name: cson_roms-marbl_v0.1
-  grid_name: wio-toy
-  ensemble_id: null
+  name: cson_roms-marbl_v0.1_wio-toy_10procs
   description: Generated blueprint
 run:
   start_date: '2012-01-01T00:00:00'
   end_date: '2012-01-02T00:00:00'
   model_reference_date: '2000-01-01T00:00:00'
 domain:
+  grid_name: wio-toy
   grid_kwargs:
     nx: 20
     ny: 20
@@ -21,6 +20,7 @@ domain:
     center_lat: -4.0
     rot: 0.0
   topography_source: ETOPO5
+  topography_path: null
   open_boundaries:
     north: true
     south: true
@@ -39,10 +39,12 @@ forcing:
       name: GLORYS
       climatology: false
       glorys_layout: regional
+      path: null
     bgc_source:
       name: UNIFIED
       climatology: true
       glorys_layout: null
+      path: null
     bgc_interpolation_method: depth
     allow_flex_time: false
     options: {}
@@ -51,6 +53,7 @@ forcing:
       name: ERA5
       climatology: false
       glorys_layout: null
+      path: null
     type: physics
     correct_radiation: true
     coarse_grid_mode: never
@@ -61,6 +64,7 @@ forcing:
       name: UNIFIED
       climatology: true
       glorys_layout: null
+      path: null
     type: bgc
     correct_radiation: false
     coarse_grid_mode: never
@@ -72,6 +76,7 @@ forcing:
       name: GLORYS
       climatology: false
       glorys_layout: regional
+      path: null
     type: physics
     bgc_interpolation_method: depth
     prefill: null
@@ -84,6 +89,7 @@ forcing:
       name: UNIFIED
       climatology: true
       glorys_layout: null
+      path: null
     type: bgc
     bgc_interpolation_method: depth
     prefill: null
@@ -97,6 +103,7 @@ forcing:
       name: TPXO
       climatology: false
       glorys_layout: null
+      path: null
     ntides: 15
     options: {}
   river:
@@ -104,6 +111,7 @@ forcing:
       name: DAI
       climatology: false
       glorys_layout: null
+      path: null
     include_bgc: true
     convert_to_climatology: if_any_missing
     bgc_source: null
@@ -426,6 +434,7 @@ code:
     location: https://github.com/marbl-ecosys/MARBL.git
     commit: marbl0.45.0
     branch: null
+  pio: null
   templates_compile_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
     commit: null
@@ -463,5 +472,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: d74cb29fa2257b18fe35099c49e72d589b3d0b1e66a3ca239c5a7c07848c61bd
+  content_hash: b2574f404ab8e47e7a2e6eeb63e083fb6e1b20ddcfe3ec1a34de166eb227d70d
   notes: null
