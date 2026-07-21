@@ -38,7 +38,7 @@ dependencies:
   - jupyter_client
   - kerchunk  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
   - libpnetcdf
-  - matplotlib
+  - matplotlib<3.11
   #- mpich - optional, will be installed by prompt, prefer open-mpi on linux
   - nc-time-axis
   - nest-asyncio  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
