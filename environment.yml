@@ -20,6 +20,7 @@ dependencies:
   - distributed
   - esmpy
   - f90nml  # cstar-forge runtime dep; needed because cstar-forge is pip-installed with --no-deps
+  - fastparquet  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
   - ffmpeg
   - flake8
   - fakeredis<2.35
@@ -35,10 +36,12 @@ dependencies:
   - jupyter-book
   - jupyterlab
   - jupyter_client
+  - kerchunk  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
   - libpnetcdf
   - matplotlib
   #- mpich - optional, will be installed by prompt, prefer open-mpi on linux
   - nc-time-axis
+  - nest-asyncio  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
   # - netcdf-fortran - optional, will be installed by prompt
   - netcdf4
   - networkx>=3.6.1
@@ -80,6 +83,7 @@ dependencies:
   - types-pytz>=2025.2.0
   - types-pyyaml>=6.0.12
   - types-requests>2.32.4
+  - ujson  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
   - voila
   - xarray[version=">=2022.6.0,<2025.8.0"]
   - xesmf
