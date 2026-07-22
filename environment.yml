@@ -87,7 +87,7 @@ dependencies:
   - voila
   - xarray[version=">=2022.6.0,<2025.8.0"]
   - xesmf
-  - xgcm>=0.9.0
+  - xgcm>=0.9.0,<0.10.0
   - zarr
   # Source the full ROMS-Tools transitive dependency closure from conda-forge.
   # Forge now targets roms-tools 4.x (see --roms-tools-ref); conda-forge has no 4.x
