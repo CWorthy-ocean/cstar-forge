@@ -29,6 +29,8 @@ dependencies = [
     "copernicusmarine",
     "gdown",
     "cstar-ocean>=0.1.0",
+    "dask",
+    "threadpoolctl",
 ]
 
 [project.optional-dependencies]
