@@ -79,12 +79,17 @@ jobs:
       run: |
         eval "$(micromamba shell hook --shell bash)"
         micromamba activate "$CONDA_ENV_NAME"
-        # roms-tools and C-Star: same as dev-setup.sh (not in environment.yml)
+        # roms-tools and C-Star: mirrors dev-setup.sh's pip section (not in
+        # environment.yml). C-Star first with --no-deps --force-reinstall so its
+        # (possibly stale) roms-tools pin is not enforced; roms-tools installed
+        # last, also --no-deps --force-reinstall, so it wins. The local package
+        # is then installed --no-deps too, since all dependencies come from
+        # conda-forge (environment.yml) plus these two git installs.
         ROMS_TOOLS_GIT_REF="${ROMS_TOOLS_GIT_REF:-main}"
         C_STAR_GIT_REF="${C_STAR_GIT_REF:-main}"
-        pip install "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
-        pip install "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
-        pip install -e .
+        pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
+        pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
+        pip install -e . --no-deps
         
     - name: Run tests
       shell: bash -l {0}
