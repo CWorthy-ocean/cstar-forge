@@ -1,102 +1,66 @@
+# GENERATED FILE — do not edit by hand. Source of truth is pyproject.toml
+# ([project] deps + [tool.pixi]). Regenerate with:
+#   pixi workspace export conda-environment -e dev > environment.yml
+# (then restore this header + the `name: cstar-forge-v0` dev-setup.sh expects).
+#
+# Note on the `pip:` section: it lists every pypi-dependencies entry from
+# pyproject.toml's [project] deps/extras, including several (roms-tools, dask,
+# distributed, numpy, xarray, pandas, netcdf4, pyyaml) that are ALSO installed
+# from conda-forge above. This is expected and harmless: `pip install` only
+# acts when a requirement isn't already satisfied, so for a fresh
+# `conda env create -f environment.yml` those conda-installed versions already
+# satisfy the pip specifiers and pip leaves them alone. The pip section is what
+# actually pulls in packages with no conda-forge presence in this manifest yet
+# (cstar-ocean, copernicusmarine, gdown, f90nml, jupyterlab/voila/papermill/
+# ipywidgets/matplotlib, pytest*/ruff/pre-commit) plus `-e .` (cstar-forge
+# itself, editable).
 name: cstar-forge-v0
 channels:
-  - conda-forge
-  - nodefaults
+- conda-forge
+- nodefaults
 dependencies:
-  - python=3.12
-  # Core install/build tooling
-  - black
-  - bottleneck
-  - cartopy
-  - click>=8.0.0 # needed for debugging, though higher than 8.3 breaks in combination with c-star/typer
-  - cmake
-  - cmocean
-  # - compilers
-  - coolname
-  - copernicusmarine
-  - coverage
-  - dask
-  - dask-jobqueue
-  - distributed
-  - esmpy
-  - f90nml  # cstar-forge runtime dep; needed because cstar-forge is pip-installed with --no-deps
-  - fastparquet  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
-  - ffmpeg
-  - flake8
-  - fakeredis<2.35
-  - gcm_filters>=0.5.1
-  - gcsfs
-  - gsw
-  - gdown
-  - h5py
-  - holoviews
-  - ipykernel
-  - ipywidgets
-  - jinja2  # cstar-forge runtime dep (pip-installed with --no-deps); also a transitive jupyter dep
-  - jupyter-book
-  - jupyterlab
-  - jupyter_client
-  - kerchunk  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
-  - libpnetcdf
-  - matplotlib<3.11
-  #- mpich - optional, will be installed by prompt, prefer open-mpi on linux
-  - nc-time-axis
-  - nest-asyncio  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
-  # - netcdf-fortran - optional, will be installed by prompt
-  - netcdf4
-  - networkx>=3.6.1
-  - numba>=0.61.2
-  - numpy[version=">2,<2.3"]
-  - packaging
-  - pandas
-  - papermill
-  - pip
-  - pooch
-  - pop-tools
-  - pre-commit==3.8.0
-  - pyamg
-  - pyco2sys
-  - pydantic[version=">2,<3"]
-  - prefect>=3.6.1
-  - psutil>=7.2.2  # C-Star runtime dep; listed here because C-Star is pip-installed with --no-deps
-  - pytimeparse>=1.1.8
-  - pytest>=7.0.0
-  - pytest-asyncio>=1.3.0
-  - pytest-cov>=4.0.0
-  - pytest-xdist>=3.0.0
-  - pyyaml>=6.0
-  - python-dateutil>=2.8.2
-  - python-dotenv
-  - quarto
-  - rasterio
-  - redis-py
-  - regionmask
-  - rioxarray
-  - rsync
+- python >=3.12,<3.14
+- roms-tools >=4.0.0,<5
+- dask *
+- distributed *
+- numpy *
+- xarray *
+- pandas *
+- netcdf4 *
+- kerchunk *
+- fastparquet *
+- nest-asyncio *
+- ujson *
+- pyyaml 6.0.2.*
+- pip
+- pip:
+  - pytest
+  - pytest-asyncio
+  - pytest-cov
+  - pytest-xdist
   - ruff>=0.12.2
-  - scipy
-  - seawater
-  - snakeviz
-  - threadpoolctl  # cstar-forge runtime dep; needed because cstar-forge is pip-installed with --no-deps
-  - typer<=0.25
-  - types-python-dateutil>=2.9.0
-  - types-pytz>=2025.2.0
-  - types-pyyaml>=6.0.12
-  - types-requests>2.32.4
-  - ujson  # GLORYS just-in-time subchunking (interim; see glorys_subchunk.py)
+  - pre-commit>=3.8
+  - netcdf4
+  - f90nml
+  - jupyterlab
   - voila
-  - xarray[version=">=2022.6.0,<2025.8.0"]
-  - xesmf
-  - xgcm>=0.10.0
-  - zarr
-  # Source the full ROMS-Tools transitive dependency closure from conda-forge.
-  # Forge now targets roms-tools 4.x (see --roms-tools-ref); conda-forge has no 4.x
-  # yet, so this resolves to the newest 3.x for its dependency closure. The exact
-  # version is unimportant because dev-setup.sh overwrites the roms-tools *package*
-  # (not its deps) with a git build via `pip install --no-deps`. Keep this so
-  # --no-deps has every dep present.
-  - roms-tools>=3.4.0,<5
-  # The roms-tools and cstar-ocean *packages* are (re)installed from GitHub by
-  # dev-setup.sh (or CI) via `pip install --no-deps` after the conda env is created,
-  # so pip never resolves/replaces conda-forge dependencies. See --roms-tools-ref /
-  # --c-star-ref in dev-setup.sh.
+  - papermill
+  - ipywidgets
+  - matplotlib
+  - -e .
+  - jinja2
+  - pandas
+  - pyyaml>=6.0
+  - copernicusmarine
+  - gdown
+  - dask
+  - distributed
+  - threadpoolctl
+  - fsspec
+  - pydantic
+  - numpy
+  - xarray
+  - nbformat
+  - psutil
+  - cstar-ocean>=0.7
+  - roms-tools>=4.0.0, <5

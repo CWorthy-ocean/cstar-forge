@@ -125,6 +125,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# pixi (D3 dev/lock tool; pixi.lock IS committed, the .pixi/ env dir is not)
+.pixi/
+
 # Pyre type checker
 .pyre/
 

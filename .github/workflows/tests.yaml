@@ -100,6 +100,68 @@ jobs:
     - name: Upload coverage reports to Codecov
       uses: codecov/codecov-action@v5
       with:
-        token: ${{ secrets.CODECOV_TOKEN }}        
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+  pixi-tests:
+    # D3: pixi is the pinned, full-stack (conda + pypi) lockfile-driven path.
+    # Runs alongside (not instead of) the micromamba `test` job above.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up pixi
+      uses: prefix-dev/setup-pixi@v0
+      with:
+        cache: true
+
+    - name: Install dev environment
+      run: pixi install -e dev
+
+    - name: Run tests
+      run: pixi run -e dev pytest tests/ -v --cov=cstar_forge --cov-report=xml --cov-report=term-missing
+
+    - name: Upload coverage reports to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+  env-drift-check:
+    # D3: environment.yml is a GENERATED artifact (`pixi workspace export
+    # conda-environment`). This job regenerates it and fails if the committed
+    # file has drifted from pyproject.toml, so conda-only consumers never get
+    # a stale environment.yml silently.
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up pixi
+      uses: prefix-dev/setup-pixi@v0
+      with:
+        pixi-version: v0.76.1
+        cache: true
+
+    - name: Regenerate environment.yml and check for drift
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Lift the leading `#`-comment header off the currently-committed
+        # environment.yml (instead of duplicating it here) so editing the
+        # header alone never turns this job red.
+        HEADER_FILE="$(mktemp)"
+        awk '/^#/{print; next} {exit}' environment.yml > "$HEADER_FILE"
+
+        BODY_FILE="$(mktemp)"
+        pixi workspace export conda-environment -e dev -n cstar-forge-v0 "$BODY_FILE"
+
+        cat "$HEADER_FILE" "$BODY_FILE" > environment.yml
+
+        git diff --exit-code environment.yml
 
 

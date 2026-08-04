@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=64", "setuptools_scm[toml]>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "cstar-forge"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A utility for generating regional oceanographic modeling domains and spawning reproducible C-Star workflows"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
 authors = [
     {name = "C-Worthy Ocean"}
@@ -17,25 +17,98 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
 ]
 dependencies = [
+    # -- direct imports in cstar_forge/ package code (see import audit) --
     "jinja2",
-    "f90nml",
     "pandas",
     "pyyaml>=6.0",
     "copernicusmarine",
     "gdown",
-    "cstar-ocean>=0.1.0",
     "dask",
+    "distributed",
     "threadpoolctl",
+    "fsspec",
+    "pydantic",
+    "numpy",
+    "xarray",
+    "nbformat",
+    "psutil",
+    # -- sibling C-Worthy/C-Star packages forge builds on directly --
+    "cstar-ocean>=0.7",
+    "roms_tools>=4.0.0,<5",
 ]
 
 [project.optional-dependencies]
-# netCDF4 lets xarray open real .nc files when tests or roms_tools are not fully mocked.
-test = ["pytest", "netCDF4"]
+# The wizard/notebook app stack: running cstar_forge/forge-blueprint-wizard-app.ipynb
+# under voila (see run-wizard-app.sh), or interactively in Jupyter.
+app = [
+    "jupyterlab",
+    "voila",
+    "papermill",
+    "ipywidgets",
+    "matplotlib",
+]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",
+    "pytest-xdist",
+    "ruff>=0.12.2",
+    "pre-commit>=3.8",
+    # netCDF4 lets xarray open real .nc files when tests or roms_tools are not
+    # fully mocked (folded in from the former `test` extra).
+    "netCDF4",
+    # f90nml is imported directly by tests/test_write_namelist.py; forge itself
+    # no longer imports it (namelist writing moved to cstar.roms.namelist in
+    # C-Star), so it's a test-only, not runtime, dependency.
+    "f90nml",
+]
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+[tool.pixi.pypi-dependencies]
+cstar-forge = { path = ".", editable = true }
+
+[tool.pixi.dependencies]
+# Conda side of the solve — pixi prefers a conda-forge package over a
+# same-named pypi dependency, so anything listed here is sourced from
+# conda-forge rather than PyPI. roms-tools (and the heavy scientific
+# stack it and forge depend on) go here so xesmf/esmf and friends come
+# from conda-forge, which is the only place they build reliably.
+python = ">=3.12,<3.14"
+roms-tools = ">=4.0.0,<5"
+dask = "*"
+distributed = "*"
+numpy = "*"
+xarray = "*"
+pandas = "*"
+netcdf4 = "*"
+# GLORYS just-in-time subchunking (interim; see cstar_forge/glorys_subchunk.py) —
+# not a forge dependency listed in [project], but tests/test_input_data.py
+# exercises this path (importorskip-guarded) and environment.yml has always
+# carried these for the same reason.
+kerchunk = "*"
+fastparquet = "*"
+nest-asyncio = "*"
+ujson = "*"
+# TODO: relax once cstar-ocean >0.7 releases (PyYAML pin relaxed upstream).
+# cstar-ocean 0.7.0 (pypi) pins PyYAML==6.0.2 exactly; conda-forge's newer
+# pyyaml (6.0.3) would otherwise conflict with that pypi pin during the
+# combined solve.
+pyyaml = "=6.0.2"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev", "app"], solve-group = "default" }
+
+[tool.setuptools_scm]
+fallback_version = "0.1.0"
 
 [tool.setuptools]
 # Only include the cstar_forge package
@@ -43,7 +116,10 @@ test = ["pytest", "netCDF4"]
 packages = ["cstar_forge"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yml", "*.yaml"]
+# *.ipynb ships the wizard app (cstar_forge/forge-blueprint-wizard-app.ipynb,
+# forge-blueprint-wizard.ipynb) that run-wizard-app.sh execs via voila — needed
+# for the `app` extra to be usable from a plain pip/wheel install.
+"*" = ["*.yml", "*.yaml", "*.ipynb"]
 
 # Configuration for the ruff linter and formatter.
 # Rule selection follows roms-tools (the library Forge wraps): I, E, W, F, D, RUF, UP.
