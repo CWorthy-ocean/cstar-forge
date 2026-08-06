@@ -20,7 +20,7 @@ project:
 
     - title: Domain Generation
       children:
-        - file: docs/CStarSpecBuilder-overview.md
+        - file: docs/domain-generation-overview.md
 
     - title: SourceData
       children:
