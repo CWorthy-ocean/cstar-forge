@@ -29,6 +29,8 @@ dependencies = [
     "copernicusmarine",
     "gdown",
     "cstar-ocean>=0.1.0",
+    "dask",
+    "threadpoolctl",
 ]
 
 [project.optional-dependencies]
@@ -42,4 +44,41 @@ packages = ["cstar_forge"]
 
 [tool.setuptools.package-data]
 "*" = ["*.yml", "*.yaml"]
+
+# Configuration for the ruff linter and formatter.
+# Rule selection follows roms-tools (the library Forge wraps): I, E, W, F, D, RUF, UP.
+# TCH (flake8-type-checking) is intentionally NOT enabled — it moves annotation-only
+# imports into `TYPE_CHECKING` blocks, which breaks Pydantic's runtime annotation
+# evaluation, and this codebase is Pydantic-heavy (models.py, forge_blueprint.py).
+[tool.ruff]
+fix = true
+show-fixes = true
+line-length = 88
+target-version = "py311"
+# Vendored/generated trees are not ours to lint. domain_catalog_sketch.py is an
+# unimported work-in-progress draft (broken references); exclude until it lands.
+extend-exclude = ["external", "docs", "workflows", "cstar_forge/domain_catalog_sketch.py"]
+
+[tool.ruff.lint]
+extend-select = ["I", "E", "W", "F", "D", "RUF", "UP"]
+ignore = [
+    "E501",   # line length — the formatter owns wrapping
+    # Missing-docstring codes: not auto-fixable, so left as non-blocking (matches
+    # roms-tools + the looser C-Star set: D400/D106/D107 also silenced).
+    "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
+    "D205", "D400", "D401",
+    # RUF/UP rules that both sibling repos found too noisy.
+    "UP040",   # PEP 695 `type` aliases — not adopted yet
+    "RUF043", "RUF059",
+    # str-enum → enum.StrEnum is a deliberate, behaviour-sensitive migration
+    # (str(StrEnum.X) yields the value, not "Class.X"); defer rather than force.
+    "UP042",
+    # Ambiguous-unicode: our user-facing strings use intentional glyphs
+    # (ℹ info markers, × in "npx × npy"); don't flag them.
+    "RUF001",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
 

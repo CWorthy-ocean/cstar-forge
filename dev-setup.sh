@@ -67,6 +67,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Never let pip fall back to a --user install (~/.local/lib/pythonX.Y), which
+# detaches packages from the conda env and then shadows it via user-site on the
+# next run (env python and a module python of the same minor version share
+# ~/.local). PIP_USER=0 forbids the fallback; PYTHONNOUSERSITE=1 keeps every
+# python we launch here (checks, ipykernel, pip) from reading ~/.local at all.
+export PIP_USER=0
+export PYTHONNOUSERSITE=1
+
 #--------------------------------------------------------
 # Conda environment setup
 #--------------------------------------------------------
@@ -282,82 +290,41 @@ _activate_env() {
   exit 1
 }
 
-# Prefer "$CONDA_PREFIX/bin/python -m pip" so HPC module Pythons (e.g. EasyBuild
-# Python/*/bin/pip) cannot shadow a missing/broken env pip and cause:
-#   ModuleNotFoundError: No module named 'pip'
-_env_python() {
-  if [[ -n "${CONDA_PREFIX:-}" && -x "${CONDA_PREFIX}/bin/python" ]]; then
-    echo "${CONDA_PREFIX}/bin/python"
-  else
-    command -v python
-  fi
-}
-
-_pip() {
-  local py
-  py="$(_env_python)"
-  "$py" -m pip "$@"
-}
-
-# Ensure the active env can run pip. If conda omittted the pip package (or the
-# env was left without it), bootstrap via ensurepip before git/editable installs.
-_ensure_env_pip() {
-  local py
-  py="$(_env_python)"
-  if ! "$py" -m pip --version >/dev/null 2>&1; then
-    echo "  pip not found in active env; bootstrapping with ensurepip..."
-    "$py" -m ensurepip --upgrade
-  fi
-  if ! "$py" -m pip --version >/dev/null 2>&1; then
-    echo "Error: Could not import pip for: $py" >&2
-    echo "  CONDA_PREFIX=${CONDA_PREFIX:-<unset>}" >&2
-    echo "  which pip -> $(command -v pip 2>/dev/null || echo none)" >&2
-    echo "  Install pip into the env (e.g. conda install -n $KERNEL_NAME pip) and retry." >&2
+# Hard-verify that `python`/`pip` now resolve INTO the target env, not a stray
+# module/system python. Without this, a silently-failed activation leaves pip
+# pointed at a read-only system site-packages, and pip installs into ~/.local.
+# The env is created by name, so it lives at <root>/envs/$KERNEL_NAME and its
+# sys.prefix basename is $KERNEL_NAME.
+_assert_env_active() {
+  local prefix
+  prefix="$(python -c 'import sys; print(sys.prefix)' 2>/dev/null || true)"
+  if [[ "$(basename "$prefix")" != "$KERNEL_NAME" ]]; then
+    echo "Error: environment '$KERNEL_NAME' is not active (active python prefix: ${prefix:-<none>})." >&2
+    echo "  Refusing to run pip/python against a non-env interpreter — it would install into ~/.local" >&2
+    echo "  and become detached from the conda environment. Re-run from a shell where the package" >&2
+    echo "  manager is initialized (micromamba/conda shell hook)." >&2
     exit 1
   fi
-  echo "  Using: $py -m pip ($("$py" -m pip --version))"
 }
 
-# A partial/interrupted env create leaves a named env that later runs skip recreating.
-# Verify a few environment.yml packages; if missing, sync from the yaml (heal in place).
-_ensure_env_complete() {
-  local py miss mod
-  py="$(_env_python)"
-  miss=()
-  for mod in pydantic jupyter_client ipykernel pandas; do
-    if ! "$py" -c "import ${mod}" >/dev/null 2>&1; then
-      miss+=("$mod")
-    fi
-  done
-  if ((${#miss[@]} == 0)); then
-    return 0
-  fi
-
-  echo ""
-  echo "Environment '$KERNEL_NAME' is incomplete (cannot import: ${miss[*]})."
-  echo "This usually means a previous env create was interrupted; syncing from ${env_file}..."
-  if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
-    if [[ -n "${CONDA_PREFIX:-}" ]]; then
-      "$MICROMAMBA_CMD" install -y -p "$CONDA_PREFIX" -f "$env_file"
+# Re-activate the env if it isn't already the active one, then assert the active
+# python really is the env's. Replaces the previously-duplicated (and, for
+# micromamba, unverified) "ensure environment is active" blocks.
+_ensure_env_active() {
+  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
+    if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
+      # Shell hook (eval'd earlier) provides the `micromamba` function; keep the
+      # alias for local-binary parity even though it is inert non-interactively.
+      if [[ "$MICROMAMBA_CMD" != "micromamba" ]]; then
+        alias micromamba="$MICROMAMBA_CMD"
+      fi
+      micromamba activate "$KERNEL_NAME"
     else
-      "$MICROMAMBA_CMD" install -y -n "$KERNEL_NAME" -f "$env_file"
+      source "$(conda info --base)/etc/profile.d/conda.sh"
+      _activate_env "$KERNEL_NAME"
     fi
-  else
-    "$CONDA_LIKE_CMD" env update -n "$KERNEL_NAME" -f "$env_file"
   fi
-
-  miss=()
-  for mod in pydantic jupyter_client ipykernel pandas; do
-    if ! "$py" -c "import ${mod}" >/dev/null 2>&1; then
-      miss+=("$mod")
-    fi
-  done
-  if ((${#miss[@]} > 0)); then
-    echo "Error: environment still incomplete after sync (missing: ${miss[*]})." >&2
-    echo "  Remove and rebuild with: $0 --clean --batch" >&2
-    exit 1
-  fi
-  echo "✓ Environment dependencies synced from ${env_file}."
+  _assert_env_active
 }
 
 # Initialize and activate environment
@@ -442,21 +409,8 @@ fi
 #--------------------------------------------------------
 # Optional compiler/library install
 #--------------------------------------------------------
- # Ensure environment is active
-if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    # Shell hook should already be initialized, but ensure alias is set
-    if [[ "$MICROMAMBA_CMD" != "micromamba" ]]; then
-      alias micromamba="$MICROMAMBA_CMD"
-    fi
-    micromamba activate "$KERNEL_NAME"
-  fi
-else
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    source "$(conda info --base)/etc/profile.d/conda.sh"
-    _activate_env "$KERNEL_NAME"
-  fi
-fi
+ # Ensure environment is active (and verified) before any install step
+_ensure_env_active
 
 # Catch interrupted/partial env creates before pip/editable installs paper over them
 _ensure_env_complete
@@ -513,20 +467,8 @@ fi
 #--------------------------------------------------------
 # Pip install roms-tools and C-Star from GitHub (not in environment.yml)
 #--------------------------------------------------------
-# Ensure environment is active
-if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    if [[ "$MICROMAMBA_CMD" != "micromamba" ]]; then
-      alias micromamba="$MICROMAMBA_CMD"
-    fi
-    micromamba activate "$KERNEL_NAME"
-  fi
-else
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    source "$(conda info --base)/etc/profile.d/conda.sh"
-    _activate_env "$KERNEL_NAME"
-  fi
-fi
+# Ensure environment is active (and verified) before pip installs
+_ensure_env_active
 
 echo "Installing cstar-ocean and roms-tools from GitHub via pip (--no-deps)..."
 echo "  All dependencies come from conda-forge (environment.yml); pip installs only"
@@ -535,33 +477,19 @@ _ensure_env_pip
 # C-Star first; --no-deps means its (possibly stale) roms-tools pin is NOT enforced,
 # so pip will not downgrade/replace the roms-tools we install next.
 echo "  C-Star @ ${C_STAR_GIT_REF} (--no-deps)"
-_pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
-_ensure_cstar_generic_lmod_stubs
+python -m pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
 # roms-tools last so the requested ref is the final resident, overwriting the
 # conda-forge package that was installed only to source dependencies.
 echo "  roms-tools @ ${ROMS_TOOLS_GIT_REF} (--no-deps, installed last so it wins)"
-_pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
+python -m pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
 echo "✓ roms-tools and C-Star pip installs completed."
 
 #--------------------------------------------------------
 # Local Python package setup
 #--------------------------------------------------------
-# Ensure environment is active
+# Ensure environment is active (and verified) before editable installs
 # set +u is already active from initialization section
-if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    # Shell hook should already be initialized, but ensure alias is set
-    if [[ "$MICROMAMBA_CMD" != "micromamba" ]]; then
-      alias micromamba="$MICROMAMBA_CMD"
-    fi
-    micromamba activate "$KERNEL_NAME"
-  fi
-else
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    source "$(conda info --base)/etc/profile.d/conda.sh"
-    _activate_env "$KERNEL_NAME"
-  fi
-fi
+_ensure_env_active
 
 # Install local Python packages in editable mode
 echo "Installing local Python package(s) in editable mode..."
@@ -587,7 +515,7 @@ for package_dir in "${LOCAL_PYTHON_PACKAGES[@]}"; do
   # git build we just installed (and pull other deps as pip wheels). All of this
   # package's dependencies are provided by conda-forge (environment.yml) plus the
   # --no-deps git installs above, so installing code-only is correct here.
-  _pip install -e . --no-deps
+  python -m pip install -e . --no-deps
   
   # Verify installation by checking if the package can be imported
   # For the root package, check for cstar_forge module
@@ -617,22 +545,9 @@ echo "✓ Local package installation completed!"
 # Jupyter kernel setup
 #--------------------------------------------------------
 
-# Ensure environment is active
+# Ensure environment is active (and verified) before kernel registration
 # set +u is already active from initialization section
-if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    # Shell hook should already be initialized, but ensure alias is set
-    if [[ "$MICROMAMBA_CMD" != "micromamba" ]]; then
-      alias micromamba="$MICROMAMBA_CMD"
-    fi
-    micromamba activate "$KERNEL_NAME"
-  fi
-else
-  if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "$KERNEL_NAME" ]]; then
-    source "$(conda info --base)/etc/profile.d/conda.sh"
-    _activate_env "$KERNEL_NAME"
-  fi
-fi
+_ensure_env_active
 
 ENV_PYTHON="$(_env_python)"
 
@@ -657,13 +572,119 @@ if [[ "$CLEAN_MODE" == "true" && "$KERNEL_EXISTS" == "true" ]]; then
   KERNEL_EXISTS="false"
 fi
 
-# Install kernel if it doesn't exist
-if [[ "$KERNEL_EXISTS" == "false" ]]; then
-  echo "Installing Jupyter kernel: $KERNEL_NAME"
-  # Use --user flag to make kernel visible globally (not just within the environment)
-  "$ENV_PYTHON" -m ipykernel install --user --name "$KERNEL_NAME" --display-name "$KERNEL_NAME"
-  echo "✓ Jupyter kernel installation completed successfully!"
+# Always (re)install so re-running the script also repairs kernels registered
+# by older versions of this script (no activation wrapper). ipykernel install
+# already overwrites an existing kernelspec, so this stays idempotent.
+echo "Installing Jupyter kernel: $KERNEL_NAME"
+# Use --user flag to make kernel visible globally (not just within the environment)
+python -m ipykernel install --user --name "$KERNEL_NAME" --display-name "$KERNEL_NAME"
+echo "✓ Jupyter kernel installation completed successfully!"
+
+#--------------------------------------------------------
+# Activation wrapper: point the kernelspec at a small script that activates
+# the env (real conda/micromamba activation, not just an absolute python
+# path) before launching ipykernel. Without this, a Jupyter server hosted
+# outside the env (e.g. Anvil's HPC Jupyter install) launches the kernel with
+# none of the env's PATH or activate.d hook vars (PROJ_DATA, GDAL_DATA, ...),
+# so subprocesses (!cmd, shell magics) and activate.d-dependent packages
+# break even though in-notebook Python imports still work.
+#--------------------------------------------------------
+KERNEL_DIR="$(python - "$KERNEL_NAME" <<'PY'
+from jupyter_client.kernelspec import KernelSpecManager
+import sys
+print(KernelSpecManager().get_kernel_spec(sys.argv[1]).resource_dir)
+PY
+)"
+ENV_PREFIX="$(python -c 'import sys; print(sys.prefix)')"
+
+# Persist PYTHONNOUSERSITE=1 into the env itself via an activate.d hook, so every
+# future activation (interactive shells, later runs, jupyter) keeps the env off
+# user-site (~/.local). Conda/micromamba don't set this by default, so without it
+# a ~/.local/lib/python3.12/site-packages dir (env python and Anvil's module
+# python share the same 3.12 user-site) silently shadows the env's packages.
+ACTIVATE_D_DIR="$ENV_PREFIX/etc/conda/activate.d"
+DEACTIVATE_D_DIR="$ENV_PREFIX/etc/conda/deactivate.d"
+mkdir -p "$ACTIVATE_D_DIR" "$DEACTIVATE_D_DIR"
+cat > "$ACTIVATE_D_DIR/pythonnousersite.sh" <<'EOF'
+# Auto-generated by dev-setup.sh — keep this env isolated from ~/.local.
+export _CSTAR_FORGE_SAVED_PYTHONNOUSERSITE="${PYTHONNOUSERSITE:-}"
+export PYTHONNOUSERSITE=1
+EOF
+cat > "$DEACTIVATE_D_DIR/pythonnousersite.sh" <<'EOF'
+# Auto-generated by dev-setup.sh — restore PYTHONNOUSERSITE on deactivate.
+if [ -n "${_CSTAR_FORGE_SAVED_PYTHONNOUSERSITE:-}" ]; then
+  export PYTHONNOUSERSITE="$_CSTAR_FORGE_SAVED_PYTHONNOUSERSITE"
+else
+  unset PYTHONNOUSERSITE
 fi
+unset _CSTAR_FORGE_SAVED_PYTHONNOUSERSITE
+EOF
+echo "✓ Wrote activate.d/deactivate.d PYTHONNOUSERSITE hooks in $ENV_PREFIX"
+
+WRAPPER_PATH="$KERNEL_DIR/start-kernel.sh"
+
+echo "Writing kernel activation wrapper: $WRAPPER_PATH"
+
+# Build the wrapper as a single-quoted template (no shell expansion at all,
+# so "$@" and "$(...)" survive verbatim) and fill in registration-time values
+# via token substitution, matching whichever package manager created this
+# env so activation works whether the env came from micromamba or conda.
+if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
+  MICROMAMBA_ABS="$(command -v "$MICROMAMBA_CMD" 2>/dev/null || echo "$MICROMAMBA_CMD")"
+  WRAPPER_CONTENT='#!/usr/bin/env bash
+# Auto-generated by dev-setup.sh. Activates the micromamba env before
+# starting the kernel so subprocesses inherit PATH and activate.d vars.
+set -eo pipefail
+eval "$(__MICROMAMBA_BIN__ shell hook --shell bash)"
+micromamba activate "__ENV_PREFIX__"
+# Keep the kernel off user-site (~/.local) so it cannot shadow the env packages.
+export PYTHONNOUSERSITE=1
+exec python -m ipykernel_launcher "$@"
+'
+  WRAPPER_CONTENT="${WRAPPER_CONTENT//__MICROMAMBA_BIN__/$MICROMAMBA_ABS}"
+  WRAPPER_CONTENT="${WRAPPER_CONTENT//__ENV_PREFIX__/$ENV_PREFIX}"
+else
+  CONDA_BASE="$(conda info --base 2>/dev/null || true)"
+  if [[ -z "$CONDA_BASE" && -n "${CONDA_EXE:-}" ]]; then
+    CONDA_BASE="$(dirname "$(dirname "$CONDA_EXE")")"
+  fi
+  if [[ -z "$CONDA_BASE" ]]; then
+    echo "Error: could not determine the conda base install (conda info --base failed and CONDA_EXE is unset)." >&2
+    echo "  Re-run dev-setup.sh from a shell where conda is initialized (e.g. after 'module load conda')." >&2
+    exit 1
+  fi
+  WRAPPER_CONTENT='#!/usr/bin/env bash
+# Auto-generated by dev-setup.sh. Activates the conda env before starting
+# the kernel so subprocesses inherit PATH and activate.d vars.
+set -eo pipefail
+source "__CONDA_BASE__/etc/profile.d/conda.sh"
+conda activate "__ENV_PREFIX__"
+# Keep the kernel off user-site (~/.local) so it cannot shadow the env packages.
+export PYTHONNOUSERSITE=1
+exec python -m ipykernel_launcher "$@"
+'
+  WRAPPER_CONTENT="${WRAPPER_CONTENT//__CONDA_BASE__/$CONDA_BASE}"
+  WRAPPER_CONTENT="${WRAPPER_CONTENT//__ENV_PREFIX__/$ENV_PREFIX}"
+fi
+
+printf '%s' "$WRAPPER_CONTENT" > "$WRAPPER_PATH"
+chmod +x "$WRAPPER_PATH"
+
+# Point kernel.json at the wrapper, preserving display_name/language/metadata.
+# {connection_file} must stay a literal Jupyter template placeholder.
+python - "$KERNEL_DIR" "$WRAPPER_PATH" <<'PY'
+import json
+import sys
+
+kernel_dir, wrapper_path = sys.argv[1], sys.argv[2]
+kernel_json_path = f"{kernel_dir}/kernel.json"
+with open(kernel_json_path) as f:
+    spec = json.load(f)
+spec["argv"] = [wrapper_path, "-f", "{connection_file}"]
+with open(kernel_json_path, "w") as f:
+    json.dump(spec, f, indent=1)
+PY
+echo "✓ Kernel registered to launch via activation wrapper ($WRAPPER_PATH)"
 
 #--------------------------------------------------------
 # Verify installation (advisory only — never fatal)

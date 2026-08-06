@@ -1,0 +1,36 @@
+# Pre-commit hooks for cstar-forge. Scoped to the cstar_forge/ package and the test
+# suite so vendored code under external/ and generated trees (docs/, workflows/) are
+# left untouched. Ruff config (rule selection, ignores) lives in pyproject.toml [tool.ruff].
+ci:
+  autoupdate_schedule: monthly
+
+# Our package + tests; excludes external/ (C-Star submodule) and everything else.
+files: '^(cstar_forge|tests)/'
+exclude: '\.ipynb_checkpoints/'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # roms-tools to_yaml emits a version-header doc + the object doc, so many
+        # catalog/blueprint YAMLs are multi-document.
+        args: ['--allow-multiple-documents']
+      - id: check-added-large-files
+        args: ['--maxkb=200']
+
+  - repo: https://github.com/MarcoGorelli/absolufy-imports
+    rev: v0.3.1
+    hooks:
+      - id: absolufy-imports
+        # Treat the repo root as the app dir so cstar_forge.* is the absolute root.
+        args: ['--application-directories=.']
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
