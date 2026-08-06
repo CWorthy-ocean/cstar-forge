@@ -412,6 +412,29 @@ fi
  # Ensure environment is active (and verified) before any install step
 _ensure_env_active
 
+# Catch interrupted/partial env creates before pip/editable installs paper over them
+_ensure_env_complete
+
+# C-Star ships .env files for generic linux_* platforms but (as of main) no matching
+# .lmod stubs. On HPC hosts where Lmod is present, import-time CStarSystemManager
+# looks for <system_name>.lmod and FileNotFoundErrors. Empty stubs mean "load nothing".
+_ensure_cstar_generic_lmod_stubs() {
+  local py root stub name
+  py="$(_env_python)"
+  root="$("$py" -c "import cstar, pathlib; print(pathlib.Path(cstar.__file__).resolve().parent / 'additional_files' / 'lmod_lists')" 2>/dev/null || true)"
+  if [[ -z "$root" || ! -d "$root" ]]; then
+    echo "  Warning: could not locate cstar/additional_files/lmod_lists; skipping lmod stubs."
+    return 0
+  fi
+  for name in linux_x86_64 linux_aarch64; do
+    stub="$root/${name}.lmod"
+    if [[ ! -f "$stub" ]]; then
+      : > "$stub"
+      echo "  Created empty C-Star lmod stub: $stub"
+    fi
+  done
+}
+
 INSTALL_FORTRAN_LIBS="false"
 if [[ "$BATCH_MODE" == "true" ]]; then
   echo "Batch mode enabled: skipping interactive compiler/library install prompt."
@@ -450,6 +473,7 @@ _ensure_env_active
 echo "Installing cstar-ocean and roms-tools from GitHub via pip (--no-deps)..."
 echo "  All dependencies come from conda-forge (environment.yml); pip installs only"
 echo "  the package code, never resolving or replacing the conda dependency tree."
+_ensure_env_pip
 # C-Star first; --no-deps means its (possibly stale) roms-tools pin is NOT enforced,
 # so pip will not downgrade/replace the roms-tools we install next.
 echo "  C-Star @ ${C_STAR_GIT_REF} (--no-deps)"
@@ -497,10 +521,18 @@ for package_dir in "${LOCAL_PYTHON_PACKAGES[@]}"; do
   # For the root package, check for cstar_forge module
   echo "Activating and testing kernel in environment $KERNEL_NAME... this may take a few minutes."
   if [[ "$package_dir" == "." ]]; then
-    if python -c "import cstar_forge" 2>/dev/null; then
+    if import_err="$("$(_env_python)" -c "import cstar_forge" 2>&1)"; then
       echo "  ✓ cstar-forge installed successfully"
     else
       echo "  ✗ cstar-forge installation failed (cannot import cstar_forge)"
+      echo "    $import_err"
+      if [[ "$import_err" == *".lmod"* ]]; then
+        echo "  Hint: C-Star expected a missing generic .lmod stub; re-run setup or touch"
+        echo "    \$CONDA_PREFIX/lib/python*/site-packages/cstar/additional_files/lmod_lists/linux_x86_64.lmod"
+      else
+        echo "  Hint: if conda deps are missing, try: $0 --clean --batch"
+      fi
+      exit 1
     fi
   else
     echo "  ✓ $package_display installed"
@@ -517,8 +549,10 @@ echo "✓ Local package installation completed!"
 # set +u is already active from initialization section
 _ensure_env_active
 
+ENV_PYTHON="$(_env_python)"
+
 # Check if kernel exists
-if python - "$KERNEL_NAME" <<'PY'
+if "$ENV_PYTHON" - "$KERNEL_NAME" <<'PY'
 from jupyter_client.kernelspec import KernelSpecManager
 import sys
 name = sys.argv[1]
@@ -534,7 +568,7 @@ fi
 # Remove kernel if --clean is specified and it exists
 if [[ "$CLEAN_MODE" == "true" && "$KERNEL_EXISTS" == "true" ]]; then
   echo "Removing existing Jupyter kernel: $KERNEL_NAME"
-  python -m ipykernel uninstall -y --name "$KERNEL_NAME" 2>/dev/null || true
+  "$ENV_PYTHON" -m ipykernel uninstall -y --name "$KERNEL_NAME" 2>/dev/null || true
   KERNEL_EXISTS="false"
 fi
 
@@ -680,7 +714,7 @@ PY
 echo "Running 'pip check' (advisory)..."
 echo "  A 'cstar-ocean requires roms-tools<4' style complaint is expected while"
 echo "  C-Star's pin lags roms-tools main; it is not fatal."
-pip check || echo "  ⚠ pip check reported inconsistencies (see above) — not fatal."
+_pip check || echo "  ⚠ pip check reported inconsistencies (see above) — not fatal."
 
 echo ""
 echo "✓ Environment setup completed successfully!"
