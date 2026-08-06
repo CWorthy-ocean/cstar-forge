@@ -43,19 +43,6 @@ project:
       children:
         - file: docs/catalog.ipynb
 
-    - title: Skill Assessment (legacy)
-      children:
-        - pattern: legacy/workflows/skill-assessment/outputs/papermill/*
-
-    - title: Visualization (legacy)
-      children:
-        - pattern: legacy/workflows/visualization/outputs/papermill/*
-
-    - title: Developer
-      children:
-        - file: docs/developer-guide.md
-        - file: docs/roms-tools-contributor-guide.md
-
     - title: Reference
       children:
         - file: docs/reference-machines.md
