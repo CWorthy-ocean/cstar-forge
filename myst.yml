@@ -43,13 +43,13 @@ project:
       children:
         - file: docs/catalog.ipynb
 
-    - title: Skill Assessment
+    - title: Skill Assessment (legacy)
       children:
-        - pattern: workflows/skill-assessment/outputs/papermill/*
+        - pattern: legacy/workflows/skill-assessment/outputs/papermill/*
 
-    - title: Visualization
+    - title: Visualization (legacy)
       children:
-        - pattern: workflows/visualization/outputs/papermill/*
+        - pattern: legacy/workflows/visualization/outputs/papermill/*
 
     - title: Developer
       children:
