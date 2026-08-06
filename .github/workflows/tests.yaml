@@ -158,7 +158,7 @@ jobs:
         awk '/^#/{print; next} {exit}' environment.yml > "$HEADER_FILE"
 
         BODY_FILE="$(mktemp)"
-        pixi workspace export conda-environment -e dev -n cstar-forge-v0 "$BODY_FILE"
+        pixi workspace export conda-environment -e dev -n cstar-forge-env "$BODY_FILE"
 
         cat "$HEADER_FILE" "$BODY_FILE" > environment.yml
 

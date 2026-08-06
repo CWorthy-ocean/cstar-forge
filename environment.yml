@@ -1,7 +1,7 @@
 # GENERATED FILE — do not edit by hand. Source of truth is pyproject.toml
 # ([project] deps + [tool.pixi]). Regenerate with:
 #   pixi workspace export conda-environment -e dev > environment.yml
-# (then restore this header + the `name: cstar-forge-v0` dev-setup.sh expects).
+# (then restore this header + the `name: cstar-forge-env` dev-setup.sh expects).
 #
 # Note on the `pip:` section: it lists every pypi-dependencies entry from
 # pyproject.toml's [project] deps/extras, including several (roms-tools, dask,
@@ -14,7 +14,7 @@
 # (cstar-ocean, copernicusmarine, gdown, f90nml, jupyterlab/voila/papermill/
 # ipywidgets/matplotlib, pytest*/ruff/pre-commit) plus `-e .` (cstar-forge
 # itself, editable).
-name: cstar-forge-v0
+name: cstar-forge-env
 channels:
 - conda-forge
 - nodefaults

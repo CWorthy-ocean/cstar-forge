@@ -80,7 +80,7 @@ _assert_env_active() {
     fi
   elif [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "${CONDA_DEFAULT_ENV}" == "base" ]]; then
     echo "Error: no non-base conda/micromamba environment is active." >&2
-    echo "  Activate the project env first (e.g. 'micromamba activate cstar-forge-v0')," >&2
+    echo "  Activate the project env first (e.g. 'micromamba activate cstar-forge-env')," >&2
     echo "  then re-run this script. Installing now would land in ~/.local, detached from the env." >&2
     exit 1
   fi
