@@ -7,17 +7,21 @@ project:
   license: Apache-2.0
   open_access: true
   github: https://github.com/CWorthy-Ocean/cstar-forge
-     
+
   toc:
     - file: README.md
     - file: docs/overview.md
     - file: docs/releases.md
-    
+
     - title: Get Started
       children:
         - file: docs/installation.md
         - file: docs/machine-config.md
-    
+
+    - title: Domain Generation
+      children:
+        - file: docs/CStarSpecBuilder-overview.md
+
     - title: SourceData
       children:
         - file: docs/source-data-intro.md
@@ -25,7 +29,7 @@ project:
         - file: docs/source-data-developer.md
 
     - title: InputData
-      children: 
+      children:
         - file: docs/InputData-intro.md
         - file: docs/InputData-RomsMarblInputData.md
 
@@ -35,37 +39,30 @@ project:
         - file: docs/model-spec-settings.md
         - file: docs/model-spec-example.ipynb
 
-    - title: CStarSpecBuilder
-      children:
-        - file: docs/CStarSpecBuilder-overview.md
-        - file: workflows/generate-models/templates/CStarSpecBuilder-demo.ipynb
-
-    - title: CStarSpecEngine
-      children:
-        - file: workflows/generate-models/templates/CStarSpecEngine-build-one.ipynb
-        - file: workflows/generate-models/templates/CStarSpecEngine-build-all.ipynb
-
     - title: Catalog
-      children:      
+      children:
         - file: docs/catalog.ipynb
 
-    - title: Skill Assessment 
+    - title: Skill Assessment
       children:
         - pattern: workflows/skill-assessment/outputs/papermill/*
-    
-    - title: Visualization 
+
+    - title: Visualization
       children:
         - pattern: workflows/visualization/outputs/papermill/*
 
+    - title: Developer
+      children:
+        - file: docs/developer-guide.md
+        - file: docs/roms-tools-contributor-guide.md
+
     - title: Reference
       children:
-        - file: docs/reference-machines.md      
+        - file: docs/reference-machines.md
         - file: docs/reference-models-yml.md
         - file: docs/reference-domains.md
-        - file: docs/reference-settings-compile-time.md
-        - file: docs/reference-settings-run-time.md
-        - file: docs/reference-blueprint.md
-        - file: docs/reference-blueprint-settings.md
+        - file: docs/reference-roms-marbl-blueprint.md
+        - file: docs/reference-roms-marbl-blueprint-settings.md
 site:
   template: book-theme
   options:
@@ -74,4 +71,3 @@ site:
   actions:
     - title: "[C]Worthy"
       url: https://cworthy.org
-
