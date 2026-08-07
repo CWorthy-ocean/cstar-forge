@@ -66,7 +66,7 @@ def make_script(year, month, script_dir=None, test=False):
 
         module load conda
         source $(conda info --base)/etc/profile.d/conda.sh
-        conda activate cstar-forge-v0
+        conda activate cstar-forge-env
 
         cd {script_dir}
         python -u ensure_glorys.py --start-date {start_date} --end-date {end_date}{test_mode}

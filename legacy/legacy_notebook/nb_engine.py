@@ -192,7 +192,7 @@ def run_notebook(
     output_path: Path,
     parameters: dict[str, Any],
     force_recompute: bool = False,
-    kernel_name: str = "cstar-forge-v0",
+    kernel_name: str = "cstar-forge-env",
 ) -> None:
     """Execute notebooks with papermill and return output paths."""
     try:
@@ -351,7 +351,7 @@ def main(args: Iterable[str] | None = None) -> int:
                         kernel_name = (
                             parsed.kernel
                             or _get_kernel_name_from_env()
-                            or "cstar-forge-v0"
+                            or "cstar-forge-env"
                         )
                         run_notebook(
                             notebook_path,

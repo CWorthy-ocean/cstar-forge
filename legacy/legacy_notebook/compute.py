@@ -53,7 +53,7 @@ class dask_cluster:
             Existing scheduler file to connect to. If provided, skip launch.
         conda_env : str, optional
             Conda environment name to activate in the SLURM job.
-            Defaults to CONDA_DEFAULT_ENV or "cstar-forge-v0".
+            Defaults to CONDA_DEFAULT_ENV or "cstar-forge-env".
         """
         # Defaults from machine_config, overwrite with provided args
         account = account if account is not None else machine_config.account
@@ -73,7 +73,7 @@ class dask_cluster:
         conda_env = (
             conda_env
             if conda_env is not None
-            else os.environ.get("CONDA_DEFAULT_ENV", "cstar-forge-v0")
+            else os.environ.get("CONDA_DEFAULT_ENV", "cstar-forge-env")
         )
 
         self.scheduler_file = scheduler_file
