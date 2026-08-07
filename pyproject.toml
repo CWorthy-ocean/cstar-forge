@@ -38,7 +38,7 @@ dependencies = [
     "nbformat",
     "psutil",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.7",
+    "cstar-ocean>=0.8",
     "roms_tools>=4.0.0,<5",
 ]
 
@@ -83,6 +83,7 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=4.0.0,<5"
+cstar-ocean = ">=0.8"
 dask = "*"
 distributed = "*"
 numpy = "*"
@@ -97,11 +98,6 @@ kerchunk = "*"
 fastparquet = "*"
 nest-asyncio = "*"
 ujson = "*"
-# TODO: relax once cstar-ocean >0.7 releases (PyYAML pin relaxed upstream).
-# cstar-ocean 0.7.0 (pypi) pins PyYAML==6.0.2 exactly; conda-forge's newer
-# pyyaml (6.0.3) would otherwise conflict with that pypi pin during the
-# combined solve.
-pyyaml = "=6.0.2"
 
 [tool.pixi.environments]
 default = { solve-group = "default" }

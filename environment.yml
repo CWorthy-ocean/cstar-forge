@@ -31,7 +31,6 @@ dependencies:
 - fastparquet *
 - nest-asyncio *
 - ujson *
-- pyyaml 6.0.2.*
 - pip
 - pip:
   - pytest
@@ -62,5 +61,5 @@ dependencies:
   - xarray
   - nbformat
   - psutil
-  - cstar-ocean>=0.7
+  - cstar-ocean>=0.8
   - roms-tools>=4.0.0, <5
