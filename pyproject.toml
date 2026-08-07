@@ -83,8 +83,7 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=4.0.0,<5"
-# TODO: re-add `cstar-ocean = ">=0.9"` here (conda-side) once 0.9.0 reaches the
-# conda-forge CDN; until then it comes from PyPI so the solve stays unblocked.
+cstar-ocean = ">=0.9"
 dask = "*"
 distributed = "*"
 numpy = "*"
