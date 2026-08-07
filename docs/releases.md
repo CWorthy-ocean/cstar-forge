@@ -1,5 +1,20 @@
 # Release notes
 
+## Unreleased
+
+### Breaking Changes
+
+### New Features
+
+### Bug Fixes
+
+### Improvements
+
+### Miscellaneous
+
+* Update release notes finalizer to remove sections with nothing in them ([#112](https://github.com/CWorthy-ocean/cstar-forge/pull/112))
+* Update release notes updater to handle unbulleted content ([#112](https://github.com/CWorthy-ocean/cstar-forge/pull/112))
+
 ## 0.3.0
 
 ### Breaking Changes
