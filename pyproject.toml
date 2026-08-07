@@ -38,7 +38,7 @@ dependencies = [
     "nbformat",
     "psutil",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.8",
+    "cstar-ocean>=0.9",
     "roms_tools>=4.0.0,<5",
 ]
 
@@ -83,7 +83,8 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=4.0.0,<5"
-cstar-ocean = ">=0.8"
+# TODO: re-add `cstar-ocean = ">=0.9"` here (conda-side) once 0.9.0 reaches the
+# conda-forge CDN; until then it comes from PyPI so the solve stays unblocked.
 dask = "*"
 distributed = "*"
 numpy = "*"
