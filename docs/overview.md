@@ -7,8 +7,9 @@ The files include grids, initial conditions, boundary and surface forcing, river
 
 1. **Author a forge blueprint.** An interactive **wizard** (run in Jupyter, or served as
    a standalone [Voilà](https://voila.readthedocs.io/) web app) helps you assemble a
-   `ForgeBlueprint` from catalog **specs** — model (`ModelSpec`), domain (`DomainSpec`),
-   forcing (`ForcingSpec`), and output (`OutputSpec`). The result is a single YAML file
+   `ForgeBlueprint` from catalog **specs** — model (`ModelSpec`), domain (`DomainSpec/`),
+   forcing (`ForcingSpec/`), and output (`OutputSpec/`) — only `ModelSpec` is also a
+   Python class. The result is a single YAML file
    that fully describes what to generate. Every value is editable in the wizard, and the
    blueprint records the provenance of each choice.
 2. **Process the blueprint.** The **forge application** consumes the forge blueprint:
@@ -19,7 +20,8 @@ The files include grids, initial conditions, boundary and surface forcing, river
 
    It downloads/prepares source data, generates all ROMS input files, renders model
    settings, and emits a **ROMS-MARBL blueprint** (`RomsMarblBlueprint`) — a YAML file
-   capturing the complete configuration and file paths of the resulting setup.
+   (`B_{name}.yaml`, plus a `settings_B_{name}.yaml` sidecar) capturing the complete
+   configuration and file paths of the resulting setup.
 3. **Run the simulation.** [C-Star](https://c-star.readthedocs.io) consumes the
    ROMS-MARBL blueprint to build the model and execute the actual ROMS-MARBL simulation.
 
@@ -59,12 +61,14 @@ cstar-forge/
 │   ├── domain_catalog.py       # DomainCatalog: scans the catalog, exposes accessors
 │   ├── config.py               # Path management and system detection
 │   ├── run.py                  # CLI entry point: python -m cstar_forge.run forge_blueprint.yaml
+│   ├── cli.py                  # 'cstar forge run'/'cstar forge wizard' typer sub-app (cstar.cli entry point)
 │   ├── forge/                  # The forge application (execution engine; see
 │   │   │                       # docs/developer-guide.md — relocates into C-Star as one unit)
 │   │   ├── app.py                  # ForgeRunner/ForgeApplication (C-Star application)
 │   │   ├── forge_blueprint.py      # ForgeBlueprint — the forge application's blueprint
 │   │   ├── forge_blueprint_engine.py # process_forge_blueprint(); ForgeBlueprintExecutor Protocol
 │   │   ├── executor.py         # ForgeExecutor — the processing engine
+│   │   ├── host.py             # HostPaths — frozen host-boundary contract injected into the executor
 │   │   ├── input_data.py       # Input file generation
 │   │   ├── source_data.py      # Dataset download and preparation
 │   │   ├── settings.py         # Template rendering

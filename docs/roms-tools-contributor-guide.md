@@ -91,7 +91,11 @@ validation, enum dropdowns, tooltips, and discoverability. Checklist:
    name `InitialConditionsInput`), so one edit covers both the authoring and processing
    sides. For a constrained set of values, define a `str, Enum` in `forge_blueprint.py` too
    (it stays import-light and relocatable). Items are `extra="forbid"` — unknown kwargs
-   must go through `options`, not as loose fields.
+   must go through `options`, not as loose fields. `SourceSpec` is single-sourced too, but
+   it is a Forge-internal dataset reference with no roms-tools-constructor counterpart, so
+   it has no `_FORGE_FIELDS`/`_ITEM_MODEL_PAIRS` entry and step 2 does not apply to it.
+   (Note `_FORGE_FIELDS` is keyed by the roms-tools class name — `SurfaceForcing`, not
+   `SurfaceForcingItem`.)
 2. **Record it in the drift guard** — add the field name to the class's entry in
    `_FORGE_FIELDS` in `tests/test_roms_tools_coverage.py`.
 3. **Surface it in the wizard** — add a control in `forge_blueprint_wizard.py`

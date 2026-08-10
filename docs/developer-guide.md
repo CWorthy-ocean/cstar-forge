@@ -1,14 +1,14 @@
-# Developer Guide (internal — not published in the rendered docs)
+# Developer Guide
 
 > **TODO (dev-docs cleanup):** this guide and its companions still narrate how the
 > repo *got* here — dated banners, "supersedes X", ~~struck-through~~ completed
 > follow-ups, and references to previous states of the code. Rewrite them to describe
 > only the current state; move any history worth keeping into `docs/dev-notes/`.
 
-This supersedes the mental model in `docs/overview.md` / `docs/domain-generation-overview.md`
-/ `docs/machine-config.md` / `docs/dev-notes/forge-blueprint-inventory.md`, which describe the
-pre-refactor `_core.py` / `CstarSpecBuilder` design. Those files are stale (see
-"Stale docs" at the end) — start here.
+This is the primary architecture reference (published under "Code Architecture" in the
+rendered docs). The user-facing docs (`docs/overview.md`, `docs/domain-generation-overview.md`,
+`docs/machine-config.md`) were refreshed against the code on 2026-08-10; `docs/dev-notes/`
+holds historical records.
 
 ## 1. The big picture
 
@@ -52,11 +52,11 @@ cstar_forge/
   catalog.py                 thin back-compat shim: BlueprintCatalog → DomainCatalog
   domain_catalog.py           DomainCatalog: scans catalog/{ModelSpec,DomainSpec,
                                ForcingSpec,OutputSpec,Machines,blueprints}, exposes
-                               *_data()/*_path() accessors + blueprintDF(); register_output/
+                               *_data()/*_path() accessors + roms_marbl_blueprint_df() (surfaced as
+                               blueprintDF() on the catalog.py BlueprintCatalog shim); register_output/
                                register_forcing/register_domain_from_dict/
                                register_model_from_settings write new catalog entries (the
                                wizard's "save modified pieces to catalog" panel)
-  domain_catalog_sketch.py    dead prototype, unreferenced anywhere — candidate for deletion
   forge_blueprint_resolve.py      resolver: build_forge_blueprint(...)
   forge_blueprint_wizard.py       ForgeBlueprintWizard (ipywidgets UI), thin shell over the resolver;
                                ForgeBlueprintWizardApp wraps it with a catalog-location bar
@@ -67,9 +67,13 @@ cstar_forge/
                                OpenBoundaries item models FROM forge.forge_blueprint (single
                                source, no duplicates — see §5)
   config.py                   DataPaths / MachineConfig / resolve_host() — authoring-side
-                               host detection (NERSC/RCAC/macOS), used by run.py only
+                               host detection (NERSC/RCAC/macOS); used by run.py and (for
+                               the detected system tag) forge_blueprint_wizard.py
   run.py                      CLI: `python -m cstar_forge.run forge_blueprint.yaml`; resolves
                                host, calls forge.forge_blueprint_engine.process_forge_blueprint
+  cli.py                      `cstar forge run|wizard` typer sub-app, registered via the
+                               `cstar.cli` entry-point group (needs a C-Star release with the
+                               discovery hook); `forge run` passes argv through to run.main
   catalog/                    ModelSpec/, DomainSpec/, ForcingSpec/, OutputSpec/,
                                Machines/, blueprints/ — the YAML data the catalog scans
 
@@ -182,7 +186,8 @@ export CSTAR_APP_MODULES=cstar_forge.forge.app
 
 which lets C-Star's own entrypoint run a forge blueprint directly (`cstar blueprint
 run forge_blueprint.yaml`), in addition to the existing `python -m cstar_forge.run`
-CLI. The app currently lives in this repo (not relocated into the C-Star repo) —
+CLI and the `cstar forge run` subcommand (cli.py — a full-option passthrough to
+run.main, vs. `cstar blueprint run`'s defaults-only app-framework path). The app currently lives in this repo (not relocated into the C-Star repo) —
 deliberate, per §1's target: the blueprint/executor design is still iterating, so
 relocation stays a later step.
 
@@ -265,7 +270,7 @@ Ranked roughly by what's worth doing next:
    `_FORGE_APP_MODULES`. `cstar_forge/forge/` is now a clean, self-contained relocation
    unit for these two as well.
 2. **Template staging has no CI coverage for the cross-repo flat-staging contract**
-   (`ForgeExecutor._stage_templates`, executor.py ~L1017). Rendering silently assumes
+   (`ForgeExecutor._stage_templates`, executor.py ~L1036). Rendering silently assumes
    C-Star's `AdditionalCode` stages filtered files *flat*; only manually verified once
    against the real remote. A `@pytest.mark.slow` network test staging from the real repo
    would close this — flagged in-code and in `docs/dev-notes/executor-portability-plan.md`, still
@@ -296,8 +301,7 @@ Ranked roughly by what's worth doing next:
    `M2_FRC_BRY`, `M3_FRC_BRY`, `T_FRC_BRY`, `Z_FRC_BRY`) is either a static default or
    driven by `open_boundaries` at the domain level, not by boundary-forcing type
    (physics/bgc) — inferred from the current template, not confirmed with a ROMS-MARBL
-   domain expert, but no missing wiring was found. Both comments deleted; 488 tests still
-   green.
+   domain expert, but no missing wiring was found. Both comments deleted; suite still green.
 7. ~~Stale docstring in `forge/forge_blueprint.py`~~ **DONE** (found already resolved
    during the 2026-07-23 real-C-Star-application work, §3a): the module docstring
    already says "fully wired into `ForgeExecutor`", not the old "not yet wired" text
@@ -308,8 +312,8 @@ Ranked roughly by what's worth doing next:
    `catalog/blueprints/`. The maintained example is
    `docs/forge-blueprint-example.wio-toy.yaml` (schema v4, load-tested by
    `test_committed_example_validates`).
-9. **`domain_catalog_sketch.py`** (167 lines) — dead prototype, zero references anywhere
-   (code, tests, notebooks, docs). Safe to delete.
+9. ~~`domain_catalog_sketch.py`~~ **DONE:** deleted (the `pyproject.toml` ruff
+   `extend-exclude` entry for it can be dropped opportunistically).
 10. ~~Architecture doc headers understated progress.~~ **DONE (2026-07-17):**
     `docs/dev-notes/architecture-decomposition-plan.md` and `docs/dev-notes/executor-portability-plan.md` had
     stale "proposal"/"executing" status headers even though the decomposition they describe
@@ -325,7 +329,7 @@ Ranked roughly by what's worth doing next:
 
 **Good news / already resolved that older memory implied was still open:**
 - A **settings-level** golden test exists: `test_golden_model_settings_test_tiny`
-  (test_forge_blueprint.py:201) diffs resolved `model_settings` against a committed JSON
+  (test_forge_blueprint.py:372) diffs resolved `model_settings` against a committed JSON
   fixture (`tests/fixtures/golden_model_settings_test-tiny.json`).
 - The specifically deferred **byte-exact `namelist.nml`** golden (2026-07-16) is now also
   in place: `tests/test_core.py::TestGoldenNamelist::test_golden_namelist_test_tiny`
@@ -338,7 +342,7 @@ Ranked roughly by what's worth doing next:
   roms-tools mocking) — a heavier test that doesn't exist yet.
 - `.gitignore` now excludes `.ipynb_checkpoints` (untracked stale checkpoint files still
   exist on disk locally but aren't committed — harmless, can delete opportunistically).
-- Full test suite: **487 passed, 0 failed** as of this audit.
+- Full test suite green (660+ tests as of 2026-08-10; the absolute count moves with every PR).
 
 ## 7. Docs that referenced deleted `_core.py`/`CstarSpecBuilder`/`CstarSpecEngine` — FIXED (2026-07-09)
 
@@ -356,10 +360,10 @@ deleted (that would need TOC restructuring); each was fixed in place instead:
   the `CstarSpecBuilder.generate_inputs()` → `ForgeExecutor.generate_inputs()` references.
 - `docs/overview.md` — updated the project-structure tree to show `cstar_forge/forge/`
   and the resolver/wizard modules; added a pointer to this guide.
-- `docs/machine-config.md` — only 2 lines were stale (the rest — `DataPaths`,
-  `config.paths.*`, system detection — is still accurate, verified against current
-  `config.py`); replaced the dead `CstarSpecBuilder(catalog_root=...)` example with an
-  accurate description of `config.resolve_host()` → `HostPaths`.
+- `docs/machine-config.md` — re-audited 2026-08-10 and found stale again
+  (`config.machine` → `config.machine_config`, the `machines.yaml` →
+  `catalog/Machines/*.yaml` move, catalog default path, `builds/` placement,
+  vestigial `*_yaml` fields); fixed in the 2026-08-10 docs pass.
 - `docs/dev-notes/roms-tools-options-integration.md` — intentionally a historical record (per its
   own banner); added a note that its file paths/class names have since moved, without
   rewriting the historical narrative.

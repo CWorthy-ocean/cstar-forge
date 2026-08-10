@@ -111,7 +111,7 @@ fastparquet = "*"
 nest-asyncio = "*"
 ujson = "*"
 
-# Pure-conda end state (deps-plan Phase 4): everything, including cstar-forge
+# Pure-conda end state: everything, including cstar-forge
 # itself (which bundles the app/wizard stack in its conda run deps), comes from
 # conda-forge. The `user` environment's explicit-spec export is therefore a
 # complete environment with NO companion pip step — the blessed HPC replay
