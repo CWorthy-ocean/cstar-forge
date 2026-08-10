@@ -6,7 +6,7 @@ They are kept as historical records of *why* the architecture looks the way it d
 are **not** maintained as current documentation.
 
 For the current architecture, module map, and end-to-end call chain, see
-[`docs/developer-guide.md`](../developer-guide.md).
+[`docs/developer-guide.md`](../architecture-details.md).
 
 Contents:
 

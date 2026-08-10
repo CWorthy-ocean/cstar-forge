@@ -3,7 +3,7 @@
 forge application's blueprint. It is fully wired into ``ForgeExecutor`` (see
 ``cstar_forge.forge.executor.ForgeExecutor.from_forge_blueprint`` and
 ``cstar_forge.forge.forge_blueprint_engine.process_forge_blueprint``), split into two phases
-(see ``docs/developer-guide.md``):
+(see ``docs/architecture-details.md``):
 
 1. **Collection / curation** — assemble every option from its source (constructor
    args, the ModelSpec, and the *pure* derived values), validate it, and write one

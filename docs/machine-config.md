@@ -145,7 +145,7 @@ The `get_data_paths()` function builds `Path` objects only; pass `create=True`, 
 ## Reference
 
 For further reference, see:
-- [Developer Guide](developer-guide.md) - module map, including `config.py` (`DataPaths`/`MachineConfig`/`resolve_host()`)
+- [Architecture Details](architecture-details.md) - module map, including `config.py` (`DataPaths`/`MachineConfig`/`resolve_host()`)
 - [Machines (machines.yaml)](reference-machines.md) - Machine-specific settings
 
 

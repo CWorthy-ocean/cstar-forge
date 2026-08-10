@@ -21,11 +21,20 @@ project:
 
     - file: docs/releases.md
 
-    - title: Developer Details
+
+    - title: Reference
       children:
-        - file: docs/developer-guide.md
+        - file: docs/reference-machines.md
+        - file: docs/reference-model-yaml.md
+        - file: docs/reference-domains.md
+        - file: docs/reference-roms-marbl-blueprint.md
+        - file: docs/reference-roms-marbl-blueprint-settings.md
+
+    - title: Developer Guide
+      children:
         - file: docs/INSTALLATION-CHANGES.md
         - file: docs/machine-config.md
+        - file: docs/architecture-details.md
         - file: docs/domain-generation-overview.md
         - file: docs/source-data-intro.md
         - file: docs/source-data-example.md
@@ -36,14 +45,6 @@ project:
         - file: docs/model-spec-settings.md
         - file: docs/model-spec-example.ipynb
         - file: docs/roms-tools-contributor-guide.md
-
-    - title: Reference
-      children:
-        - file: docs/reference-machines.md
-        - file: docs/reference-model-yaml.md
-        - file: docs/reference-domains.md
-        - file: docs/reference-roms-marbl-blueprint.md
-        - file: docs/reference-roms-marbl-blueprint-settings.md
 site:
   template: book-theme
   options:
