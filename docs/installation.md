@@ -109,11 +109,16 @@ pixi install                        # default environment
 pixi run -e dev pytest tests/ -v    # dev environment (adds the `dev`/`app` extras)
 ```
 
-#### (d) Planned: `conda install cstar-forge`
+#### (d) Users (no dev checkout): `conda install cstar-forge`
 
-Once the `cstar-forge` conda-forge feedstock is published, `conda install -c conda-forge
-cstar-forge` will be the recommended path for users who don't need an editable/dev
-checkout. Not available yet — use (a), (b), or (c) above until then.
+C-STAR Forge is on [conda-forge](https://anaconda.org/conda-forge/cstar-forge). If you
+don't need an editable/dev checkout, this is the recommended path — no clone required,
+and the package bundles the wizard/notebook app stack (jupyterlab, voila, ipywidgets):
+
+```bash
+conda create -n cstar-forge-env -c conda-forge cstar-forge
+conda activate cstar-forge-env
+```
 
 ### 4. Verify Installation
 
@@ -189,7 +194,17 @@ correct order) with full fidelity. See Setup step 3(c) above for day-to-day pixi
 
 **b) Plain conda, via the exported lockfile artifacts**
 
-For machines/CI that only have plain conda and either can't or don't want to run pixi,
+*Non-developers: use the `user` environment's artifact.* The `user` pixi environment
+sources everything — cstar-forge itself included — from conda-forge, so its explicit
+spec is a complete environment with **no pip step at all**:
+
+```bash
+python scripts/export-lock-artifacts.py --env user --outdir lock-artifacts
+conda create -n cstar-forge-env --file lock-artifacts/conda-explicit-user-linux-64.txt
+```
+
+For dev environments (editable checkout + pypi layer), the two-layer recipe below
+applies instead. For machines/CI that only have plain conda and either can't or don't want to run pixi,
 `scripts/export-lock-artifacts.py` renders the lockfile into two layers per
 environment/platform — a conda explicit-spec file (the conda-channel layer, via `pixi
 workspace export conda-explicit-spec`) and a `requirements-<env>-<platform>.txt` (the

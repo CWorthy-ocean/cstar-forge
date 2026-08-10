@@ -37,6 +37,9 @@ jobs:
       - name: Export lock artifacts (dev environment)
         run: python scripts/export-lock-artifacts.py --env dev --outdir lock-artifacts
 
+      - name: Export lock artifacts (user environment, pure conda)
+        run: python scripts/export-lock-artifacts.py --env user --outdir lock-artifacts
+
       - name: Upload lock artifacts
         uses: actions/upload-artifact@v4
         with:

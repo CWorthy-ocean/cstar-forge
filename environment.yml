@@ -34,6 +34,7 @@ dependencies:
 - ujson *
 - pip
 - pip:
+  - -e .
   - pytest
   - pytest-asyncio
   - pytest-cov
@@ -47,7 +48,6 @@ dependencies:
   - papermill
   - ipywidgets
   - matplotlib
-  - -e .
   - jinja2
   - pandas
   - pyyaml>=6.0

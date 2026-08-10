@@ -72,7 +72,9 @@ dev = [
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
-[tool.pixi.pypi-dependencies]
+# The editable install of forge itself is a feature (not workspace-wide) so
+# the `user` environment below can take cstar-forge from conda-forge instead.
+[tool.pixi.feature.editable.pypi-dependencies]
 cstar-forge = { path = ".", editable = true }
 
 [tool.pixi.dependencies]
@@ -99,9 +101,18 @@ fastparquet = "*"
 nest-asyncio = "*"
 ujson = "*"
 
+# Pure-conda end state (deps-plan Phase 4): everything, including cstar-forge
+# itself (which bundles the app/wizard stack in its conda run deps), comes from
+# conda-forge. The `user` environment's explicit-spec export is therefore a
+# complete environment with NO companion pip step — the blessed HPC replay
+# artifact for non-developers.
+[tool.pixi.feature.user.dependencies]
+cstar-forge = ">=0.3.0"
+
 [tool.pixi.environments]
-default = { solve-group = "default" }
-dev = { features = ["dev", "app"], solve-group = "default" }
+default = { features = ["editable"], solve-group = "default" }
+dev = { features = ["editable", "dev", "app"], solve-group = "default" }
+user = { features = ["user"] }
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0"
