@@ -1,6 +1,6 @@
 # Developer Guide
 
-The primary architecture reference for C-STAR Forge, describing the current
+The primary architecture reference for C-Star Forge, describing the current
 state of the code. Historical notes — how the repo arrived here, resolved
 follow-ups, planning documents — live in `docs/dev-notes/` (start with
 `developer-guide-history.md`).

@@ -1,6 +1,6 @@
 # Machine configuration
 
-C-STAR Forge uses a configuration system to manage paths and system-specific settings.
+C-Star Forge uses a configuration system to manage paths and system-specific settings.
 
 ## System Detection
 

@@ -1,4 +1,4 @@
-"""C-STAR Forge subcommands for the ``cstar`` CLI.
+"""C-Star Forge subcommands for the ``cstar`` CLI.
 
 Registered under C-Star's ``cstar.cli`` entry-point group (see
 ``[project.entry-points."cstar.cli"]`` in pyproject.toml), so when both
@@ -21,7 +21,7 @@ from importlib.resources import files
 import typer
 
 app = typer.Typer(
-    help="C-STAR Forge: generate domains and launch the blueprint wizard."
+    help="C-Star Forge: generate domains and launch the blueprint wizard."
 )
 
 # Passthrough commands: typer must not parse or intercept anything (including

@@ -46,7 +46,7 @@ from cstar_forge.forge.forge_blueprint import DEFAULT_APPLICATION, ForgeBlueprin
 
 APP_NAME: t.Final[str] = DEFAULT_APPLICATION
 
-_APP_NAME_LONG: t.Final[str] = "C-STAR Forge domain generator"
+_APP_NAME_LONG: t.Final[str] = "C-Star Forge domain generator"
 
 
 class ForgeRunner(BlueprintRunner[ForgeBlueprint]):

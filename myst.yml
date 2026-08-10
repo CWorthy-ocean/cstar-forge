@@ -2,7 +2,7 @@
 version: 1
 
 project:
-  title: C-STAR Forge
+  title: C-Star Forge
   description: "Create new C-Star domains"
   license: Apache-2.0
   open_access: true
@@ -10,7 +10,6 @@ project:
 
   toc:
     - file: README.md
-    - file: docs/overview.md
 
     - title: Get Started
       children:

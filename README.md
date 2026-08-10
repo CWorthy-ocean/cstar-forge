@@ -1,4 +1,4 @@
-# C-STAR Forge
+# C-Star Forge
 
 A utility for generating new regional oceanographic modeling domains and creating reproducible [C-Star](https://c-star.readthedocs.io) workflows through blueprint descriptors.
 
@@ -7,7 +7,7 @@ A utility for generating new regional oceanographic modeling domains and creatin
 [![Conda Version](https://img.shields.io/conda/vn/conda-forge/cstar-forge.svg)](https://anaconda.org/conda-forge/cstar-forge)
 
 ```{image} docs/assets/csforge.png
-:alt: C-STAR Forge Logo
+:alt: C-Star Forge Logo
 :class: csforge-logo
 :align: center
 ```
@@ -18,12 +18,17 @@ This project is still in an early phase of development.
 You are welcome to try out using the package, but be aware that development is ongoing and we cannot yet guarantee backwards compatibility.
 ```
 
-## What is C-STAR Forge?
+## What is C-Star Forge?
+
+[C-Star](https://c-star.readthedocs.io) is built on a system of **applications**
+(a model or computation you want to run) and **blueprints** (the inputs to an
+application that make its result reproducible). C-Star Forge is the application
+for *creating* new ROMS-MARBL domains.
 
 Setting up a regional ocean simulation has traditionally meant weeks of bespoke
 work: designing a grid, collecting and regridding forcing datasets, hand-editing
 model configuration files, and hoping the result is reproducible on the next
-machine. C-STAR Forge automates that path for ROMS-MARBL domains. You describe
+machine. C-Star Forge automates that path for ROMS-MARBL domains. You describe
 *what* you want — a region, a resolution, a time window, forcing sources — and
 Forge produces everything the model needs to run, in a form that
 [C-Star](https://c-star.readthedocs.io) can build and execute anywhere.
@@ -39,7 +44,7 @@ The whole workflow revolves around two YAML documents:
 
 ## How it works
 
-C-STAR Forge takes you from "I want a regional ROMS-MARBL domain here" to a
+C-Star Forge takes you from "I want a regional ROMS-MARBL domain here" to a
 running simulation in three conceptual steps:
 
 1. **Build a forge blueprint.** An interactive **wizard** — a point-and-click
@@ -59,6 +64,12 @@ running simulation in three conceptual steps:
    and compile the model code and execute the simulation — on your laptop or on
    a supported HPC system. Forge is out of the picture at this point: the
    handoff is the blueprint file alone.
+
+The input files are generated with
+[ROMS Tools](https://roms-tools.readthedocs.io/en/latest/index.html), drawing on
+GLORYS (ocean reanalysis), ERA5 (atmospheric reanalysis), UNIFIED_BGC
+(biogeochemical climatology), SRTM15 (bathymetry), DAI/GLOFAS (river
+discharge), and TPXO (tides).
 
 Each step can happen on a different machine. A common pattern is building the
 blueprint in a browser on your laptop, processing it on the cluster where the

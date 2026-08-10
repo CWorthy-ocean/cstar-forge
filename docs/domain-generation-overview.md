@@ -1,6 +1,6 @@
 # Domain generation overview
 
-C-STAR Forge turns a set of reusable catalog pieces (plus optional wizard input) into
+C-Star Forge turns a set of reusable catalog pieces (plus optional wizard input) into
 a `ForgeBlueprint`, then processes that blueprint into ROMS-MARBL input files, rendered
 ROMS code (`cppdefs.opt`, `namelist.nml`), and a downstream `roms_marbl` blueprint that
 C-Star builds and runs. See `docs/developer-guide.md`
@@ -8,7 +8,7 @@ for the full module map and call chains; this page covers the workflow at a high
 
 ## Workflow
 
-The C-STAR Forge workflow progresses through distinct steps, transforming catalog
+The C-Star Forge workflow progresses through distinct steps, transforming catalog
 specs into an executable simulation:
 
 ```{mermaid}
