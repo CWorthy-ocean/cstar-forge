@@ -4,11 +4,15 @@
 
 ### Breaking Changes
 
+* Dropped experimental `--stage-ic-sources` option. ([#114](https://github.com/CWorthy-ocean/cstar-forge/pull/114))
+
 ### New Features
 
 ### Bug Fixes
 
 ### Improvements
+
+* Subchunking of glorys data is now enabled by default; users can opt out with `--no-subchunk`. ([#114](https://github.com/CWorthy-ocean/cstar-forge/pull/114))
 
 ### Miscellaneous
 
