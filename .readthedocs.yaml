@@ -1,0 +1,23 @@
+# ReadTheDocs configuration: build the MyST site (same jupyter-book/mystmd
+# pipeline as .github/workflows/deploy.yaml) so RTD can serve it — primarily
+# for RTD's pull-request preview builds.
+#
+# One-time setup on the RTD side (dashboard):
+#   1. Import the CWorthy-ocean/cstar-forge repo.
+#   2. Settings → enable "Build pull requests for this project".
+# Production hosting can stay on GitHub Pages; RTD then serves previews at
+# https://cstar-forge--<PR#>.org.readthedocs.build/... on every PR.
+
+version: 2
+
+build:
+  os: ubuntu-24.04
+  tools:
+    nodejs: "20"
+  commands:
+    - npm install -g jupyter-book
+    # BASE_URL must match the path RTD serves this version under
+    # (e.g. /en/latest, /en/pr-123). Derive it from the canonical URL.
+    - export BASE_URL=$(echo "$READTHEDOCS_CANONICAL_URL" | sed 's|^https\{0,1\}://[^/]*||; s|/$||') && jupyter-book build --html
+    - mkdir -p $READTHEDOCS_OUTPUT
+    - mv _build/html $READTHEDOCS_OUTPUT/html
