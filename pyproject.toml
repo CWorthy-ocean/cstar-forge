@@ -37,10 +37,20 @@ dependencies = [
     "xarray",
     "nbformat",
     "psutil",
+    # cstar_forge/cli.py builds the `cstar forge` typer sub-app; typer is
+    # already guaranteed transitively via cstar-ocean, declared for honesty.
+    "typer",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
     "cstar-ocean>=0.9",
     "roms_tools>=4.0.0,<5",
 ]
+
+# Registers the `cstar forge ...` subcommand group with C-Star's CLI
+# (discovered via the `cstar.cli` entry-point group; needs a C-Star release
+# that includes the discovery hook). Absent cstar, `python -m cstar_forge.cli`
+# and `python -m cstar_forge.run` remain the standalone entrypoints.
+[project.entry-points."cstar.cli"]
+forge = "cstar_forge.cli:app"
 
 [project.optional-dependencies]
 # The wizard/notebook app stack: running cstar_forge/forge-blueprint-wizard-app.ipynb
@@ -109,10 +119,29 @@ ujson = "*"
 [tool.pixi.feature.user.dependencies]
 cstar-forge = ">=0.3.0"
 
+# Laptop/workstation build toolchain — the pixi analog of dev-setup.sh's
+# --with-compilers, mirroring conda-forge cstar-ocean-standalone's list.
+# Deliberately NOT part of any HPC-facing environment: the conda compiler
+# packages export CC/CXX/FC on activation and their bin/ shadows module
+# toolchains on PATH, silently hijacking ucla-roms builds on clusters.
+[tool.pixi.feature.compilers.dependencies]
+compilers = "*"
+mpich = "*"
+netcdf-fortran = "*"
+libpnetcdf = "*"
+cmake = "*"
+make = "*"
+# ucla-roms Makefiles need GNU-flavored rsync; macOS's system rsync lacks the flags
+rsync = "*"
+
 [tool.pixi.environments]
 default = { features = ["editable"], solve-group = "default" }
 dev = { features = ["editable", "dev", "app"], solve-group = "default" }
 user = { features = ["user"] }
+# dev + local build toolchain, for laptops/workstations compiling ROMS.
+# Own solve (NOT solve-group "default"): mpich/netcdf-fortran would otherwise
+# steer the shared solve toward MPI variants of hdf5/netcdf for plain dev too.
+dev-laptop = { features = ["editable", "dev", "app", "compilers"] }
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0"

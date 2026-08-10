@@ -62,5 +62,6 @@ dependencies:
   - xarray
   - nbformat
   - psutil
+  - typer
   - cstar-ocean>=0.9
   - roms-tools>=4.0.0, <5
