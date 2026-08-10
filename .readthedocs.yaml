@@ -17,7 +17,9 @@ build:
   commands:
     - npm install -g jupyter-book
     # BASE_URL must match the path RTD serves this version under
-    # (e.g. /en/latest, /en/pr-123). Derive it from the canonical URL.
-    - export BASE_URL=$(echo "$READTHEDOCS_CANONICAL_URL" | sed 's|^https\{0,1\}://[^/]*||; s|/$||') && jupyter-book build --html
+    # (/en/latest, /en/<pr-number>, ...). RTD provides the pieces as env vars.
+    # NB: keep these commands quoting-free — RTD pre-parses each entry before
+    # the shell sees it, which mangles quotes/subshells (sed pipelines break).
+    - BASE_URL=/$READTHEDOCS_LANGUAGE/$READTHEDOCS_VERSION jupyter-book build --html
     - mkdir -p $READTHEDOCS_OUTPUT
     - mv _build/html $READTHEDOCS_OUTPUT/html
