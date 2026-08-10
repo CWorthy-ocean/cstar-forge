@@ -10,10 +10,7 @@ rejoin this guide at [Register for data access](#register-for-data-access).
 
 ## Install
 
-One command installs everything: C-STAR Forge (which bundles the wizard's
-jupyter/voila stack), C-Star, roms-tools, and — via `cstar-ocean-standalone` —
-the complete build toolchain (compilers, MPI, netCDF) that C-Star needs to
-compile ROMS on your machine:
+The easiest way to get our entire dependency stack is to install `cstar-forge` and `cstar-ocean-standalone` into a fresh conda (or mamba) environment:
 
 ```bash
 conda create -n cstar-forge-env -c conda-forge cstar-forge cstar-ocean-standalone
@@ -28,9 +25,7 @@ python -c "import cstar_forge; print('cstar_forge OK')"
 ```
 
 ```{note}
-The `cstar forge ...` subcommands used below require recent releases of both
-packages. On older versions, the equivalents are `python -m cstar_forge.cli
-wizard` and `python -m cstar_forge.run <blueprint>`.
+`cstar-ocean-standalone` installs its own conda-based compiler and MPI stack; if you are on a HPC or machine with its own bespoke compilers and MPI setup, use the regular `cstar-ocean` package.
 ```
 
 (register-for-data-access)=
@@ -68,7 +63,7 @@ the wizard entirely and process it directly.
 ## Process the blueprint
 
 ```bash
-cstar forge run path/to/forge_blueprint.yaml
+cstar blueprint run path/to/forge_blueprint.yaml
 ```
 
 This fetches the source data (GLORYS, ERA5 — expect the first run to spend
@@ -83,7 +78,7 @@ Blueprint: ~/cstar-forge-run/.../roms_marbl_blueprint.yaml
 Run it with:  cstar blueprint run <path>
 ```
 
-Power-user options (partial runs, dask tuning, verbosity) are documented in
+Power-user options (partial runs, dask tuning, verbosity) are available with a separate `cstar forge run` command and are documented in
 `cstar forge run --help`.
 
 ## Run the simulation
@@ -92,17 +87,18 @@ Power-user options (partial runs, dask tuning, verbosity) are documented in
 cstar blueprint run <path-to-roms_marbl_blueprint.yaml>
 ```
 
+Note that the same C-Star CLI command is used -- the details are in the blueprints themselves. While the previous step used
+a **forge blueprint** (see the `application` field in the original yaml), with all of the settings needed to generate the domain,
+this blueprint runs the `ROMS-MARBL` application, with all of the inputs needed to execute the simulation. 
+
 C-Star fetches and compiles the model code (using the toolchain installed
 above) and executes the simulation; outputs land under the same working
-directory. From here on you are in C-Star's world — see the
-[C-Star documentation](https://c-star.readthedocs.io) for run management,
+directory. See the [C-Star documentation](https://c-star.readthedocs.io) for more details on run management,
 workplans, and analysis.
 
 ## Next steps
 
-- Browse the bundled **domain catalog** in the wizard (GoA, NEP, CCS, and
-  more) or customize a domain's grid parameters.
-- Configure per-machine data paths — see [Machine configuration](machine-config.md).
+- Browse the bundled **domain catalog** in the wizard or customize a domain's grid parameters.
 - Moving to a cluster? The [Installation](installation.md) page covers HPC
   installs (with the toolchain coming from environment modules instead of
   conda) and reproducible locked environments.

@@ -1,4 +1,4 @@
-# Installation
+# Advanced Installation (HPCs or developers)
 
 For a laptop or workstation, the one-command conda install in
 [Getting Started](getting-started.md) is all you need. This page covers the
@@ -77,6 +77,11 @@ cstar forge wizard --no-browser
 ssh -N -L 8866:localhost:8866 <user>@<login-node>
 # then open http://localhost:8866 locally
 ```
+
+If your HPC provides a Jupyter interface, it may be more convenient to clone the repo (see next section) and use the
+[forge-blueprint-wizard.ipynb](../cstar_forge/forge-blueprint-wizard.ipynb) notebook instead of the Voila web app.
+
+Alternatively, C-Star Forge is designed so that you can build your Forge blueprints on one machine and process the data on another; feel free to run the wizard from your laptop, upload your blueprint to your HPC, and process it there from the command line.
 
 ## Installation for developers
 

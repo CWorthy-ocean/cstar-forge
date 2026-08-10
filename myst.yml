@@ -11,19 +11,21 @@ project:
   toc:
     - file: README.md
     - file: docs/overview.md
-    - file: docs/releases.md
 
     - title: Get Started
       children:
         - file: docs/getting-started.md
         - file: docs/data-access.md
         - file: docs/installation.md
-        - file: docs/machine-config.md
+
+
+    - file: docs/releases.md
 
     - title: Developer Details
       children:
         - file: docs/developer-guide.md
         - file: docs/INSTALLATION-CHANGES.md
+        - file: docs/machine-config.md
         - file: docs/domain-generation-overview.md
         - file: docs/source-data-intro.md
         - file: docs/source-data-example.md

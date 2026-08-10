@@ -10,6 +10,7 @@ rendered docs). The user-facing docs (`docs/overview.md`, `docs/domain-generatio
 `docs/machine-config.md`) were refreshed against the code on 2026-08-10; `docs/dev-notes/`
 holds historical records.
 
+
 ## 1. The big picture
 
 Forge is split into two layers along a hard boundary, in preparation for moving
@@ -48,66 +49,44 @@ the current-state description.
 ## 2. Directory map
 
 ```
-cstar_forge/
-  catalog.py                 thin back-compat shim: BlueprintCatalog → DomainCatalog
-  domain_catalog.py           DomainCatalog: scans catalog/{ModelSpec,DomainSpec,
-                               ForcingSpec,OutputSpec,Machines,blueprints}, exposes
-                               *_data()/*_path() accessors + roms_marbl_blueprint_df() (surfaced as
-                               blueprintDF() on the catalog.py BlueprintCatalog shim); register_output/
-                               register_forcing/register_domain_from_dict/
-                               register_model_from_settings write new catalog entries (the
-                               wizard's "save modified pieces to catalog" panel)
-  forge_blueprint_resolve.py      resolver: build_forge_blueprint(...)
-  forge_blueprint_wizard.py       ForgeBlueprintWizard (ipywidgets UI), thin shell over the resolver;
-                               ForgeBlueprintWizardApp wraps it with a catalog-location bar
-                               (defaults to the bundled catalog; Reload rebuilds against a
-                               different local path/"local"/GitHub URL/http URL)
-  models.py                   Pydantic wrappers for model.yaml (ModelSpec, ModelCode,
-                               ModelTemplates, load_models_yaml); imports its forcing/IC/
-                               OpenBoundaries item models FROM forge.forge_blueprint (single
-                               source, no duplicates — see §5)
-  config.py                   DataPaths / MachineConfig / resolve_host() — authoring-side
-                               host detection (NERSC/RCAC/macOS); used by run.py and (for
-                               the detected system tag) forge_blueprint_wizard.py
-  run.py                      CLI: `python -m cstar_forge.run forge_blueprint.yaml`; resolves
-                               host, calls forge.forge_blueprint_engine.process_forge_blueprint
-  cli.py                      `cstar forge run|wizard` typer sub-app, registered via the
-                               `cstar.cli` entry-point group (needs a C-Star release with the
-                               discovery hook); `forge run` passes argv through to run.main
-  catalog/                    ModelSpec/, DomainSpec/, ForcingSpec/, OutputSpec/,
-                               Machines/, blueprints/ — the YAML data the catalog scans
-
-  forge/                      THE FORGE APPLICATION — execution engine, target: relocates
-                               into C-Star as one unit. Nothing here reads the catalog.
-    forge_blueprint.py            ForgeBlueprint (the blueprint) + item models + enums.
-                               Dependency-light: stdlib + pydantic + yaml, plus
-                               cstar.orchestration.models.Blueprint (see §3a) — a
-                               portability guard test enforces no cstar_forge imports
-                               and no other cstar import
-    app.py                        ForgeRunner + ForgeApplication (see §3a) — makes forge
-                               a real, C-Star-discoverable application. NOT part of the
-                               relocatable boundary above (like run.py, it's disposable
-                               host-resolution glue: imports cstar_forge.config)
-    forge_blueprint_engine.py      process_forge_blueprint(); ForgeBlueprintExecutor Protocol (the
-                               C-Star substitution seam); sources_to_forcing_override();
-                               forge_blueprint_to_builder_kwargs(); verify_content_hash()
-    executor.py                ForgeExecutor (ex-CstarSpecBuilder, ~2000 lines) — the
-                               actual work: ensure_source_data, generate_inputs,
-                               configure_build, blueprint persistence, template staging
-    input_data.py               RomsMarblInputData — grid/IC/forcing/river/CDR/nesting
-                               NetCDF generation (roms_tools calls live here)
-    source_data.py              SourceData — dataset download/staging (GLORYS, ERA5,
-                               SRTM15, WOA, TPXO, GLOFAS, ...)
-    source_registry.py          single source of truth for dataset aliases/URLs/versions/
-                               UNSTAGED_DATASETS/STREAMABLE_SOURCES; source_data.py re-exports it
-    settings.py                 Jinja2 cppdefs.opt rendering + write_roms_namelist()
-    namelist_model.py            RunTimeSettings (validates the namelist vocabulary) +
-                               build_namelist() → cstar.roms.namelist.RomsNamelist
-    util.py                      CFL dt calc, nesting-period writer
-    host.py                     HostPaths — frozen 4-field injected host contract
-                               (working_dir, source_data_cache, system, machine_config)
-    _yaml_representers.py       registers a PyYAML Enum representer globally (side-effect
-                               import) so Forge enums survive roms-tools' SafeDumper
+cstar-forge/
+├── cstar_forge/                 # Main package directory
+│   ├── forge_blueprint_resolve.py  # resolver: build_forge_blueprint(...)
+│   ├── forge_blueprint_wizard.py   # ForgeBlueprintWizard (ipywidgets UI) +
+│   │                               # ForgeBlueprintWizardApp (adds catalog-location bar)
+│   ├── forge-blueprint-wizard.ipynb     # wizard notebook (run in Jupyter)
+│   ├── forge-blueprint-wizard-app.ipynb # wizard app notebook (served by Voilà)
+│   ├── models.py               # Spec classes (ModelSpec, etc.)
+│   ├── domain_catalog.py       # DomainCatalog: scans the catalog, exposes accessors
+│   ├── config.py               # Path management and system detection
+│   ├── run.py                  # CLI entry point: python -m cstar_forge.run forge_blueprint.yaml
+│   ├── cli.py                  # 'cstar forge run'/'cstar forge wizard' typer sub-app (cstar.cli entry point)
+│   ├── forge/                  # The forge application (execution engine; see
+│   │   │                       # docs/developer-guide.md — relocates into C-Star as one unit)
+│   │   ├── app.py                  # ForgeRunner/ForgeApplication (C-Star application)
+│   │   ├── forge_blueprint.py      # ForgeBlueprint — the forge application's blueprint
+│   │   ├── forge_blueprint_engine.py # process_forge_blueprint(); ForgeBlueprintExecutor Protocol
+│   │   ├── executor.py         # ForgeExecutor — the processing engine
+│   │   ├── host.py             # HostPaths — frozen host-boundary contract injected into the executor
+│   │   ├── input_data.py       # Input file generation
+│   │   ├── source_data.py      # Dataset download and preparation
+│   │   ├── settings.py         # Template rendering
+│   │   └── namelist_model.py   # RunTimeSettings + build_namelist
+│   └── catalog/                # Bundled spec catalog (+ BlueprintCatalog API)
+│       ├── ModelSpec/{model}/model.yaml    # Code repos, templates, settings, defaults
+│       ├── DomainSpec/{grid}/Domain.yaml   # Grid definitions
+│       ├── ForcingSpec/{name}/Forcing.yaml # Forcing source configurations
+│       ├── OutputSpec/{name}/Output.yaml   # Output configurations
+│       ├── Machines/{system}.yaml          # Machine descriptions
+│       └── blueprints/                     # Example/saved blueprints (legacy/ holds
+│                                           # pre-refactor layouts)
+├── templates/                  # Render templates (cppdefs.opt.j2, marbl_in), decoupled
+│                                # from ModelSpec — fetched by ForgeExecutor via C-Star's
+│                                # AdditionalCode
+├── legacy/                    # Deprecated pre-wizard tooling: notebook workflows,
+│                                # the nb_engine runner, and legacy-layout blueprints
+├── docs/                      # Documentation (dev-notes/ holds historical planning docs)
+└── README.md
 ```
 
 ## 3. `ForgeBlueprint` — the forge blueprint
