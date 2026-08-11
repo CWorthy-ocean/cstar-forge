@@ -21,7 +21,7 @@ channels:
 dependencies:
 - python >=3.12,<3.14
 - roms-tools >=4.0.0,<5
-- cstar-ocean >=0.9
+- cstar-ocean >=0.9.1
 - dask *
 - distributed *
 - numpy *
@@ -63,5 +63,5 @@ dependencies:
   - nbformat
   - psutil
   - typer
-  - cstar-ocean>=0.9
+  - cstar-ocean>=0.9.1
   - roms-tools>=4.0.0, <5

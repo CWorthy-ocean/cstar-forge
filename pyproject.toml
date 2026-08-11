@@ -41,7 +41,7 @@ dependencies = [
     # already guaranteed transitively via cstar-ocean, declared for honesty.
     "typer",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.9",
+    "cstar-ocean>=0.9.1",
     "roms_tools>=4.0.0,<5",
 ]
 
@@ -95,7 +95,7 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=4.0.0,<5"
-cstar-ocean = ">=0.9"
+cstar-ocean = ">=0.9.1"
 dask = "*"
 distributed = "*"
 numpy = "*"
