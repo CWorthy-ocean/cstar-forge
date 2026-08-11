@@ -3,7 +3,7 @@
 C-Star Forge turns a set of reusable catalog pieces (plus optional wizard input) into
 a `ForgeBlueprint`, then processes that blueprint into ROMS-MARBL input files, rendered
 ROMS code (`cppdefs.opt`, `namelist.nml`), and a downstream `roms_marbl` blueprint that
-C-Star builds and runs. See `docs/developer-guide.md`
+C-Star builds and runs. See `docs/architecture-details.md`
 for the full module map and call chains; this page covers the workflow at a high level.
 
 ## Workflow
@@ -51,7 +51,7 @@ values on top of that single file.
 
 ### Workflow Steps
 
-Steps 0–3 are what `cstar forge run` / `python -m cstar_forge.run` performs; compilation
+Steps 0–3 are what `cstar forge run` performs; compilation
 and execution happen separately, when C-Star runs the emitted blueprint.
 
 0. **Resolve** (`build_forge_blueprint()`, `cstar_forge/forge_blueprint_resolve.py`)
@@ -65,7 +65,7 @@ and execution happen separately, when C-Star runs the emitted blueprint.
 1. **Initialize** (`model_post_init()` / `_initialize_roms_marbl_blueprint()`)
    - Construct a `ForgeExecutor` from the resolved `ForgeBlueprint`
      (`ForgeExecutor.from_forge_blueprint`), invoked via
-     `cstar forge run forge_blueprint.yaml` (equivalently `python -m cstar_forge.run …`)
+     `cstar forge run forge_blueprint.yaml`
    - Initialize grid object from `grid_kwargs`
    - Create the in-memory roms_marbl blueprint structure with placeholder data
    - Load default settings from the resolved `ForgeBlueprint.model_settings`

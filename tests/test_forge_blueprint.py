@@ -1254,6 +1254,40 @@ def test_cppdefs_tides_tracks_tidal_forcing_presence():
     assert cfg_no_tides.model_settings["cppdefs"]["tides"] is False
 
 
+def test_no_tidal_item_forces_runtime_tide_switches_off():
+    """ROMS enables tides at run time via bry_tides/pot_tides (TIDAL_FRC_SETTINGS);
+    the TIDES cppdef only stamps a netCDF attribute. With no tidal item generated,
+    both must be forced off -- past an explicit override -- or ROMS goes looking
+    for tidal input data that was never generated. ana_tides is the deliberate
+    escape hatch: analytical tides are computed in-model and need no input file.
+    """
+    cfg = _build()  # bundled ForcingSpec has a tidal item -> ModelSpec defaults kept
+    assert cfg.model_settings["tides"]["bry_tides"] is True
+    assert cfg.model_settings["tides"]["pot_tides"] is True
+
+    cfg_no = _build(forcing_inputs=_PHYSICS_ONLY_FORCING)
+    assert cfg_no.model_settings["tides"]["bry_tides"] is False
+    assert cfg_no.model_settings["tides"]["pot_tides"] is False
+    assert cfg_no.model_settings["tides"]["ntides"] == 0
+
+    # an explicit bry_tides/pot_tides=True override can't win (it would crash ROMS)
+    cfg_ov = _build(
+        forcing_inputs=_PHYSICS_ONLY_FORCING,
+        run_time_overrides={"tides": {"bry_tides": True, "pot_tides": True}},
+    )
+    assert cfg_ov.model_settings["tides"]["bry_tides"] is False
+    assert cfg_ov.model_settings["tides"]["pot_tides"] is False
+
+    # ...unless ana_tides is set, which legitimately runs tides without input data
+    cfg_ana = _build(
+        forcing_inputs=_PHYSICS_ONLY_FORCING,
+        run_time_overrides={"tides": {"ana_tides": True}},
+    )
+    assert cfg_ana.model_settings["tides"]["ana_tides"] is True
+    assert cfg_ana.model_settings["tides"]["bry_tides"] is True
+    assert cfg_ana.model_settings["tides"]["pot_tides"] is True
+
+
 def test_cppdefs_sponge_tune_defaults_false_and_is_overridable():
     """SPONGE_TUNE has no per-run resolver kwarg -- it's a plain ModelSpec default
     (False) only reachable via compile_time_overrides (the wizard's advanced

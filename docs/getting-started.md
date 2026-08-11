@@ -63,7 +63,7 @@ the wizard entirely and process it directly.
 ## Process the blueprint
 
 ```bash
-cstar blueprint run path/to/forge_blueprint.yaml
+cstar forge run path/to/forge_blueprint.yaml
 ```
 
 This fetches the source data (GLORYS, ERA5 — expect the first run to spend
@@ -78,8 +78,10 @@ Blueprint: ~/cstar-forge-run/.../roms_marbl_blueprint.yaml
 Run it with:  cstar blueprint run <path>
 ```
 
-Power-user options (partial runs, dask tuning, verbosity) are available with a separate `cstar forge run` command and are documented in
-`cstar forge run --help`.
+The full executor option set (stage selection, `--clobber`, dask tuning,
+`--only-inputs`, verbosity) is documented in `cstar forge run --help`. The
+equivalent `python -m cstar_forge.run` module CLI remains available as a
+fallback if the `cstar forge` sub-app isn't registered in your environment.
 
 ## Run the simulation
 
@@ -87,9 +89,16 @@ Power-user options (partial runs, dask tuning, verbosity) are available with a s
 cstar blueprint run <path-to-roms_marbl_blueprint.yaml>
 ```
 
-Note that the same C-Star CLI command is used -- the details are in the blueprints themselves. While the previous step used
-a **forge blueprint** (see the `application` field in the original yaml), with all of the settings needed to generate the domain,
-this blueprint runs the `ROMS-MARBL` application, with all of the inputs needed to execute the simulation. 
+This is a different command than the previous step. The `application` field
+inside each blueprint YAML is what selects which application processes it.
+The **forge blueprint** (`application: forge`) used the dedicated
+`cstar forge run` entry point above because forge is an out-of-tree C-Star
+application (its `cstar.cli` sub-app also exposes forge-specific power-user
+options that the generic runner doesn't). This generated **ROMS-MARBL
+blueprint** (`application: roms_marbl`), with all of the inputs needed to
+execute the simulation, is a built-in C-Star application that C-Star's
+generic `cstar blueprint run` command already knows how to dispatch to
+directly, with no extra setup.
 
 C-Star fetches and compiles the model code (using the toolchain installed
 above) and executes the simulation; outputs land under the same working

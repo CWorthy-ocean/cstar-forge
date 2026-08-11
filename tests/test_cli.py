@@ -16,7 +16,7 @@ class TestRunPassthrough:
         with patch("cstar_forge.run.main", return_value=0) as mock_main:
             result = runner.invoke(cli.app, ["run", *argv])
         assert result.exit_code == 0
-        mock_main.assert_called_once_with(argv)
+        mock_main.assert_called_once_with(argv, prog="cstar forge run")
 
     def test_exit_code_is_propagated(self):
         with patch("cstar_forge.run.main", return_value=3):
@@ -28,6 +28,9 @@ class TestRunPassthrough:
         # options and SystemExits), not be swallowed by typer's own help.
         result = runner.invoke(cli.app, ["run", "--help"])
         assert "--only-inputs" in result.output
+        # ...and the usage line names the command the user actually typed.
+        assert "cstar forge run" in result.output
+        assert "python -m cstar_forge.run" not in result.output
 
 
 class TestWizard:

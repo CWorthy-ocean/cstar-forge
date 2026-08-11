@@ -1010,8 +1010,10 @@ _EXTRAP_OPTS = [""] + [e.value for e in ExtrapMethod]
 _FORCING_CATEGORIES = ("surface", "boundary", "tidal", "river")
 _GLORYS_LAYOUT_OPTS = ["", "regional", "global"]  # "" = not specified
 
-# ``cstar blueprint run`` resolves a blueprint's application through C-Star's
-# registry, which only finds out-of-tree applications listed in CSTAR_APP_MODULES.
+# C-Star's registry only finds out-of-tree applications listed in
+# CSTAR_APP_MODULES, so anything routed through the application framework
+# (``cstar workplan run``, ``cstar blueprint run``) needs this prefix. The
+# ``cstar forge run`` path does not -- it calls the forge CLI directly.
 _FORGE_APP_MODULE = "cstar_forge.forge.app"
 _CSTAR_APP_MODULES_ENV = "CSTAR_APP_MODULES"
 _FORGE_APP_MODULES_PREFIX = f"{_CSTAR_APP_MODULES_ENV}={_FORGE_APP_MODULE} "
@@ -2217,8 +2219,8 @@ class ForgeBlueprintWizard:
             "<span style='color:#666'>ℹ To run this later, or on a different "
             "machine, save the blueprint above and then (from the "
             "<code>cstar-forge</code> environment) call: "
-            f"<code>{_FORGE_APP_MODULES_PREFIX}cstar blueprint run "
-            "&lt;path/to/forge_blueprint.yaml&gt;</code></span>"
+            "<code>cstar forge run &lt;path/to/forge_blueprint.yaml&gt;</code>"
+            " (add <code>--help</code> for the full option set)</span>"
         )
         self.run_btn = W.Button(description="Run", icon="play")
         self.run_status = W.HTML("")
@@ -3874,37 +3876,20 @@ class ForgeBlueprintWizard:
             )
 
     def _build_run_command(self, blueprint_path: str) -> list[str]:
-        """Command the Run button invokes: ``cstar blueprint run <path>``.
+        """Command the Run button invokes: ``cstar forge run <path>``.
 
-        Prefers the ``cstar`` console script installed alongside the running
-        interpreter (so the subprocess stays in this environment rather than
-        whatever is first on PATH), falling back to the module form.
+        Uses the ``cstar`` console script installed alongside the running
+        interpreter, so the subprocess stays in this environment rather than
+        taking whatever is first on PATH. Where that script is absent (C-Star's
+        CLI not installed), falls back to ``python -m cstar_forge.run`` -- the
+        argparse CLI ``cstar forge run`` is itself a passthrough to.
         """
         import sys
 
         cstar_exe = Path(sys.executable).with_name("cstar")
-        launcher = (
-            [str(cstar_exe)]
-            if cstar_exe.exists()
-            else [sys.executable, "-m", "cstar.cli.cli"]
-        )
-        return [*launcher, "blueprint", "run", blueprint_path]
-
-    def _build_run_env(self) -> dict[str, str]:
-        """Environment for the Run subprocess: the caller's environment plus the
-        forge app module in ``CSTAR_APP_MODULES``, without which C-Star's registry
-        cannot resolve a forge blueprint's application. A value the user already
-        exported is extended, not replaced.
-        """
-        import os
-
-        env = dict(os.environ)
-        existing = env.get(_CSTAR_APP_MODULES_ENV, "")
-        modules = [m.strip() for m in existing.split(",") if m.strip()]
-        if _FORGE_APP_MODULE not in modules:
-            modules.append(_FORGE_APP_MODULE)
-        env[_CSTAR_APP_MODULES_ENV] = ",".join(modules)
-        return env
+        if cstar_exe.exists():
+            return [str(cstar_exe), "forge", "run", blueprint_path]
+        return [sys.executable, "-m", "cstar_forge.run", blueprint_path]
 
     def _on_run(self, _):
         if not self._ensure_boundaries_derived():
@@ -3935,14 +3920,11 @@ class ForgeBlueprintWizard:
         try:
             path = self.config.to_yaml(Path(self.save_path.value))
             cmd = self._build_run_command(str(path))
-            env = self._build_run_env()
-            shown_env = f"{_CSTAR_APP_MODULES_ENV}={env[_CSTAR_APP_MODULES_ENV]}"
-            self.run_status.value = f"<i>running: {shown_env} {' '.join(cmd)}</i>"
+            self.run_status.value = f"<i>running: {' '.join(cmd)}</i>"
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
-                env=env,
             )
             # append_stdout (not `with self.run_output: print(...)`) appends
             # directly to the widget's output list -- it works whether or not a
@@ -4064,9 +4046,7 @@ class ForgeBlueprintWizard:
             # CSTAR_APP_MODULES makes the forge app discoverable to C-Star's
             # registry at schedule time; it propagates to spawned jobs
             # automatically (all CSTAR_* vars are captured with the run).
-            cmd = (
-                f"CSTAR_APP_MODULES=cstar_forge.forge.app cstar workplan run {wp_path}"
-            )
+            cmd = f"{_FORGE_APP_MODULES_PREFIX}cstar workplan run {wp_path}"
             self.workplan_status.value = (
                 f"<span style='color:#080'>Saved {bp_path} and {wp_path}</span><br>"
                 f"Run it with: <code>{cmd}</code>"

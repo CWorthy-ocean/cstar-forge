@@ -154,13 +154,18 @@ export CSTAR_APP_MODULES=cstar_forge.forge.app
 
 Three ways to run a forge blueprint:
 
-1. `cstar blueprint run forge_blueprint.yaml` — the app-framework path
-   (defaults only; the no-frills front door).
-2. `cstar forge run forge_blueprint.yaml` — the `cli.py` typer sub-app,
-   registered via the `cstar.cli` entry-point group (requires a C-Star release
-   with the discovery hook); a full-option argv passthrough to `run.main`.
+1. `cstar forge run forge_blueprint.yaml` — **recommended.** The `cli.py`
+   typer sub-app, registered via the `cstar.cli` entry-point group (requires a
+   C-Star release with the discovery hook); a full-option argv passthrough to
+   `run.main`.
+2. `cstar blueprint run forge_blueprint.yaml` — the app-framework path
+   (defaults only; no forge-specific options). Requires
+   `CSTAR_APP_MODULES=cstar_forge.forge.app` in the environment (set just
+   above) — without it C-Star's registry doesn't know how to route a
+   `forge`-application blueprint and fails with `ValueError: No application
+   for 'forge'`.
 3. `python -m cstar_forge.run forge_blueprint.yaml` — the module CLI both of
-   the above ultimately reach; always available.
+   the above ultimately reach; always available as a fallback.
 
 The app lives in this repo (not relocated into the C-Star repo) — deliberate,
 per §1's target: the blueprint/executor design is still iterating, so
@@ -186,9 +191,9 @@ relocation stays a later step.
 4. `wiz.config.to_yaml(path)` writes the portable `forge_blueprint.yaml`.
 
 **Execution (blueprint → engine → executor), same machine or a different one:**
-5. `cstar forge run forge_blueprint.yaml` (or `python -m cstar_forge.run …`) —
-   resolves the host via `cstar_forge.config.resolve_host()` (machine tag,
-   `source_data_cache`, `working_dir` override).
+5. `cstar forge run forge_blueprint.yaml` — resolves the host via
+   `cstar_forge.config.resolve_host()` (machine tag, `source_data_cache`,
+   `working_dir` override).
 6. `forge.forge_blueprint_engine.process_forge_blueprint(cfg, host, ...)` builds a
    `ForgeExecutor` via `ForgeExecutor.from_forge_blueprint(cfg, host)` and drives:
    `ensure_source_data()` → `generate_inputs()` → `configure_build()`.

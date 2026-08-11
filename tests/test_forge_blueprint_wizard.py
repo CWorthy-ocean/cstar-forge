@@ -874,43 +874,27 @@ def test_nest_plot_figure_survives_inline_backend_show(monkeypatch):
     assert captured["axes"][0].lines, "the plotted line did not survive plt.show()"
 
 
-def test_build_run_command_uses_cstar_blueprint_run_from_this_env():
-    """The Run button invokes `cstar blueprint run <path>` using the `cstar` script
-    installed next to the interpreter already running the wizard's kernel -- not a
-    bare `cstar` from PATH or a `conda run` invocation (avoids conda/micromamba
-    env-discovery issues). Without that script it falls back to the module form on
-    the same interpreter.
+def test_build_run_command_uses_cstar_forge_run_from_this_env():
+    """The Run button invokes `cstar forge run <path>` via the `cstar` script installed
+    next to the interpreter already running the wizard's kernel -- not a bare `cstar`
+    from PATH or a `conda run` invocation (avoids conda/micromamba env-discovery
+    issues). `cstar forge run` is preferred over `cstar blueprint run` because it does
+    not need CSTAR_APP_MODULES set for C-Star's registry to resolve the forge app.
     """
     import sys
 
     wiz = ForgeBlueprintWizard()
     cmd = wiz._build_run_command("/tmp/some_blueprint.yaml")
-    assert cmd[-3:] == ["blueprint", "run", "/tmp/some_blueprint.yaml"]
     cstar_exe = Path(sys.executable).with_name("cstar")
     if cstar_exe.exists():
-        assert cmd[:-3] == [str(cstar_exe)]
+        assert cmd == [str(cstar_exe), "forge", "run", "/tmp/some_blueprint.yaml"]
     else:
-        assert cmd[:-3] == [sys.executable, "-m", "cstar.cli.cli"]
-
-
-def test_build_run_env_makes_forge_app_discoverable(monkeypatch):
-    """`cstar blueprint run` resolves the application through C-Star's registry, which
-    only finds forge when CSTAR_APP_MODULES names its module; an existing value the
-    user exported is extended rather than replaced.
-    """
-    wiz = ForgeBlueprintWizard()
-
-    monkeypatch.delenv("CSTAR_APP_MODULES", raising=False)
-    assert wiz._build_run_env()["CSTAR_APP_MODULES"] == "cstar_forge.forge.app"
-
-    monkeypatch.setenv("CSTAR_APP_MODULES", "some.other.app")
-    assert (
-        wiz._build_run_env()["CSTAR_APP_MODULES"]
-        == "some.other.app,cstar_forge.forge.app"
-    )
-
-    monkeypatch.setenv("CSTAR_APP_MODULES", "cstar_forge.forge.app")
-    assert wiz._build_run_env()["CSTAR_APP_MODULES"] == "cstar_forge.forge.app"
+        assert cmd == [
+            sys.executable,
+            "-m",
+            "cstar_forge.run",
+            "/tmp/some_blueprint.yaml",
+        ]
 
 
 def test_workplan_path_strips_forge_blueprint_suffix():
