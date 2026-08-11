@@ -4,7 +4,7 @@ use_pio: true
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: 0.4.0
+    commit: 0.4.1
   marbl:
     location: https://github.com/marbl-ecosys/MARBL.git
     commit: marbl0.45.0

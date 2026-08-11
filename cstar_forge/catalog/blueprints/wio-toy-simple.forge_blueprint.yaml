@@ -423,7 +423,7 @@ model_settings:
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: 0.4.0
+    commit: 0.4.1
     branch: null
   marbl:
     location: https://github.com/marbl-ecosys/MARBL.git
