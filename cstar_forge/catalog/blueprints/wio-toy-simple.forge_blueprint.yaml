@@ -430,8 +430,8 @@ code:
     commit: marbl0.45.0
     branch: null
   pio:
-    location: https://github.com/NCAR/ParallelIO.git
-    commit: pio2_7_0
+    location: https://github.com/CWorthy-ocean/ParallelIO.git
+    commit: 2.7.1-fork
     branch: null
   templates_compile_time:
     location: https://github.com/CWorthy-ocean/cstar-forge.git
@@ -466,10 +466,10 @@ composition:
     modified: false
   overrides: {}
 provenance:
-  generated_at: '2026-08-11T23:11:05.911946Z'
-  forge_version: 46672c04-dirty
+  generated_at: '2026-08-11T23:19:43.078600Z'
+  forge_version: bd91c3fd
   cstar_version: cstar-ocean==0.10.0
   roms_tools_version: roms-tools==4.0.2.dev5+g8b6cd6c7c
   override_files_applied: []
-  content_hash: 96e0034e96e34c8cf3fb7001da67959cfc671a9f878c88c6de0fba296545e9c8
+  content_hash: 00e5b9fa4270f3bb52a53817a85685ba2465776c2cc8aa30fd96d5b7844fc5cd
   notes: null
