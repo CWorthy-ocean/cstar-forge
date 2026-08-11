@@ -8,6 +8,8 @@
 
 ### New Features
 
+* Installation instructions and documentation have been overhauled ([#113](https://github.com/CWorthy-ocean/cstar-forge/pull/113))
+
 ### Bug Fixes
 
 ### Improvements
