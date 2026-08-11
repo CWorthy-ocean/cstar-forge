@@ -21,6 +21,7 @@ channels:
 dependencies:
 - python >=3.12,<3.14
 - roms-tools >=4.0.0,<5
+- cstar-ocean >=0.9.1
 - dask *
 - distributed *
 - numpy *
@@ -33,6 +34,7 @@ dependencies:
 - ujson *
 - pip
 - pip:
+  - -e .
   - pytest
   - pytest-asyncio
   - pytest-cov
@@ -46,7 +48,6 @@ dependencies:
   - papermill
   - ipywidgets
   - matplotlib
-  - -e .
   - jinja2
   - pandas
   - pyyaml>=6.0
@@ -61,5 +62,6 @@ dependencies:
   - xarray
   - nbformat
   - psutil
-  - cstar-ocean>=0.9
+  - typer
+  - cstar-ocean>=0.9.1
   - roms-tools>=4.0.0, <5

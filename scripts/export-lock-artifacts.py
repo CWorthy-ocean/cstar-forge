@@ -246,7 +246,7 @@ def main() -> None:
     parser.add_argument(
         "--env",
         required=True,
-        choices=["default", "dev"],
+        choices=["default", "dev", "user"],
         help="pixi environment to export.",
     )
     parser.add_argument(
@@ -271,6 +271,14 @@ def main() -> None:
     for platform in platforms:
         spec_path = run_conda_explicit_spec(pixi_bin, args.env, platform, args.outdir)
         requirements, self_meta = pypi_requirements_for(lock, args.env, platform, index)
+        if not requirements and self_meta is None:
+            # Pure-conda environment (the `user` env end state): the explicit
+            # spec alone IS the complete environment — no companion pip step.
+            print(
+                f"[{args.env}/{platform}] wrote {spec_path.name} "
+                "(pure-conda environment; no requirements file needed)"
+            )
+            continue
         req_path = write_requirements_file(
             args.outdir, args.env, platform, requirements, self_meta
         )

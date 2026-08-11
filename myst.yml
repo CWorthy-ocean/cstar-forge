@@ -2,7 +2,7 @@
 version: 1
 
 project:
-  title: C-STAR Forge
+  title: C-Star Forge
   description: "Create new C-Star domains"
   license: Apache-2.0
   open_access: true
@@ -10,46 +10,40 @@ project:
 
   toc:
     - file: README.md
-    - file: docs/overview.md
-    - file: docs/releases.md
 
     - title: Get Started
       children:
+        - file: docs/getting-started.md
+        - file: docs/data-access.md
         - file: docs/installation.md
-        - file: docs/machine-config.md
 
-    - title: Domain Generation
-      children:
-        - file: docs/domain-generation-overview.md
 
-    - title: SourceData
-      children:
-        - file: docs/source-data-intro.md
-        - file: docs/source-data-example.md
-        - file: docs/source-data-developer.md
+    - file: docs/releases.md
 
-    - title: InputData
-      children:
-        - file: docs/InputData-intro.md
-        - file: docs/InputData-RomsMarblInputData.md
-
-    - title: ModelSpec
-      children:
-        - file: docs/model-spec-intro.md
-        - file: docs/model-spec-settings.md
-        - file: docs/model-spec-example.ipynb
-
-    - title: Catalog
-      children:
-        - file: docs/catalog.ipynb
 
     - title: Reference
       children:
         - file: docs/reference-machines.md
-        - file: docs/reference-models-yml.md
+        - file: docs/reference-model-yaml.md
         - file: docs/reference-domains.md
         - file: docs/reference-roms-marbl-blueprint.md
         - file: docs/reference-roms-marbl-blueprint-settings.md
+
+    - title: Developer Guide
+      children:
+        - file: docs/INSTALLATION-CHANGES.md
+        - file: docs/machine-config.md
+        - file: docs/architecture-details.md
+        - file: docs/domain-generation-overview.md
+        - file: docs/source-data-intro.md
+        - file: docs/source-data-example.md
+        - file: docs/source-data-developer.md
+        - file: docs/InputData-intro.md
+        - file: docs/InputData-RomsMarblInputData.md
+        - file: docs/model-spec-intro.md
+        - file: docs/model-spec-settings.md
+        - file: docs/model-spec-example.ipynb
+        - file: docs/roms-tools-contributor-guide.md
 site:
   template: book-theme
   options:

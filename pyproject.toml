@@ -37,10 +37,18 @@ dependencies = [
     "xarray",
     "nbformat",
     "psutil",
+    "typer",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.9",
+    "cstar-ocean>=0.9.1",
     "roms_tools>=4.0.0,<5",
 ]
+
+# Registers the `cstar forge ...` subcommand group with C-Star's CLI
+# (discovered via the `cstar.cli` entry-point group; needs a C-Star release
+# that includes the discovery hook). Absent cstar, `python -m cstar_forge.cli`
+# and `python -m cstar_forge.run` remain the standalone entrypoints.
+[project.entry-points."cstar.cli"]
+forge = "cstar_forge.cli:app"
 
 [project.optional-dependencies]
 # The wizard/notebook app stack: running cstar_forge/forge-blueprint-wizard-app.ipynb
@@ -72,7 +80,9 @@ dev = [
 channels = ["conda-forge"]
 platforms = ["osx-arm64", "linux-64"]
 
-[tool.pixi.pypi-dependencies]
+# The editable install of forge itself is a feature (not workspace-wide) so
+# the `user` environment below can take cstar-forge from conda-forge instead.
+[tool.pixi.feature.editable.pypi-dependencies]
 cstar-forge = { path = ".", editable = true }
 
 [tool.pixi.dependencies]
@@ -83,8 +93,7 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=4.0.0,<5"
-# TODO: re-add `cstar-ocean = ">=0.9"` here (conda-side) once 0.9.0 reaches the
-# conda-forge CDN; until then it comes from PyPI so the solve stays unblocked.
+cstar-ocean = ">=0.9.1"
 dask = "*"
 distributed = "*"
 numpy = "*"
@@ -100,9 +109,37 @@ fastparquet = "*"
 nest-asyncio = "*"
 ujson = "*"
 
+# Pure-conda end state: everything, including cstar-forge
+# itself (which bundles the app/wizard stack in its conda run deps), comes from
+# conda-forge. The `user` environment's explicit-spec export is therefore a
+# complete environment with NO companion pip step — the blessed HPC replay
+# artifact for non-developers.
+[tool.pixi.feature.user.dependencies]
+cstar-forge = ">=0.3.0"
+
+# Laptop/workstation build toolchain — the pixi analog of dev-setup.sh's
+# --with-compilers, mirroring conda-forge cstar-ocean-standalone's list.
+# Deliberately NOT part of any HPC-facing environment: the conda compiler
+# packages export CC/CXX/FC on activation and their bin/ shadows module
+# toolchains on PATH, silently hijacking ucla-roms builds on clusters.
+[tool.pixi.feature.compilers.dependencies]
+compilers = "*"
+mpich = "*"
+netcdf-fortran = "*"
+libpnetcdf = "*"
+cmake = "*"
+make = "*"
+# ucla-roms Makefiles need GNU-flavored rsync; macOS's system rsync lacks the flags
+rsync = "*"
+
 [tool.pixi.environments]
-default = { solve-group = "default" }
-dev = { features = ["dev", "app"], solve-group = "default" }
+default = { features = ["editable"], solve-group = "default" }
+dev = { features = ["editable", "dev", "app"], solve-group = "default" }
+user = { features = ["user"] }
+# dev + local build toolchain, for laptops/workstations compiling ROMS.
+# Own solve (NOT solve-group "default"): mpich/netcdf-fortran would otherwise
+# steer the shared solve toward MPI variants of hdf5/netcdf for plain dev too.
+dev-laptop = { features = ["editable", "dev", "app", "compilers"] }
 
 [tool.setuptools_scm]
 fallback_version = "0.1.0"
