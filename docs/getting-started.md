@@ -80,7 +80,7 @@ Run it with:  cstar blueprint run <path>
 
 ```{tip}
 Power-user options (stage selection,
-`--clobber`, dask tuning, verbosity) are available via the the dedicated
+`--clobber`, dask tuning, verbosity) are available via the dedicated
 `cstar forge run path/to/forge_blueprint.yaml` entry point (see
 `cstar forge run --help`).
 ```

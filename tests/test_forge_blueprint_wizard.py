@@ -874,14 +874,13 @@ def test_nest_plot_figure_survives_inline_backend_show(monkeypatch):
     assert captured["axes"][0].lines, "the plotted line did not survive plt.show()"
 
 
-def test_build_run_command_uses_cstar_forge_run_from_this_env():
-    """The Run button invokes `cstar forge run <path>` via the `cstar` script installed
-    next to the interpreter already running the wizard's kernel -- not a bare `cstar`
-    from PATH or a `conda run` invocation (avoids conda/micromamba env-discovery
-    issues). `cstar forge run` rather than `cstar blueprint run`: the CLI-plugin group
-    it rides on shipped in C-Star 0.9.1 (this package's floor), while resolving a forge
-    blueprint through the application registry needs the newer `cstar.applications`
-    group.
+def test_build_run_command_uses_cstar_blueprint_run_from_this_env():
+    """The Run button invokes `cstar blueprint run <path>` -- the one command the docs
+    give for both pipeline steps -- via the `cstar` script installed next to the
+    interpreter already running the wizard's kernel, not a bare `cstar` from PATH or a
+    `conda run` invocation (avoids conda/micromamba env-discovery issues). Not
+    `cstar forge run`: the button exposes no per-run flags, so that passthrough's only
+    advantage does not apply here.
     """
     import sys
 
@@ -889,7 +888,7 @@ def test_build_run_command_uses_cstar_forge_run_from_this_env():
     cmd = wiz._build_run_command("/tmp/some_blueprint.yaml")
     cstar_exe = Path(sys.executable).with_name("cstar")
     if cstar_exe.exists():
-        assert cmd == [str(cstar_exe), "forge", "run", "/tmp/some_blueprint.yaml"]
+        assert cmd == [str(cstar_exe), "blueprint", "run", "/tmp/some_blueprint.yaml"]
     else:
         assert cmd == [
             sys.executable,
@@ -1076,7 +1075,10 @@ def test_on_run_streams_subprocess_output_and_reports_success(monkeypatch, tmp_p
     text = "".join(o["text"] for o in wiz.run_output.outputs)
     assert "line one" in text
     assert "line two" in text
-    assert wiz.run_status.value == "<span style='color:#080'>✓ finished</span>"
+    assert "✓ finished" in wiz.run_status.value
+    # ...and the success message hands the user their next command, since the
+    # app-framework path prints no "run it with" trailer of its own
+    assert "cstar blueprint run" in wiz.run_status.value
     assert wiz.run_btn.disabled is False
 
 

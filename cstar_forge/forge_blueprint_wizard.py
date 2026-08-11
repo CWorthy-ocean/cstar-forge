@@ -2211,8 +2211,8 @@ class ForgeBlueprintWizard:
             "<span style='color:#666'>ℹ To run this later, or on a different "
             "machine, save the blueprint above and then (from the "
             "<code>cstar-forge</code> environment) call: "
-            "<code>cstar forge run &lt;path/to/forge_blueprint.yaml&gt;</code>"
-            " (add <code>--help</code> for the full option set)</span>"
+            "<code>cstar blueprint run &lt;path/to/forge_blueprint.yaml&gt;</code>. "
+            "</span>"
         )
         self.run_btn = W.Button(description="Run", icon="play")
         self.run_status = W.HTML("")
@@ -3868,19 +3868,26 @@ class ForgeBlueprintWizard:
             )
 
     def _build_run_command(self, blueprint_path: str) -> list[str]:
-        """Command the Run button invokes: ``cstar forge run <path>``.
+        """Command the Run button invokes: ``cstar blueprint run <path>``.
+
+        The same command the docs give for both pipeline steps, and the same one
+        the emitted ``roms_marbl`` blueprint is run with -- the button exposes no
+        per-run flags, so the full-option ``cstar forge run`` passthrough buys it
+        nothing. Resolving ``application: forge`` this way goes through C-Star's
+        registry, which finds the app through cstar-forge's ``cstar.applications``
+        entry point.
 
         Uses the ``cstar`` console script installed alongside the running
         interpreter, so the subprocess stays in this environment rather than
         taking whatever is first on PATH. Where that script is absent (C-Star's
-        CLI not installed), falls back to ``python -m cstar_forge.run`` -- the
-        argparse CLI ``cstar forge run`` is itself a passthrough to.
+        CLI not installed), falls back to ``python -m cstar_forge.run``, which
+        drives the same executor without needing C-Star's CLI at all.
         """
         import sys
 
         cstar_exe = Path(sys.executable).with_name("cstar")
         if cstar_exe.exists():
-            return [str(cstar_exe), "forge", "run", blueprint_path]
+            return [str(cstar_exe), "blueprint", "run", blueprint_path]
         return [sys.executable, "-m", "cstar_forge.run", blueprint_path]
 
     def _on_run(self, _):
@@ -3925,8 +3932,13 @@ class ForgeBlueprintWizard:
             async for line in proc.stdout:
                 self.run_output.append_stdout(line.decode(errors="replace"))
             code = await proc.wait()
+            # On success the log above names the emitted roms_marbl blueprint (the
+            # runner logs where it published it). Point at it rather than restating
+            # a path this widget would have to derive for itself.
             self.run_status.value = (
-                "<span style='color:#080'>✓ finished</span>"
+                "<span style='color:#080'>✓ finished</span> — run the emitted "
+                "ROMS-MARBL blueprint named in the log with <code>cstar blueprint "
+                "run &lt;path&gt;</code>"
                 if code == 0
                 else f"<span style='color:#b00'>exited with code {code}</span>"
             )
