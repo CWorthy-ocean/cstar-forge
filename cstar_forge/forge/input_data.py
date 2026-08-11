@@ -34,9 +34,8 @@ from cstar_forge.utils import mem_log
 
 log = logging.getLogger(__name__)
 
-# Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name must contain the
-# substring ``cdr.nc`` — a naming convention formerly enforced by a C-Star ROMS
-# build check on ``cdr_frc.opt``, since removed (C-Star commit 06b198c0, PR #556).
+# Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name contains the
+# substring ``cdr.nc`` by convention (a former C-Star build check enforced this).
 CDR_FORCING_NETCDF_STEM = "cdr"
 
 # Matches the part of a candidate filename's stem that follows a planned output's

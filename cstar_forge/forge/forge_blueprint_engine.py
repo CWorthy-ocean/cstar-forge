@@ -108,12 +108,9 @@ PROCESSING_FILLED_SECTIONS = (
 # ``test_configure_build_does_not_clobber_generated_river_and_tidal_settings`` for the
 # regression coverage.
 #
-# ``cdr_output.do_cdr_output`` is deliberately NOT listed here (2026-08): CDR output
-# is now an independent, user-controllable stream (decoupled from CDR forcing), so
-# a stored ``do_cdr_output`` value must survive the overlay like any other user
-# setting. The executor re-asserts ``do_cdr_output=True`` when a CDR forcing was
-# actually generated, restoring the guarantee this exclusion used to provide for
-# that one case — see ``ForgeExecutor.configure_build``.
+# ``cdr_output.do_cdr_output`` is deliberately NOT listed: it is a user setting
+# and must survive the overlay. ``ForgeExecutor.configure_build`` re-asserts it
+# True when a CDR forcing was actually generated.
 GENERATION_DERIVED_LEAF_KEYS: dict[str, tuple[str, ...]] = {
     "river_frc": (
         "river_source",

@@ -170,8 +170,6 @@ _OPT_SECTIONS = [
          "cdr_volume", "nz_chd"]}),
     ("cdr_output", "cdr_output", {
         **{k: k for k in ["do_avg", "monthly_averages", "output_period", "nrpf"]},
-        # legacy opt var is "do_cdr"; forge's settings key is now "do_cdr_output"
-        # (2026-08 rename, matches the namelist key directly).
         "do_cdr": "do_cdr_output",
     }),
     ("extract_data", "extract_data", {k: k.lower() for k in

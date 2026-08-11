@@ -319,12 +319,10 @@ class CdrFrcCfg(_SettingsSection):
     cdr_volume: bool
 
 
-# MARBL diagnostics ucla-roms' cdr_output module looks up BY NAME with no
-# missing-name guard (src/cdr_output.F90 init_cdr_output) — absence segfaults.
-# Forge guarantees they are in marbl_bgc.marbl_diagnostics_to_write whenever
-# do_cdr_output is enabled (resolver consistency block + executor consistency net).
-# Defined here (not in the resolver) so the forge-application side may import them
-# without crossing the app/authoring boundary (see tests/test_forge_app_boundary.py).
+# MARBL diagnostics ucla-roms' cdr_output module looks up by name with no
+# missing-name guard (absence segfaults) — must be in
+# marbl_bgc.marbl_diagnostics_to_write whenever do_cdr_output is enabled.
+# Defined here so both the resolver and the executor can import them.
 CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS = (
     "zsatarag",
     "zsatcalc",
@@ -349,10 +347,7 @@ def ensure_cdr_output_marbl_diagnostics(diags: list[str] | None) -> list[str]:
 
 
 class CdrOutputCfg(_SettingsSection):
-    # ``do_cdr`` was the field name pre-rename (2026-08, v4->v5 blueprint
-    # migration); accept both spellings on input so unmigrated dicts still
-    # validate, but the field name now matches the namelist key directly —
-    # no serialization_alias needed.
+    # ``do_cdr`` is the pre-v5 spelling, accepted so unmigrated dicts validate.
     do_cdr_output: bool = Field(
         validation_alias=AliasChoices("do_cdr_output", "do_cdr")
     )

@@ -98,9 +98,8 @@ DEFAULT_TEMPLATE_REPO = CodeRepo(
     location="https://github.com/CWorthy-ocean/cstar-forge.git", branch="main"
 )
 
-# CDR-output MARBL-diagnostics guarantee: canonical definitions live on the forge
-# side (namelist_model) so the executor can share them without importing this
-# authoring module. Dual import to keep the resolver standalone-importable.
+# Canonical CDR-output diagnostics helper lives in namelist_model (forge side) so
+# the executor can share it. Dual import keeps the resolver standalone-importable.
 try:  # pragma: no cover - exercised both ways
     from cstar_forge.forge.namelist_model import (
         ensure_cdr_output_marbl_diagnostics,
@@ -595,15 +594,11 @@ def build_forge_blueprint(
         settings.setdefault("sponge_tune", {})["ub_tune"] = False
 
     # ----- CDR output consistency --------------------------------------------
-    # CDR output is valid without CDR forcing (a user may want the diagnostic
-    # stream on a run that opens no CDR file; cdr_frc.cdr_source stays false and
-    # ROMS opens no CDR file), but supplying CDR forcing always implies CDR
-    # output (there is no point generating a forcing file ROMS won't report on).
-    # cppdefs.cdr_forcing gates compilation of ucla-roms' cdr_output.F90 module
-    # (MARBL && CDR_FORCING) — raise it to True whenever output is enabled, on
-    # top of whatever cdr_forcing (forcing presence) already set at line ~499.
-    # The MARBL diagnostics guarantee below is CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS'
-    # reason for existing: ucla-roms looks them up by name, unchecked.
+    # CDR output is valid without CDR forcing (cdr_frc.cdr_source stays false;
+    # ROMS opens no CDR file), and CDR forcing implies CDR output. Either way
+    # the CDR_FORCING cppdef must be on (it gates compiling ucla-roms'
+    # cdr_output.F90) and the MARBL diagnostics ucla-roms looks up by name,
+    # unchecked, must be in the write list.
     cdr_out = settings.setdefault("cdr_output", {})
     do_cdr_output = bool(cdr_out.get("do_cdr_output")) or cdr_forcing is not None
     cdr_out["do_cdr_output"] = do_cdr_output

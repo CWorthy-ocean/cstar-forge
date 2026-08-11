@@ -613,8 +613,7 @@ def _build_input_args(
 - `cdr_frc.cdr_file`, `cdr_frc.cdr_source`, `cdr_frc.ncdr_parm`, `cdr_frc.forcing_parameterized`,
   `cdr_frc.cdr_volume`
 - `cdr_output.do_cdr_output`: forced `True` when CDR forcing is generated; also
-  independently user-controllable (not generation-derived) — see the resolver's
-  and executor's CDR-output consistency blocks
+  independently user-controllable (CDR output does not require CDR forcing)
 
 ## ROMS-MARBL Blueprint Element Updates
 
