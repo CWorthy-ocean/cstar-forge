@@ -1,9 +1,10 @@
 # Developer Guide
 
 The primary architecture reference for C-Star Forge, describing the current
-state of the code. Historical notes — how the repo arrived here, resolved
-follow-ups, planning documents — live in `docs/dev-notes/` (start with
-`developer-guide-history.md`).
+state of the code. Historical notes — how the repo arrived here, resolved follow-ups, planning
+documents — live in the repo's git history (the former `docs/dev-notes/`
+directory); the distilled design rationale agents need is in the claude-docs
+repo (`cstar-forge/DESIGN-RATIONALE.md`).
 
 ## 1. The big picture
 
@@ -74,7 +75,7 @@ cstar-forge/
 │                                # AdditionalCode
 ├── legacy/                    # Deprecated pre-wizard tooling: notebook workflows,
 │                                # the nb_engine runner, and legacy-layout blueprints
-├── docs/                      # Documentation (dev-notes/ holds historical records)
+├── docs/                      # Documentation
 └── README.md
 ```
 

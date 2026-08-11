@@ -37,8 +37,6 @@ dependencies = [
     "xarray",
     "nbformat",
     "psutil",
-    # cstar_forge/cli.py builds the `cstar forge` typer sub-app; typer is
-    # already guaranteed transitively via cstar-ocean, declared for honesty.
     "typer",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
     "cstar-ocean>=0.9.1",
