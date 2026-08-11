@@ -68,6 +68,7 @@ from cstar.roms.namelist import (
     ZsliceSettings,
 )
 from pydantic import (
+    AliasChoices,
     BaseModel,
     BeforeValidator,
     ConfigDict,
@@ -318,8 +319,43 @@ class CdrFrcCfg(_SettingsSection):
     cdr_volume: bool
 
 
+# MARBL diagnostics ucla-roms' cdr_output module looks up BY NAME with no
+# missing-name guard (src/cdr_output.F90 init_cdr_output) — absence segfaults.
+# Forge guarantees they are in marbl_bgc.marbl_diagnostics_to_write whenever
+# do_cdr_output is enabled (resolver consistency block + executor consistency net).
+# Defined here (not in the resolver) so the forge-application side may import them
+# without crossing the app/authoring boundary (see tests/test_forge_app_boundary.py).
+CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS = (
+    "zsatarag",
+    "zsatcalc",
+    "CO3",
+    "CO3_ALT_CO2",
+    "co3_sat_arag",
+    "co3_sat_calc",
+)
+
+
+def ensure_cdr_output_marbl_diagnostics(diags: list[str] | None) -> list[str]:
+    """Return ``diags`` with every ``CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS`` name
+    appended (order-preserving, no duplicates). ``None`` is treated as empty.
+    """
+    result = list(diags or [])
+    existing = set(result)
+    for name in CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS:
+        if name not in existing:
+            result.append(name)
+            existing.add(name)
+    return result
+
+
 class CdrOutputCfg(_SettingsSection):
-    do_cdr: bool = Field(serialization_alias="do_cdr_output")
+    # ``do_cdr`` was the field name pre-rename (2026-08, v4->v5 blueprint
+    # migration); accept both spellings on input so unmigrated dicts still
+    # validate, but the field name now matches the namelist key directly —
+    # no serialization_alias needed.
+    do_cdr_output: bool = Field(
+        validation_alias=AliasChoices("do_cdr_output", "do_cdr")
+    )
     do_avg: bool = Field(serialization_alias="wrt_cdr_avg")
     monthly_averages: bool = Field(serialization_alias="cdr_monthly_averages")
     output_period: float = Field(serialization_alias="output_period_cdr")

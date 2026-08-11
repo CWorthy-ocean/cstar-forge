@@ -35,7 +35,8 @@ from cstar_forge.utils import mem_log
 log = logging.getLogger(__name__)
 
 # Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name must contain the
-# substring ``cdr.nc`` so C-Star's ROMS build check on ``cdr_frc.opt`` passes.
+# substring ``cdr.nc`` — a naming convention formerly enforced by a C-Star ROMS
+# build check on ``cdr_frc.opt``, since removed (C-Star commit 06b198c0, PR #556).
 CDR_FORCING_NETCDF_STEM = "cdr"
 
 # Matches the part of a candidate filename's stem that follows a planned output's
@@ -1710,7 +1711,7 @@ class RomsMarblInputData(InputData):
         # enable cdr output
         if "cdr_output" not in self._settings_run_time:
             self._settings_run_time["cdr_output"] = {}
-        self._settings_run_time["cdr_output"]["do_cdr"] = True
+        self._settings_run_time["cdr_output"]["do_cdr_output"] = True
 
     @register_input(
         name="forcing.corrections", order=90, label="Generating corrections forcing"

@@ -55,6 +55,7 @@ from cstar_forge.forge.forge_blueprint import (
     OpenBoundaries,
 )
 from cstar_forge.forge.host import HostPaths
+from cstar_forge.forge.namelist_model import ensure_cdr_output_marbl_diagnostics
 from cstar_forge.forge.settings import render_roms_settings, write_roms_namelist
 from cstar_forge.utils import mem_log
 
@@ -1814,6 +1815,55 @@ class ForgeExecutor(BaseModel):
                 # Convert to integer if it's a float
                 if isinstance(ntimes, float):
                     self._settings_run_time["time_stepping"]["ntimes"] = round(ntimes)
+
+        # CDR-output consistency net. `do_cdr_output` is no longer stripped from the
+        # configure_build overlay (see GENERATION_DERIVED_LEAF_KEYS in
+        # forge_blueprint_engine.py), so a stored `model_settings` snapshot now carries
+        # real user values here instead of always landing at the ModelSpec default.
+        # Two cases this restores/enforces:
+        # 1. A CDR forcing was actually generated (self.cdr_forcing) -- the resolver
+        #    already set do_cdr_output=True for this case, but a *pre-rename* stored
+        #    blueprint (still carrying the old do_cdr=False shape, migrated to
+        #    do_cdr_output=False) must not disable output for a run that just
+        #    generated forcing.
+        if self.cdr_forcing:
+            self._settings_run_time.setdefault("cdr_output", {})["do_cdr_output"] = True
+        # 2. Whenever do_cdr_output ends up True by any path -- including a wizard
+        #    accordion override applied *after* the resolver ran, which can leave
+        #    do_cdr_output=True alongside a stale cppdefs.cdr_forcing=False -- force
+        #    the CPP flag (ucla-roms only compiles cdr_output.F90 under
+        #    MARBL && CDR_FORCING) and guarantee the MARBL diagnostics it looks up by
+        #    name with no missing-name guard. This is the MAIN enforcement path for a
+        #    wizard-set do_cdr_output, since the resolver's own consistency block
+        #    (forge_blueprint_resolve.build_forge_blueprint) never sees that override.
+        if self._settings_run_time.get("cdr_output", {}).get("do_cdr_output"):
+            cppdefs = self._settings_compile_time.setdefault("cppdefs", {})
+            # Same guard the resolver applies, re-checked here because a stored or
+            # hand-edited blueprint reaches configure_build without re-resolving:
+            # CDR_FORCING without MARBL is an invalid combination (ucla-roms only
+            # compiles cdr_output.F90 under MARBL && CDR_FORCING).
+            if not cppdefs.get("marbl", False):
+                raise ValueError(
+                    "cdr_output.do_cdr_output is True but cppdefs.marbl is False: "
+                    "CDR output requires MARBL (ucla-roms only compiles "
+                    "cdr_output.F90 under MARBL && CDR_FORCING)."
+                )
+            if not cppdefs.get("cdr_forcing"):
+                cppdefs["cdr_forcing"] = True
+                log.info(
+                    "configure_build: do_cdr_output is True; forcing cppdefs.cdr_forcing=True "
+                    "(CDR_FORCING gates ucla-roms' cdr_output.F90)."
+                )
+            marbl = self._settings_run_time.setdefault("marbl_bgc", {})
+            before = list(marbl.get("marbl_diagnostics_to_write") or [])
+            after = ensure_cdr_output_marbl_diagnostics(before)
+            if after != before:
+                marbl["marbl_diagnostics_to_write"] = after
+                log.info(
+                    "configure_build: do_cdr_output is True; added missing required MARBL "
+                    "diagnostics to marbl_bgc.marbl_diagnostics_to_write (%s).",
+                    sorted(set(after) - set(before)),
+                )
 
         # Derive n_tracers: prefer the value passed by the processing engine; otherwise
         # derive it from the resolved settings (T + S + BGC ntrc_bio + passive).

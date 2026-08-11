@@ -105,8 +105,15 @@ PROCESSING_FILLED_SECTIONS = (
 # can restore a stale tidal constituent count — see docs/dev-notes/forge-blueprint-parameter-audit.md
 # §3a for the full trace, and ``tests/test_forge_blueprint.py::TestForgeBlueprintEngine
 # ::test_split_model_settings_excludes_generation_derived_leaves`` /
-# ``test_configure_build_does_not_clobber_generated_river_and_cdr_settings`` for the
+# ``test_configure_build_does_not_clobber_generated_river_and_tidal_settings`` for the
 # regression coverage.
+#
+# ``cdr_output.do_cdr_output`` is deliberately NOT listed here (2026-08): CDR output
+# is now an independent, user-controllable stream (decoupled from CDR forcing), so
+# a stored ``do_cdr_output`` value must survive the overlay like any other user
+# setting. The executor re-asserts ``do_cdr_output=True`` when a CDR forcing was
+# actually generated, restoring the guarantee this exclusion used to provide for
+# that one case — see ``ForgeExecutor.configure_build``.
 GENERATION_DERIVED_LEAF_KEYS: dict[str, tuple[str, ...]] = {
     "river_frc": (
         "river_source",
@@ -124,7 +131,6 @@ GENERATION_DERIVED_LEAF_KEYS: dict[str, tuple[str, ...]] = {
         "forcing_parameterized",
         "cdr_volume",
     ),
-    "cdr_output": ("do_cdr",),
     # Only ntides is genuinely generation-derived (the real tidal-constituent count
     # is only known once TPXO data is actually extracted). bry_tides/pot_tides/
     # ana_tides are static booleans -- the resolver/model_settings is their single
