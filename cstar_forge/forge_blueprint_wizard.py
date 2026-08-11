@@ -1668,6 +1668,10 @@ class _ForcingEditor:
         return acc
 
 
+# Preselected in the Model dropdown when present in the catalog (falls back to
+# the first catalog model otherwise).
+_DEFAULT_MODEL = "pio-dev"
+
 _GRID_INT = ("nx", "ny", "N")
 _GRID_FLOAT = ("size_x", "size_y", "center_lon", "center_lat", "rot")
 _SCOORD = ("theta_s", "theta_b", "hc")
@@ -1741,7 +1745,11 @@ class ForgeBlueprintWizard:
         self.model_dd = W.Dropdown(
             options=models,
             description="Model:",
-            value=(models[0] if models else None),
+            value=(
+                _DEFAULT_MODEL
+                if _DEFAULT_MODEL in models
+                else (models[0] if models else None)
+            ),
             style={"description_width": "110px"},
         )
         self.bgc_dd = W.Dropdown(
@@ -2219,6 +2227,8 @@ class ForgeBlueprintWizard:
 
         # --- workplan export (two-step C-Star workplan: forge -> roms_marbl) ---
         self.workplan_note = W.HTML(
+            "<span style='color:#b00'>⚠ Experimental — workplan export does not "
+            "work yet; the saved workplan is not currently runnable.</span><br>"
             "<span style='color:#666'>ℹ Saves the blueprint plus a two-step C-Star "
             "workplan: step <code>forge</code> generates the ROMS-MARBL inputs and "
             "blueprint, step <code>roms_marbl</code> runs the simulation from that "
@@ -2767,8 +2777,11 @@ class ForgeBlueprintWizard:
             for key, picker in (("start_time", self.start), ("end_time", self.end)):
                 if data.get(key):
                     picker.value = datetime.fromisoformat(str(data[key])).date()
-            if data.get("model_name") in self.model_dd.options:
-                self.model_dd.value = data["model_name"]
+            # model_name in Domain.yaml is provenance (the model in use when the
+            # domain was saved), not a preference: picking a domain must not
+            # override the user's Model selection, so it is deliberately NOT
+            # restored here (unlike the load-a-full-blueprint path, where the
+            # blueprint's composition.model is authoritative).
             self.topo_source.value = data.get("topography_source", "ETOPO5")
             self.topo_path.value = data.get("topography_path", "") or ""
             # Nesting: mirrors _populate_nesting (loaded-blueprint path) but reads
@@ -4281,17 +4294,17 @@ class ForgeBlueprintWizard:
                     self.save_status,
                 ),
                 section(
-                    "Workplan",
-                    self.workplan_note,
-                    W.HBox([self.workplan_btn]),
-                    self.workplan_status,
-                ),
-                section(
                     "Run",
                     self.run_warning,
                     self.run_later_note,
                     W.HBox([self.run_btn, self.run_status]),
                     self.run_output,
+                ),
+                section(
+                    "Workplan (experimental)",
+                    self.workplan_note,
+                    W.HBox([self.workplan_btn]),
+                    self.workplan_status,
                 ),
             ]
         )

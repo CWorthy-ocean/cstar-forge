@@ -466,9 +466,15 @@ def test_bgc_dd_none_with_default_bgc_forcing_surfaces_error_legibly():
 
 def test_use_pio_chk_default_seeded_from_model_spec():
     """use_pio_chk mirrors bgc_dd: it is seeded from the selected ModelSpec's
-    top-level use_pio (default False for the bundled catalog model).
+    top-level use_pio (True for pio-dev, the wizard's default model; False for
+    cson_roms-marbl_v0.1), and reseeded on a model switch.
     """
     wiz = ForgeBlueprintWizard()
+    assert wiz.model_dd.value == "pio-dev"
+    assert wiz.use_pio_chk.value is True
+    assert wiz._model_default_use_pio() is True
+
+    wiz.model_dd.value = "cson_roms-marbl_v0.1"
     assert wiz.use_pio_chk.value is False
     assert wiz._model_default_use_pio() is False
 
@@ -482,7 +488,11 @@ def test_use_pio_chk_emit_is_unconditional():
     wiz = ForgeBlueprintWizard()
     wiz.start.value = date(2012, 1, 1)
     wiz.end.value = date(2012, 1, 2)
-    assert wiz.use_pio_chk.value is False
+    # pio-dev (the default model) declares use_pio: true -- exactly the
+    # ModelSpec this test guards against: unchecking must emit an explicit
+    # False, not fall back to the ModelSpec default.
+    assert wiz.use_pio_chk.value is True
+    wiz.use_pio_chk.value = False
     wiz._rebuild()
     assert wiz.config is not None
     assert wiz.config.model_settings["cppdefs"]["use_pio"] is False

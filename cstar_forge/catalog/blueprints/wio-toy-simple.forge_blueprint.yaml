@@ -5,7 +5,7 @@ application: forge
 state: notset
 schema_version: 1.0.0
 working_dir: ~/cstar-forge-run/wio-toy-simple
-forge_blueprint_version: 4
+forge_blueprint_version: 5
 run:
   start_date: '2012-01-01T00:00:00'
   end_date: '2012-01-02T00:00:00'
@@ -391,7 +391,7 @@ model_settings:
     output_period: 3600.0
     nrpf: 4
   cdr_output:
-    do_cdr: false
+    do_cdr_output: false
     do_avg: true
     monthly_averages: false
     output_period: 3600
@@ -423,7 +423,7 @@ model_settings:
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: 0.3.0
+    commit: 0.4.0
     branch: null
   marbl:
     location: https://github.com/marbl-ecosys/MARBL.git
@@ -449,12 +449,12 @@ code:
     - marbl_in
 composition:
   model:
-    name: roms-marbl-0.3-default
+    name: roms-marbl-0.4-default
     origin: catalog
     modified: false
   domain:
     name: wio-toy
-    origin: catalog
+    origin: custom
     modified: false
   forcing:
     name: simple-bgc-demo
@@ -466,10 +466,10 @@ composition:
     modified: false
   overrides: {}
 provenance:
-  generated_at: '2026-08-11T17:05:36.222829Z'
-  forge_version: 9d057b4d-dirty
-  cstar_version: cstar-ocean==0.9.1
-  roms_tools_version: roms-tools==4.0.1
+  generated_at: '2026-08-11T23:11:05.911946Z'
+  forge_version: 46672c04-dirty
+  cstar_version: cstar-ocean==0.10.0
+  roms_tools_version: roms-tools==4.0.2.dev5+g8b6cd6c7c
   override_files_applied: []
-  content_hash: 97e339dfa3f2f3b871d0463fa3a396149163ba1d94cf677f305f070bd1a1c2d4
+  content_hash: 96e0034e96e34c8cf3fb7001da67959cfc671a9f878c88c6de0fba296545e9c8
   notes: null

@@ -2786,6 +2786,9 @@ class TestSaveModifiedPiecesToCatalog:
         # bundled catalog verbatim, so reusing that name here would collide.
         spec_name = "pio-dev-test"
         wiz = self._wizard(isolated_catalog)
+        # Pin a spec where use_pio=True / roms_ref="main" are genuine
+        # deviations (the default pio-dev spec already declares both).
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
         wiz.use_pio_chk.value = True
         wiz.roms_ref.value = "main"
         assert wiz.config.composition.model.modified is True  # spec deviation
@@ -2836,6 +2839,10 @@ class TestSaveModifiedPiecesToCatalog:
         from cstar_forge.forge_blueprint_wizard import _model_owned_settings
 
         wiz = self._wizard(isolated_catalog)
+        # Pin a spec whose base pin is NOT "main", so a spec that drops the
+        # live roms_ref actually loses information (pio-dev's base pin is
+        # already "main", which would make the roundtrip spuriously succeed).
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
         wiz.roms_ref.value = "main"
         # Simulate the pre-fix writer: a spec saved without the live roms_ref.
         isolated_catalog.register_model_from_settings(
@@ -2856,6 +2863,9 @@ class TestSaveModifiedPiecesToCatalog:
         # stay False while resolving with a different code/use_pio than the
         # selected catalog spec declares.
         wiz = self._wizard(isolated_catalog)
+        # Pin a spec whose base pin is NOT "main", so roms_ref="main" below is
+        # a real deviation (pio-dev, the default, already pins "main").
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
         assert wiz.config.composition.model.modified is False
 
         wiz.use_pio_chk.value = not wiz.use_pio_chk.value
