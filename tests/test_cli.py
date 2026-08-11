@@ -79,8 +79,9 @@ class TestEntryPointRegistration:
         # The metadata contract with C-Star's application registry: group
         # cstar.applications, name forge (the blueprint's `application` value),
         # target a bare module path C-Star imports so @register_application runs.
-        # Without this, `cstar blueprint run <forge_blueprint.yaml>` needs
-        # CSTAR_APP_MODULES=cstar_forge.forge.app in the environment.
+        # This is the only mechanism C-Star offers for out-of-tree applications:
+        # without it, `cstar blueprint run <forge_blueprint.yaml>` cannot resolve
+        # `application: forge` at all.
         import pathlib
 
         import cstar_forge

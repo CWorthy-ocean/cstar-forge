@@ -1010,17 +1010,6 @@ _EXTRAP_OPTS = [""] + [e.value for e in ExtrapMethod]
 _FORCING_CATEGORIES = ("surface", "boundary", "tidal", "river")
 _GLORYS_LAYOUT_OPTS = ["", "regional", "global"]  # "" = not specified
 
-# Prefix for commands routed through C-Star's application framework
-# (``cstar workplan run``, ``cstar blueprint run``). An installed cstar-forge
-# registers the forge app via the ``cstar.applications`` entry point, so newer
-# C-Star resolves ``application: forge`` on its own; this prefix is kept because
-# it is also what makes those commands work on C-Star releases predating that
-# group, and it is harmless when redundant. The ``cstar forge run`` path never
-# needs it -- it calls the forge CLI directly, bypassing the registry.
-_FORGE_APP_MODULE = "cstar_forge.forge.app"
-_CSTAR_APP_MODULES_ENV = "CSTAR_APP_MODULES"
-_FORGE_APP_MODULES_PREFIX = f"{_CSTAR_APP_MODULES_ENV}={_FORGE_APP_MODULE} "
-
 # Valid source names per (category, type).  Drives name dropdowns in the forcing editor.
 _SOURCE_OPTS: dict[Any, list[str]] = {
     ("surface", SurfaceType.PHYSICS.value): [e.value for e in PhysicsSurfaceSource],
@@ -4046,10 +4035,11 @@ class ForgeBlueprintWizard:
             from cstar.orchestration.serialization import serialize
 
             serialize(wp_path, workplan)
-            # CSTAR_APP_MODULES makes the forge app discoverable to C-Star's
-            # registry at schedule time; it propagates to spawned jobs
-            # automatically (all CSTAR_* vars are captured with the run).
-            cmd = f"{_FORGE_APP_MODULES_PREFIX}cstar workplan run {wp_path}"
+            # No env-var prefix: an installed cstar-forge registers the forge app
+            # through its ``cstar.applications`` entry point, so C-Star's registry
+            # resolves ``application: forge`` in the scheduling process and in the
+            # jobs it spawns, without anything being propagated by hand.
+            cmd = f"cstar workplan run {wp_path}"
             self.workplan_status.value = (
                 f"<span style='color:#080'>Saved {bp_path} and {wp_path}</span><br>"
                 f"Run it with: <code>{cmd}</code>"

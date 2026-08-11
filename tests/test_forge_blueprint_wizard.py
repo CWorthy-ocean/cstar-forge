@@ -878,8 +878,10 @@ def test_build_run_command_uses_cstar_forge_run_from_this_env():
     """The Run button invokes `cstar forge run <path>` via the `cstar` script installed
     next to the interpreter already running the wizard's kernel -- not a bare `cstar`
     from PATH or a `conda run` invocation (avoids conda/micromamba env-discovery
-    issues). `cstar forge run` is preferred over `cstar blueprint run` because it does
-    not need CSTAR_APP_MODULES set for C-Star's registry to resolve the forge app.
+    issues). `cstar forge run` rather than `cstar blueprint run`: the CLI-plugin group
+    it rides on shipped in C-Star 0.9.1 (this package's floor), while resolving a forge
+    blueprint through the application registry needs the newer `cstar.applications`
+    group.
     """
     import sys
 
@@ -978,7 +980,9 @@ def test_on_save_workplan_writes_to_catalog_workplans_dir(tmp_path):
     assert [s.name for s in wp.steps] == ["forge", "roms_marbl"]
     assert wp.steps[1].is_deferred
     assert "cstar workplan run" in wiz.workplan_status.value
-    assert "CSTAR_APP_MODULES=cstar_forge.forge.app" in wiz.workplan_status.value
+    # The printed command carries no env-var prefix: the forge app reaches C-Star's
+    # registry through cstar-forge's `cstar.applications` entry point.
+    assert "CSTAR_APP_MODULES" not in wiz.workplan_status.value
 
 
 @requires_workplan_support

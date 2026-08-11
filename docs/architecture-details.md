@@ -145,25 +145,28 @@ requires:
 - `ForgeApplication` — `@register_application`-decorated `ApplicationDefinition`
   wiring `ForgeBlueprint` + `ForgeRunner` together under `name = "forge"`.
 
-Discoverable via the `cstar.applications` entry-point group that cstar-forge
-declares (`forge = "cstar_forge.forge.app"` in `pyproject.toml`) — on a C-Star
-that consults this group, an installed `cstar-forge` is enough; no env var
-needed. `CSTAR_APP_MODULES` (comma-separated importable module paths, each
-imported before app lookup) remains the escape hatch for an older C-Star, or
-for a checkout that isn't pip-installed:
+Discovered through the `cstar.applications` entry-point group that cstar-forge
+declares in `pyproject.toml`:
 
+```toml
+[project.entry-points."cstar.applications"]
+forge = "cstar_forge.forge.app"
 ```
-export CSTAR_APP_MODULES=cstar_forge.forge.app
-```
+
+C-Star imports that module the first time an `application: forge` blueprint is
+resolved, so an installed cstar-forge is the whole requirement — no environment
+variables, and it holds in spawned scheduler jobs too. This is C-Star's only
+mechanism for out-of-tree applications (the older `CSTAR_APP_MODULES` env var was
+removed); a name already used by a built-in C-Star application cannot be claimed
+this way.
 
 Three ways to run a forge blueprint:
 
 1. `cstar blueprint run forge_blueprint.yaml` — the app-framework path
    (defaults only; no forge-specific options), the no-frills front door.
-   Resolves `application: forge` via the `cstar.applications` entry point
-   above; needs a C-Star release that consults that group — on an older
-   C-Star, set `CSTAR_APP_MODULES=cstar_forge.forge.app` first, or use one of
-   the entries below.
+   Resolves `application: forge` via the entry point above, so it needs a C-Star
+   release that consults that group; on an older C-Star use one of the entries
+   below.
 2. `cstar forge run forge_blueprint.yaml` — the `cli.py` typer sub-app,
    registered via the `cstar.cli` entry-point group (requires a C-Star
    release with the discovery hook); a full-option argv passthrough to

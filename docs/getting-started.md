@@ -78,14 +78,13 @@ Blueprint: ~/cstar-forge-run/.../roms_marbl_blueprint.yaml
 Run it with:  cstar blueprint run <path>
 ```
 
-For per-run options beyond `cstar blueprint run`'s defaults — stage
-selection, `--clobber`, dask tuning, `--only-inputs`, verbosity — use the
-dedicated `cstar forge run path/to/forge_blueprint.yaml` entry point (see
-`cstar forge run --help`), a full argv passthrough to the same executor. It's
-also the route to use on a C-Star that predates `cstar.applications`
-entry-point support, along with `CSTAR_APP_MODULES=cstar_forge.forge.app
-cstar blueprint run ...`. The equivalent `python -m cstar_forge.run` module
-CLI is always available too.
+```{tip}
+Power-user options (stage selection,
+`--clobber`, dask tuning, verbosity) are available via the the dedicated
+`cstar forge run path/to/forge_blueprint.yaml` entry point (see
+`cstar forge run --help`).
+```
+
 
 ## Run the simulation
 

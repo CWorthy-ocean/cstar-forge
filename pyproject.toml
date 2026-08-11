@@ -60,11 +60,11 @@ forge = "cstar_forge.cli:app"
 
 # Makes the forge *application* discoverable to C-Star's registry, so
 # `cstar blueprint run <forge_blueprint.yaml>` (and workplan steps, schema
-# generation, deferred-blueprint resolution) resolve `application: forge`
-# without CSTAR_APP_MODULES set. The value is a bare module path: C-Star
-# imports it so the module's @register_application decorator runs. Needs a
-# C-Star release that consults this group; CSTAR_APP_MODULES=cstar_forge.forge.app
-# remains the escape hatch for older C-Star and for uninstalled checkouts.
+# generation, deferred-blueprint resolution) resolve `application: forge` from
+# an installed cstar-forge alone. The value is a bare module path: C-Star imports
+# it so the module's @register_application decorator runs. This is the only
+# supported registration mechanism, and it needs a C-Star release that consults
+# the group -- on an older C-Star, use `cstar forge run` (or the module CLI).
 [project.entry-points."cstar.applications"]
 forge = "cstar_forge.forge.app"
 
@@ -85,6 +85,7 @@ dev = [
     "pytest-xdist",
     "ruff>=0.12.2",
     "pre-commit>=3.8",
+    "mystmd",
     # netCDF4 lets xarray open real .nc files when tests or roms_tools are not
     # fully mocked (folded in from the former `test` extra).
     "netCDF4",
