@@ -205,8 +205,8 @@ model_settings:
     interp_frc: 0
     check_bulk_frc_units: false
   tides:
-    bry_tides: true
-    pot_tides: true
+    bry_tides: false
+    pot_tides: false
     ana_tides: false
     ntides: 0
   sponge_tune:
@@ -466,10 +466,10 @@ composition:
     modified: false
   overrides: {}
 provenance:
-  generated_at: '2026-08-11T16:05:59.350062Z'
-  forge_version: 137cca33-dirty
+  generated_at: '2026-08-11T17:05:36.222829Z'
+  forge_version: 9d057b4d-dirty
   cstar_version: cstar-ocean==0.9.1
   roms_tools_version: roms-tools==4.0.1
   override_files_applied: []
-  content_hash: 7a69fed5dd7525890b1a3c06c022d507f26789ff3e7052e6d09a1c60fd70e483
+  content_hash: 97e339dfa3f2f3b871d0463fa3a396149163ba1d94cf677f305f070bd1a1c2d4
   notes: null

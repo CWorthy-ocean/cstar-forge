@@ -20,7 +20,7 @@ flowchart TD
 
     C["User input / wizard UI"] -->|domain, forcing, run window, overrides| B
 
-    B -->|"cstar forge run forge_blueprint.yaml<br/>(= python -m cstar_forge.run)"| D[ForgeExecutor]
+    B -->|"cstar blueprint run forge_blueprint.yaml<br/>(= python -m cstar_forge.run)"| D[ForgeExecutor]
 
     D -->|model_post_init| E["Initialize<br/>Create Grid<br/>Init roms_marbl Blueprint (in memory)<br/>Load Default Settings<br/>."]
 
@@ -51,8 +51,9 @@ values on top of that single file.
 
 ### Workflow Steps
 
-Steps 0–3 are what `cstar forge run` performs; compilation
-and execution happen separately, when C-Star runs the emitted blueprint.
+Steps 0–3 are what `cstar blueprint run` (or `cstar forge run`) performs;
+compilation and execution happen separately, when C-Star runs the emitted
+blueprint.
 
 0. **Resolve** (`build_forge_blueprint()`, `cstar_forge/forge_blueprint_resolve.py`)
    - Assemble a `ForgeBlueprint` from the catalog pieces (`ModelSpec`, `DomainSpec`,
@@ -65,7 +66,7 @@ and execution happen separately, when C-Star runs the emitted blueprint.
 1. **Initialize** (`model_post_init()` / `_initialize_roms_marbl_blueprint()`)
    - Construct a `ForgeExecutor` from the resolved `ForgeBlueprint`
      (`ForgeExecutor.from_forge_blueprint`), invoked via
-     `cstar forge run forge_blueprint.yaml`
+     `cstar blueprint run forge_blueprint.yaml`
    - Initialize grid object from `grid_kwargs`
    - Create the in-memory roms_marbl blueprint structure with placeholder data
    - Load default settings from the resolved `ForgeBlueprint.model_settings`

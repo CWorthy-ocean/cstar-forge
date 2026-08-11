@@ -1010,10 +1010,13 @@ _EXTRAP_OPTS = [""] + [e.value for e in ExtrapMethod]
 _FORCING_CATEGORIES = ("surface", "boundary", "tidal", "river")
 _GLORYS_LAYOUT_OPTS = ["", "regional", "global"]  # "" = not specified
 
-# C-Star's registry only finds out-of-tree applications listed in
-# CSTAR_APP_MODULES, so anything routed through the application framework
-# (``cstar workplan run``, ``cstar blueprint run``) needs this prefix. The
-# ``cstar forge run`` path does not -- it calls the forge CLI directly.
+# Prefix for commands routed through C-Star's application framework
+# (``cstar workplan run``, ``cstar blueprint run``). An installed cstar-forge
+# registers the forge app via the ``cstar.applications`` entry point, so newer
+# C-Star resolves ``application: forge`` on its own; this prefix is kept because
+# it is also what makes those commands work on C-Star releases predating that
+# group, and it is harmless when redundant. The ``cstar forge run`` path never
+# needs it -- it calls the forge CLI directly, bypassing the registry.
 _FORGE_APP_MODULE = "cstar_forge.forge.app"
 _CSTAR_APP_MODULES_ENV = "CSTAR_APP_MODULES"
 _FORGE_APP_MODULES_PREFIX = f"{_CSTAR_APP_MODULES_ENV}={_FORGE_APP_MODULE} "

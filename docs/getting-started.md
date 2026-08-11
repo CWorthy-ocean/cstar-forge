@@ -63,7 +63,7 @@ the wizard entirely and process it directly.
 ## Process the blueprint
 
 ```bash
-cstar forge run path/to/forge_blueprint.yaml
+cstar blueprint run path/to/forge_blueprint.yaml
 ```
 
 This fetches the source data (GLORYS, ERA5 — expect the first run to spend
@@ -78,10 +78,14 @@ Blueprint: ~/cstar-forge-run/.../roms_marbl_blueprint.yaml
 Run it with:  cstar blueprint run <path>
 ```
 
-The full executor option set (stage selection, `--clobber`, dask tuning,
-`--only-inputs`, verbosity) is documented in `cstar forge run --help`. The
-equivalent `python -m cstar_forge.run` module CLI remains available as a
-fallback if the `cstar forge` sub-app isn't registered in your environment.
+For per-run options beyond `cstar blueprint run`'s defaults — stage
+selection, `--clobber`, dask tuning, `--only-inputs`, verbosity — use the
+dedicated `cstar forge run path/to/forge_blueprint.yaml` entry point (see
+`cstar forge run --help`), a full argv passthrough to the same executor. It's
+also the route to use on a C-Star that predates `cstar.applications`
+entry-point support, along with `CSTAR_APP_MODULES=cstar_forge.forge.app
+cstar blueprint run ...`. The equivalent `python -m cstar_forge.run` module
+CLI is always available too.
 
 ## Run the simulation
 
@@ -89,16 +93,14 @@ fallback if the `cstar forge` sub-app isn't registered in your environment.
 cstar blueprint run <path-to-roms_marbl_blueprint.yaml>
 ```
 
-This is a different command than the previous step. The `application` field
-inside each blueprint YAML is what selects which application processes it.
-The **forge blueprint** (`application: forge`) used the dedicated
-`cstar forge run` entry point above because forge is an out-of-tree C-Star
-application (its `cstar.cli` sub-app also exposes forge-specific power-user
-options that the generic runner doesn't). This generated **ROMS-MARBL
-blueprint** (`application: roms_marbl`), with all of the inputs needed to
-execute the simulation, is a built-in C-Star application that C-Star's
-generic `cstar blueprint run` command already knows how to dispatch to
-directly, with no extra setup.
+Both steps use the same `cstar blueprint run` command; each blueprint's
+`application` field tells C-Star which application processes it. The forge
+blueprint from the previous step (`application: forge`) is handled by the
+`forge` application that the installed `cstar-forge` package registers via
+its entry point. This generated **ROMS-MARBL blueprint**
+(`application: roms_marbl`), with all of the inputs needed to execute the
+simulation, is handled by the `roms_marbl` application built into C-Star
+itself.
 
 C-Star fetches and compiles the model code (using the toolchain installed
 above) and executes the simulation; outputs land under the same working

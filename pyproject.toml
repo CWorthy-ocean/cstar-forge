@@ -58,6 +58,16 @@ dependencies = [
 [project.entry-points."cstar.cli"]
 forge = "cstar_forge.cli:app"
 
+# Makes the forge *application* discoverable to C-Star's registry, so
+# `cstar blueprint run <forge_blueprint.yaml>` (and workplan steps, schema
+# generation, deferred-blueprint resolution) resolve `application: forge`
+# without CSTAR_APP_MODULES set. The value is a bare module path: C-Star
+# imports it so the module's @register_application decorator runs. Needs a
+# C-Star release that consults this group; CSTAR_APP_MODULES=cstar_forge.forge.app
+# remains the escape hatch for older C-Star and for uninstalled checkouts.
+[project.entry-points."cstar.applications"]
+forge = "cstar_forge.forge.app"
+
 [project.optional-dependencies]
 # The wizard/notebook app stack: running cstar_forge/forge-blueprint-wizard-app.ipynb
 # under voila (see run-wizard-app.sh), or interactively in Jupyter.

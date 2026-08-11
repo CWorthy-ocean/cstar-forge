@@ -74,3 +74,31 @@ class TestEntryPointRegistration:
         text = pyproject.read_text()
         assert '[project.entry-points."cstar.cli"]' in text
         assert 'forge = "cstar_forge.cli:app"' in text
+
+    def test_pyproject_registers_cstar_applications_entry_point(self):
+        # The metadata contract with C-Star's application registry: group
+        # cstar.applications, name forge (the blueprint's `application` value),
+        # target a bare module path C-Star imports so @register_application runs.
+        # Without this, `cstar blueprint run <forge_blueprint.yaml>` needs
+        # CSTAR_APP_MODULES=cstar_forge.forge.app in the environment.
+        import pathlib
+
+        import cstar_forge
+
+        pyproject = pathlib.Path(cstar_forge.__file__).parents[1] / "pyproject.toml"
+        if not pyproject.is_file():
+            pytest.skip("no source checkout (installed package)")
+        text = pyproject.read_text()
+        assert '[project.entry-points."cstar.applications"]' in text
+        assert 'forge = "cstar_forge.forge.app"' in text
+
+    def test_registered_app_module_registers_the_forge_application(self):
+        # The entry-point target must be a module whose import registers `forge`
+        # in C-Star's registry -- a valid module path that registers nothing (or
+        # under a different name) would satisfy the metadata check above while
+        # leaving `cstar blueprint run` unable to resolve a forge blueprint.
+        import importlib
+
+        core = pytest.importorskip("cstar.applications.core")
+        importlib.import_module("cstar_forge.forge.app")
+        assert "forge" in core._registry

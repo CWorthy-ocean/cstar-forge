@@ -145,8 +145,12 @@ requires:
 - `ForgeApplication` — `@register_application`-decorated `ApplicationDefinition`
   wiring `ForgeBlueprint` + `ForgeRunner` together under `name = "forge"`.
 
-Discoverable via C-Star's `CSTAR_APP_MODULES` environment variable (comma-separated
-importable module paths, each imported before app lookup):
+Discoverable via the `cstar.applications` entry-point group that cstar-forge
+declares (`forge = "cstar_forge.forge.app"` in `pyproject.toml`) — on a C-Star
+that consults this group, an installed `cstar-forge` is enough; no env var
+needed. `CSTAR_APP_MODULES` (comma-separated importable module paths, each
+imported before app lookup) remains the escape hatch for an older C-Star, or
+for a checkout that isn't pip-installed:
 
 ```
 export CSTAR_APP_MODULES=cstar_forge.forge.app
@@ -154,18 +158,20 @@ export CSTAR_APP_MODULES=cstar_forge.forge.app
 
 Three ways to run a forge blueprint:
 
-1. `cstar forge run forge_blueprint.yaml` — **recommended.** The `cli.py`
-   typer sub-app, registered via the `cstar.cli` entry-point group (requires a
-   C-Star release with the discovery hook); a full-option argv passthrough to
-   `run.main`.
-2. `cstar blueprint run forge_blueprint.yaml` — the app-framework path
-   (defaults only; no forge-specific options). Requires
-   `CSTAR_APP_MODULES=cstar_forge.forge.app` in the environment (set just
-   above) — without it C-Star's registry doesn't know how to route a
-   `forge`-application blueprint and fails with `ValueError: No application
-   for 'forge'`.
+1. `cstar blueprint run forge_blueprint.yaml` — the app-framework path
+   (defaults only; no forge-specific options), the no-frills front door.
+   Resolves `application: forge` via the `cstar.applications` entry point
+   above; needs a C-Star release that consults that group — on an older
+   C-Star, set `CSTAR_APP_MODULES=cstar_forge.forge.app` first, or use one of
+   the entries below.
+2. `cstar forge run forge_blueprint.yaml` — the `cli.py` typer sub-app,
+   registered via the `cstar.cli` entry-point group (requires a C-Star
+   release with the discovery hook); a full-option argv passthrough to
+   `run.main`. Reach for this for per-run options `cstar blueprint run`
+   doesn't expose (stage selection, `--clobber`, dask tuning,
+   `--only-inputs`, verbosity).
 3. `python -m cstar_forge.run forge_blueprint.yaml` — the module CLI both of
-   the above ultimately reach; always available as a fallback.
+   the above ultimately reach; always available.
 
 The app lives in this repo (not relocated into the C-Star repo) — deliberate,
 per §1's target: the blueprint/executor design is still iterating, so
@@ -191,9 +197,9 @@ relocation stays a later step.
 4. `wiz.config.to_yaml(path)` writes the portable `forge_blueprint.yaml`.
 
 **Execution (blueprint → engine → executor), same machine or a different one:**
-5. `cstar forge run forge_blueprint.yaml` — resolves the host via
-   `cstar_forge.config.resolve_host()` (machine tag, `source_data_cache`,
-   `working_dir` override).
+5. `cstar blueprint run forge_blueprint.yaml` (or `cstar forge run …`) —
+   resolves the host via `cstar_forge.config.resolve_host()` (machine tag,
+   `source_data_cache`, `working_dir` override).
 6. `forge.forge_blueprint_engine.process_forge_blueprint(cfg, host, ...)` builds a
    `ForgeExecutor` via `ForgeExecutor.from_forge_blueprint(cfg, host)` and drives:
    `ensure_source_data()` → `generate_inputs()` → `configure_build()`.

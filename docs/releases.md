@@ -3,6 +3,7 @@
 ## Unreleased
 
 * New CLI: `cstar forge run` (full executor option set, passthrough) and `cstar forge wizard`, registered with C-Star's CLI via the `cstar.cli` entry-point group (requires a C-Star release with the discovery hook; `python -m cstar_forge.run` continues to work)
+* `cstar-forge` now declares a `cstar.applications` entry point (`forge = "cstar_forge.forge.app"`), so `cstar blueprint run <forge_blueprint.yaml>` resolves `application: forge` with no `CSTAR_APP_MODULES` set, on a C-Star that consults the group
 * cstar-ocean is now sourced from conda-forge in the pixi/conda environments
 * New pixi environments: `user` (pure-conda replay of the full stack from conda-forge) and `dev-laptop` (dev plus a local build toolchain); lockfile consumption artifacts are exported per release via `scripts/export-lock-artifacts.py`
 * Docs restructured: new Getting Started walkthrough, installation page reorganized around HPC/developer paths, architecture pages consolidated and refreshed
