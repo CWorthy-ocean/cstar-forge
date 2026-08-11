@@ -5,7 +5,8 @@
 #
 # Note on the `pip:` section: it lists every pypi-dependencies entry from
 # pyproject.toml's [project] deps/extras, including several (roms-tools, dask,
-# distributed, numpy, xarray, pandas, netcdf4, pyyaml) that are ALSO installed
+# distributed, numpy, xarray, pandas, netcdf4, pyyaml, kerchunk, nest-asyncio,
+# ujson, fastparquet) that are ALSO installed
 # from conda-forge above. This is expected and harmless: `pip install` only
 # acts when a requirement isn't already satisfied, so for a fresh
 # `conda env create -f environment.yml` those conda-installed versions already
@@ -63,5 +64,9 @@ dependencies:
   - nbformat
   - psutil
   - typer
+  - kerchunk
+  - nest-asyncio
+  - ujson
+  - fastparquet
   - cstar-ocean>=0.9.1
   - roms-tools>=4.0.0, <5

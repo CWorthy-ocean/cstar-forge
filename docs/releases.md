@@ -6,6 +6,7 @@
 * cstar-ocean is now sourced from conda-forge in the pixi/conda environments
 * New pixi environments: `user` (pure-conda replay of the full stack from conda-forge) and `dev-laptop` (dev plus a local build toolchain); lockfile consumption artifacts are exported per release via `scripts/export-lock-artifacts.py`
 * Docs restructured: new Getting Started walkthrough, installation page reorganized around HPC/developer paths, architecture pages consolidated and refreshed
+* The GLORYS subchunking libraries (`kerchunk`, `nest-asyncio`, `ujson`, `fastparquet`) are now declared forge dependencies. Subchunking is on by default, so a `conda install -c conda-forge cstar-forge` environment previously failed at input generation with an `ImportError` from `glorys_subchunk.py`
 
 ## 0.3.0
 

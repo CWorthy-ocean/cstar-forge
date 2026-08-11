@@ -29574,6 +29574,10 @@ packages:
   - nbformat
   - psutil
   - typer
+  - kerchunk
+  - nest-asyncio
+  - ujson
+  - fastparquet
   - cstar-ocean>=0.9.1
   - roms-tools>=4.0.0,<5
   - jupyterlab ; extra == 'app'

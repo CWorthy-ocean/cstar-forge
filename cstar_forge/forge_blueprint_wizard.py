@@ -1010,6 +1010,12 @@ _EXTRAP_OPTS = [""] + [e.value for e in ExtrapMethod]
 _FORCING_CATEGORIES = ("surface", "boundary", "tidal", "river")
 _GLORYS_LAYOUT_OPTS = ["", "regional", "global"]  # "" = not specified
 
+# ``cstar blueprint run`` resolves a blueprint's application through C-Star's
+# registry, which only finds out-of-tree applications listed in CSTAR_APP_MODULES.
+_FORGE_APP_MODULE = "cstar_forge.forge.app"
+_CSTAR_APP_MODULES_ENV = "CSTAR_APP_MODULES"
+_FORGE_APP_MODULES_PREFIX = f"{_CSTAR_APP_MODULES_ENV}={_FORGE_APP_MODULE} "
+
 # Valid source names per (category, type).  Drives name dropdowns in the forcing editor.
 _SOURCE_OPTS: dict[Any, list[str]] = {
     ("surface", SurfaceType.PHYSICS.value): [e.value for e in PhysicsSurfaceSource],
@@ -2198,7 +2204,7 @@ class ForgeBlueprintWizard:
             _piece_save_row("(new ForcingSpec name)")
         )
 
-        # --- run (invokes the executor CLI on the just-saved blueprint) ---
+        # --- run (invokes the C-Star CLI on the just-saved blueprint) ---
         from cstar_forge.config import system as _detected_system
 
         self.run_warning = W.HTML(
@@ -2206,15 +2212,13 @@ class ForgeBlueprintWizard:
             "memory and CPU depending on grid size.</b> Run this from a compute node "
             "(or another host) with resources appropriate for your domain — this is "
             f"not checked automatically. Detected host: <code>{_detected_system}</code>."
-            "<br><span style='color:#666'>ℹ This interface is likely to change in the "
-            "near future (e.g. once the executor moves into C-Star, this may become a "
-            "<code>cstar blueprint run</code> command).</span>"
         )
         self.run_later_note = W.HTML(
             "<span style='color:#666'>ℹ To run this later, or on a different "
             "machine, save the blueprint above and then (from the "
             "<code>cstar-forge</code> environment) call: "
-            "<code>python -m cstar_forge.run &lt;path/to/forge_blueprint.yaml&gt;</code></span>"
+            f"<code>{_FORGE_APP_MODULES_PREFIX}cstar blueprint run "
+            "&lt;path/to/forge_blueprint.yaml&gt;</code></span>"
         )
         self.run_btn = W.Button(description="Run", icon="play")
         self.run_status = W.HTML("")
@@ -3870,13 +3874,37 @@ class ForgeBlueprintWizard:
             )
 
     def _build_run_command(self, blueprint_path: str) -> list[str]:
-        """Command the Run button invokes. Isolated here so swapping this for a
-        future ``cstar blueprint run <path>`` (once the executor moves into the
-        C-Star repo) is a one-line change.
+        """Command the Run button invokes: ``cstar blueprint run <path>``.
+
+        Prefers the ``cstar`` console script installed alongside the running
+        interpreter (so the subprocess stays in this environment rather than
+        whatever is first on PATH), falling back to the module form.
         """
         import sys
 
-        return [sys.executable, "-m", "cstar_forge.run", blueprint_path]
+        cstar_exe = Path(sys.executable).with_name("cstar")
+        launcher = (
+            [str(cstar_exe)]
+            if cstar_exe.exists()
+            else [sys.executable, "-m", "cstar.cli.cli"]
+        )
+        return [*launcher, "blueprint", "run", blueprint_path]
+
+    def _build_run_env(self) -> dict[str, str]:
+        """Environment for the Run subprocess: the caller's environment plus the
+        forge app module in ``CSTAR_APP_MODULES``, without which C-Star's registry
+        cannot resolve a forge blueprint's application. A value the user already
+        exported is extended, not replaced.
+        """
+        import os
+
+        env = dict(os.environ)
+        existing = env.get(_CSTAR_APP_MODULES_ENV, "")
+        modules = [m.strip() for m in existing.split(",") if m.strip()]
+        if _FORGE_APP_MODULE not in modules:
+            modules.append(_FORGE_APP_MODULE)
+        env[_CSTAR_APP_MODULES_ENV] = ",".join(modules)
+        return env
 
     def _on_run(self, _):
         if not self._ensure_boundaries_derived():
@@ -3895,9 +3923,9 @@ class ForgeBlueprintWizard:
         _schedule_coroutine(self._run_async())
 
     async def _run_async(self):
-        """Save the current blueprint, then launch the executor CLI as a
-        subprocess and stream its combined stdout/stderr into ``run_output`` line
-        by line as it arrives (not all at once at the end).
+        """Save the current blueprint, then launch the C-Star CLI as a subprocess
+        and stream its combined stdout/stderr into ``run_output`` line by line as
+        it arrives (not all at once at the end).
         """
         import asyncio
 
@@ -3907,11 +3935,14 @@ class ForgeBlueprintWizard:
         try:
             path = self.config.to_yaml(Path(self.save_path.value))
             cmd = self._build_run_command(str(path))
-            self.run_status.value = f"<i>running: {' '.join(cmd)}</i>"
+            env = self._build_run_env()
+            shown_env = f"{_CSTAR_APP_MODULES_ENV}={env[_CSTAR_APP_MODULES_ENV]}"
+            self.run_status.value = f"<i>running: {shown_env} {' '.join(cmd)}</i>"
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=env,
             )
             # append_stdout (not `with self.run_output: print(...)`) appends
             # directly to the widget's output list -- it works whether or not a

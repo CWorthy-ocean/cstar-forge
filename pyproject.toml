@@ -38,6 +38,14 @@ dependencies = [
     "nbformat",
     "psutil",
     "typer",
+    # GLORYS just-in-time subchunking (cstar_forge/forge/glorys_subchunk.py), on by
+    # default for multi-file GLORYS sources -- so these are runtime, not optional.
+    # ujson is listed explicitly (kerchunk also pulls it) because glorys_subchunk
+    # imports it directly; fastparquet backs the ".parquet" reference format.
+    "kerchunk",
+    "nest-asyncio",
+    "ujson",
+    "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
     "cstar-ocean>=0.9.1",
     "roms_tools>=4.0.0,<5",
@@ -100,10 +108,9 @@ numpy = "*"
 xarray = "*"
 pandas = "*"
 netcdf4 = "*"
-# GLORYS just-in-time subchunking (interim; see cstar_forge/glorys_subchunk.py) —
-# not a forge dependency listed in [project], but tests/test_input_data.py
-# exercises this path (importorskip-guarded) and environment.yml has always
-# carried these for the same reason.
+# GLORYS just-in-time subchunking (see cstar_forge/forge/glorys_subchunk.py) —
+# also listed in [project] dependencies (subchunking is on by default); repeated
+# here so pixi/conda solves take them from conda-forge rather than PyPI.
 kerchunk = "*"
 fastparquet = "*"
 nest-asyncio = "*"
