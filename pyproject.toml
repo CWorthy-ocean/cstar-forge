@@ -38,9 +38,19 @@ dependencies = [
     "nbformat",
     "psutil",
     "typer",
+    # GLORYS just-in-time subchunking (cstar_forge/forge/glorys_subchunk.py), on by
+    # default for multi-file GLORYS sources -- so these are runtime, not optional.
+    # ujson is listed explicitly (kerchunk also pulls it) because glorys_subchunk
+    # imports it directly; fastparquet backs the ".parquet" reference format.
+    "kerchunk",
+    "nest-asyncio",
+    "ujson",
+    "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.9.1",
-    "roms_tools>=4.0.0,<5",
+    "cstar-ocean>=0.10.0",
+    # >=4.1.0: first release with unified BGC v2.1 dataset support, which forge
+    # requires (cstar-ocean's own pin is looser because it doesn't).
+    "roms_tools>=4.1.0,<5",
 ]
 
 # Registers the `cstar forge ...` subcommand group with C-Star's CLI
@@ -49,6 +59,16 @@ dependencies = [
 # and `python -m cstar_forge.run` remain the standalone entrypoints.
 [project.entry-points."cstar.cli"]
 forge = "cstar_forge.cli:app"
+
+# Makes the forge *application* discoverable to C-Star's registry, so
+# `cstar blueprint run <forge_blueprint.yaml>` (and workplan steps, schema
+# generation, deferred-blueprint resolution) resolve `application: forge` from
+# an installed cstar-forge alone. The value is a bare module path: C-Star imports
+# it so the module's @register_application decorator runs. This is the only
+# supported registration mechanism, and it needs a C-Star release that consults
+# the group -- on an older C-Star, use `cstar forge run` (or the module CLI).
+[project.entry-points."cstar.applications"]
+forge = "cstar_forge.forge.app"
 
 [project.optional-dependencies]
 # The wizard/notebook app stack: running cstar_forge/forge-blueprint-wizard-app.ipynb
@@ -67,6 +87,7 @@ dev = [
     "pytest-xdist",
     "ruff>=0.12.2",
     "pre-commit>=3.8",
+    "mystmd",
     # netCDF4 lets xarray open real .nc files when tests or roms_tools are not
     # fully mocked (folded in from the former `test` extra).
     "netCDF4",
@@ -92,18 +113,17 @@ cstar-forge = { path = ".", editable = true }
 # stack it and forge depend on) go here so xesmf/esmf and friends come
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
-roms-tools = ">=4.0.0,<5"
-cstar-ocean = ">=0.9.1"
+roms-tools = ">=4.1.0,<5"
+cstar-ocean = ">=0.10.0"
 dask = "*"
 distributed = "*"
 numpy = "*"
 xarray = "*"
 pandas = "*"
 netcdf4 = "*"
-# GLORYS just-in-time subchunking (interim; see cstar_forge/glorys_subchunk.py) —
-# not a forge dependency listed in [project], but tests/test_input_data.py
-# exercises this path (importorskip-guarded) and environment.yml has always
-# carried these for the same reason.
+# GLORYS just-in-time subchunking (see cstar_forge/forge/glorys_subchunk.py) —
+# also listed in [project] dependencies (subchunking is on by default); repeated
+# here so pixi/conda solves take them from conda-forge rather than PyPI.
 kerchunk = "*"
 fastparquet = "*"
 nest-asyncio = "*"
