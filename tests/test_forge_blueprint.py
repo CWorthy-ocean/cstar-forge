@@ -1,5 +1,5 @@
 """
-Tests for the ForgeBlueprint schema (``cstar_forge.forge.forge_blueprint``) and the Phase-1
+Tests for the ForgeBlueprint schema (``cstar_forge.forge.forge_blueprint``) and the
 resolver (``cstar_forge.forge_blueprint_resolve.build_forge_blueprint``).
 
 These validate that the resolver reproduces the known ``test-tiny`` demo values,
@@ -75,7 +75,7 @@ def test_naming_is_derived_not_stored():
 def test_resolved_provenance_is_unstamped():
     """generated_at/forge_version/cstar_version/roms_tools_version are left None by
     the resolver -- ``ForgeBlueprint.to_yaml_str`` is what stamps them (see
-    TestProvenanceStamping below), keeping Phase 1 resolution deterministic and
+    TestProvenanceStamping below), keeping resolution deterministic and
     independent of whether ``roms_tools`` happens to be installed.
     """
     cfg = _build()
@@ -197,6 +197,53 @@ def test_from_yaml_rejects_newer_version(tmp_path):
         ForgeBlueprint.from_yaml(p)
 
 
+@pytest.mark.parametrize("legacy_value", [False, True])
+def test_migrate_v4_cdr_output_do_cdr_renamed(tmp_path, legacy_value):
+    """v4 -> v5: a v4-shaped ``model_settings.cdr_output.do_cdr`` is renamed
+    ``do_cdr_output`` on load, for both legacy values.
+    """
+    cfg = _build()
+    p = cfg.to_yaml(tmp_path / "forge_blueprint.yaml")
+    data = yaml.safe_load(p.read_text())
+
+    data["forge_blueprint_version"] = 4
+    cdr_output = data["model_settings"]["cdr_output"]
+    cdr_output["do_cdr"] = legacy_value
+    del cdr_output["do_cdr_output"]
+    p.write_text(yaml.safe_dump(data))
+
+    back = ForgeBlueprint.from_yaml(p)
+    assert back.model_settings["cdr_output"]["do_cdr_output"] is legacy_value
+    assert "do_cdr" not in back.model_settings["cdr_output"]
+    assert back.forge_blueprint_version == 5
+
+
+def test_migrate_v4_cdr_output_migration_is_idempotent(tmp_path):
+    """Already-current (do_cdr_output-shaped) data passes through unchanged --
+    calling the migration on already-migrated data must not error or re-rename.
+    """
+    from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
+
+    cfg = _build()
+    p = cfg.to_yaml(tmp_path / "forge_blueprint.yaml")
+    data = yaml.safe_load(p.read_text())
+    assert data["model_settings"]["cdr_output"]["do_cdr_output"] is False
+
+    migrated = migrate_forge_blueprint_data(data)
+    assert migrated["model_settings"]["cdr_output"]["do_cdr_output"] is False
+    assert "do_cdr" not in migrated["model_settings"]["cdr_output"]
+
+
+def test_migrate_tolerates_missing_cdr_output_section():
+    """No ``model_settings``/``cdr_output`` section at all -- the v4->v5 step must
+    not KeyError.
+    """
+    from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
+
+    migrated = migrate_forge_blueprint_data({"forge_blueprint_version": 4})
+    assert migrated["forge_blueprint_version"] == 5
+
+
 def test_schema_round_trip_identity(tmp_path):
     cfg = _build()
     p = cfg.to_yaml(tmp_path / "forge_blueprint.yaml")
@@ -313,7 +360,7 @@ def test_code_pio_round_trips_through_yaml(tmp_path):
     back = ForgeBlueprint.from_yaml(p)
     assert back.code.pio is not None
     assert back.code.pio.location == cfg.code.pio.location
-    assert back.code.pio.commit == "pio2_7_0"
+    assert back.code.pio.commit == "2.7.1-fork"
     assert back.model_settings["cppdefs"]["use_pio"] is True
 
 
@@ -972,12 +1019,146 @@ def test_cdr_forcing_content_hash_stable_across_yaml_round_trip(tmp_path):
     assert back.content_hash() == h1
 
 
+_CDR_OUTPUT_REQUIRED_DIAGNOSTICS = (
+    "zsatarag",
+    "zsatcalc",
+    "CO3",
+    "CO3_ALT_CO2",
+    "co3_sat_arag",
+    "co3_sat_calc",
+)
+# Output.yaml's own defaults, in file order -- asserted to still come first so the
+# CDR-output consistency block only *appends*, never reorders/replaces.
+_DEFAULT_MARBL_DIAGNOSTICS = (
+    "PH",
+    "PH_ALT_CO2",
+    "pCO2SURF_ALT_CO2",
+    "pCO2SURF",
+    "FG_CO2",
+    "FG_ALT_CO2",
+)
+
+
+def test_cdr_output_user_enabled_without_forcing_sets_cppdef_and_diagnostics():
+    """Pathway 1: a user turns on CDR output with no CDR forcing at all -- output is
+    valid standalone (ROMS opens no CDR file; cdr_frc.cdr_source stays False), but
+    cppdefs.cdr_forcing must still flip True (it gates compiling cdr_output.F90) and
+    the MARBL diagnostics ucla-roms looks up by name must be present.
+    """
+    cfg = _build(run_time_overrides={"cdr_output": {"do_cdr_output": True}})
+    settings = cfg.model_settings
+    assert settings["cdr_output"]["do_cdr_output"] is True
+    assert settings["cppdefs"]["cdr_forcing"] is True
+    assert settings["cdr_frc"]["cdr_source"] is False
+    diags = settings["marbl_bgc"]["marbl_diagnostics_to_write"]
+    assert diags[: len(_DEFAULT_MARBL_DIAGNOSTICS)] == list(_DEFAULT_MARBL_DIAGNOSTICS)
+    for name in _CDR_OUTPUT_REQUIRED_DIAGNOSTICS:
+        assert diags.count(name) == 1, name
+
+
+def test_cdr_forcing_implies_cdr_output():
+    """Providing CDR forcing always implies CDR output -- there is no point
+    generating a CDR forcing file ROMS won't report on.
+    """
+    cfg = _build(cdr_forcing_yaml=_CDR_SAMPLE_YAML)
+    settings = cfg.model_settings
+    assert settings["cdr_output"]["do_cdr_output"] is True
+    assert settings["cppdefs"]["cdr_forcing"] is True
+    diags = settings["marbl_bgc"]["marbl_diagnostics_to_write"]
+    for name in _CDR_OUTPUT_REQUIRED_DIAGNOSTICS:
+        assert name in diags
+
+
+def test_cdr_output_disabled_by_default():
+    """Neither a user override nor CDR forcing -- output stays disabled and the
+    diagnostics list is untouched (still just Output.yaml's 6 defaults).
+    """
+    cfg = _build()
+    settings = cfg.model_settings
+    assert settings["cdr_output"]["do_cdr_output"] is False
+    assert settings["cppdefs"]["cdr_forcing"] is False
+    assert settings["marbl_bgc"]["marbl_diagnostics_to_write"] == list(
+        _DEFAULT_MARBL_DIAGNOSTICS
+    )
+
+
+def test_cdr_output_requires_marbl():
+    """do_cdr_output=True with bgc_mode="none" must raise -- ucla-roms only compiles
+    cdr_output.F90 under MARBL && CDR_FORCING.
+    """
+    with pytest.raises(ValueError, match="do_cdr_output"):
+        _build(
+            bgc_mode="none",
+            forcing_inputs=_PHYSICS_ONLY_FORCING,
+            run_time_overrides={"cdr_output": {"do_cdr_output": True}},
+        )
+
+
+class TestEnsureCdrOutputMarblDiagnostics:
+    def test_none_input_returns_all_required(self):
+        from cstar_forge.forge.namelist_model import (
+            CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS,
+            ensure_cdr_output_marbl_diagnostics,
+        )
+
+        assert ensure_cdr_output_marbl_diagnostics(None) == list(
+            CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS
+        )
+
+    def test_empty_list_returns_all_required(self):
+        from cstar_forge.forge.namelist_model import (
+            CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS,
+            ensure_cdr_output_marbl_diagnostics,
+        )
+
+        assert ensure_cdr_output_marbl_diagnostics([]) == list(
+            CDR_OUTPUT_REQUIRED_MARBL_DIAGNOSTICS
+        )
+
+    def test_partial_overlap_no_duplicates_order_preserved(self):
+        from cstar_forge.forge.namelist_model import (
+            ensure_cdr_output_marbl_diagnostics,
+        )
+
+        result = ensure_cdr_output_marbl_diagnostics(["PH", "CO3", "FG_CO2"])
+        assert result[:3] == ["PH", "CO3", "FG_CO2"]
+        assert result.count("CO3") == 1
+        for name in _CDR_OUTPUT_REQUIRED_DIAGNOSTICS:
+            assert result.count(name) == 1
+
+
+@pytest.mark.parametrize("do_cdr_output", [True, False])
+def test_cdr_output_toggle_renders_cdr_forcing_cppdef(tmp_path, do_cdr_output):
+    """End-to-end template gate: the stored blueprint's settings alone (no CDR
+    forcing, no generation step) must drive ``#define``/``#undef CDR_FORCING`` in the
+    real ``cppdefs.opt.j2`` -- the cppdef gates compiling ucla-roms' cdr_output.F90.
+    """
+    from cstar_forge.forge.settings import render_roms_settings
+
+    overrides = {"cdr_output": {"do_cdr_output": True}} if do_cdr_output else {}
+    cfg = _build(run_time_overrides=overrides)
+    param = cfg.model_settings["param"]
+    n_tracers = 2 + int(param.get("ntrc_bio", 0)) + int(param.get("nt_passive", 0))
+    render_roms_settings(
+        template_files=["cppdefs.opt.j2"],
+        template_dir=Path(cstar_forge.__file__).parents[1]
+        / "templates"
+        / "compile-time",
+        settings_dict=dict(cfg.model_settings),
+        code_output_dir=tmp_path,
+        n_tracers=n_tracers,
+    )
+    text = (tmp_path / "cppdefs.opt").read_text()
+    expected = "#define CDR_FORCING" if do_cdr_output else "#undef CDR_FORCING"
+    assert expected in text
+
+
 def test_resolver_use_pio_sets_cppdefs_and_code_pio():
     cfg = _build(use_pio=True)
     assert cfg.model_settings["cppdefs"]["use_pio"] is True
     assert cfg.code.pio is not None
-    assert cfg.code.pio.location == "https://github.com/NCAR/ParallelIO.git"
-    assert cfg.code.pio.commit == "pio2_7_0"
+    assert cfg.code.pio.location == "https://github.com/CWorthy-ocean/ParallelIO.git"
+    assert cfg.code.pio.commit == "2.7.1-fork"
 
 
 def test_resolver_use_pio_default_off():
@@ -1071,6 +1252,40 @@ def test_cppdefs_tides_tracks_tidal_forcing_presence():
 
     cfg_no_tides = _build(forcing_inputs=_PHYSICS_ONLY_FORCING)
     assert cfg_no_tides.model_settings["cppdefs"]["tides"] is False
+
+
+def test_no_tidal_item_forces_runtime_tide_switches_off():
+    """ROMS enables tides at run time via bry_tides/pot_tides (TIDAL_FRC_SETTINGS);
+    the TIDES cppdef only stamps a netCDF attribute. With no tidal item generated,
+    both must be forced off -- past an explicit override -- or ROMS goes looking
+    for tidal input data that was never generated. ana_tides is the deliberate
+    escape hatch: analytical tides are computed in-model and need no input file.
+    """
+    cfg = _build()  # bundled ForcingSpec has a tidal item -> ModelSpec defaults kept
+    assert cfg.model_settings["tides"]["bry_tides"] is True
+    assert cfg.model_settings["tides"]["pot_tides"] is True
+
+    cfg_no = _build(forcing_inputs=_PHYSICS_ONLY_FORCING)
+    assert cfg_no.model_settings["tides"]["bry_tides"] is False
+    assert cfg_no.model_settings["tides"]["pot_tides"] is False
+    assert cfg_no.model_settings["tides"]["ntides"] == 0
+
+    # an explicit bry_tides/pot_tides=True override can't win (it would crash ROMS)
+    cfg_ov = _build(
+        forcing_inputs=_PHYSICS_ONLY_FORCING,
+        run_time_overrides={"tides": {"bry_tides": True, "pot_tides": True}},
+    )
+    assert cfg_ov.model_settings["tides"]["bry_tides"] is False
+    assert cfg_ov.model_settings["tides"]["pot_tides"] is False
+
+    # ...unless ana_tides is set, which legitimately runs tides without input data
+    cfg_ana = _build(
+        forcing_inputs=_PHYSICS_ONLY_FORCING,
+        run_time_overrides={"tides": {"ana_tides": True}},
+    )
+    assert cfg_ana.model_settings["tides"]["ana_tides"] is True
+    assert cfg_ana.model_settings["tides"]["bry_tides"] is True
+    assert cfg_ana.model_settings["tides"]["pot_tides"] is True
 
 
 def test_cppdefs_sponge_tune_defaults_false_and_is_overridable():
@@ -2157,7 +2372,7 @@ class TestForgeBlueprintWizardApp:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2 engine (orchestration tested with an injected fake builder; the real
+# Processing engine (orchestration tested with an injected fake builder; the real
 # pipeline downloads data + runs roms_tools and is out of scope for unit tests)
 # ---------------------------------------------------------------------------
 class _FakeBuilder:
@@ -2381,7 +2596,7 @@ class TestForgeBlueprintEngine:
 
 
 # ---------------------------------------------------------------------------
-# Step 3 (parity): the Phase-1 resolver and the live ForgeExecutor must agree
+# Step 3 (parity): the resolver and the live ForgeExecutor must agree
 # on the derived values, so a reviewed config matches a from-scratch build.
 #
 # Compared at *construction* (no generate_inputs): the genuinely-computed numerics
@@ -2571,6 +2786,9 @@ class TestSaveModifiedPiecesToCatalog:
         # bundled catalog verbatim, so reusing that name here would collide.
         spec_name = "pio-dev-test"
         wiz = self._wizard(isolated_catalog)
+        # Pin a spec where use_pio=True / roms_ref="main" are genuine
+        # deviations (the default pio-dev spec already declares both).
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
         wiz.use_pio_chk.value = True
         wiz.roms_ref.value = "main"
         assert wiz.config.composition.model.modified is True  # spec deviation
@@ -2621,6 +2839,10 @@ class TestSaveModifiedPiecesToCatalog:
         from cstar_forge.forge_blueprint_wizard import _model_owned_settings
 
         wiz = self._wizard(isolated_catalog)
+        # Pin a spec whose base pin is NOT "main", so a spec that drops the
+        # live roms_ref actually loses information (pio-dev's base pin is
+        # already "main", which would make the roundtrip spuriously succeed).
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
         wiz.roms_ref.value = "main"
         # Simulate the pre-fix writer: a spec saved without the live roms_ref.
         isolated_catalog.register_model_from_settings(
@@ -2641,6 +2863,9 @@ class TestSaveModifiedPiecesToCatalog:
         # stay False while resolving with a different code/use_pio than the
         # selected catalog spec declares.
         wiz = self._wizard(isolated_catalog)
+        # Pin a spec whose base pin is NOT "main", so roms_ref="main" below is
+        # a real deviation (pio-dev, the default, already pins "main").
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
         assert wiz.config.composition.model.modified is False
 
         wiz.use_pio_chk.value = not wiz.use_pio_chk.value

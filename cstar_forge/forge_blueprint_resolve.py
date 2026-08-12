@@ -1,5 +1,5 @@
 """
-Phase 1 resolver: ``build_forge_blueprint`` — assemble a validated :class:`ForgeBlueprint`
+Resolver: ``build_forge_blueprint`` — assemble a validated :class:`ForgeBlueprint`
 from the composable pieces (a ModelSpec + a domain selection + a run window).
 
 This is the *collection / curation* half of the planned split (see
@@ -15,8 +15,8 @@ spacing ``ds``) is optional: pass ``dt=`` to stay fully lightweight, or leave it
 ``None`` to have it computed (lazily importing ``roms_tools`` + ``cstar_forge.forge.util``).
 
 What this does NOT do (by design — it is host- and artifact-independent):
-* no machine / path resolution (Phase 2, on the run host),
-* no source downloads or grid/forcing file generation (Phase 2),
+* no machine / path resolution (done at processing time, on the run host),
+* no source downloads or grid/forcing file generation (processing),
 * no ``s_coord`` / file paths / ``title`` / ``output_root_name`` (filled at
   processing or derived from the blueprint's own ``name``).
 
@@ -97,6 +97,17 @@ except ImportError:  # pragma: no cover
 DEFAULT_TEMPLATE_REPO = CodeRepo(
     location="https://github.com/CWorthy-ocean/cstar-forge.git", branch="main"
 )
+
+# Canonical CDR-output diagnostics helper lives in namelist_model (forge side) so
+# the executor can share it. Dual import keeps the resolver standalone-importable.
+try:  # pragma: no cover - exercised both ways
+    from cstar_forge.forge.namelist_model import (
+        ensure_cdr_output_marbl_diagnostics,
+    )
+except ImportError:  # pragma: no cover
+    from namelist_model import (  # type: ignore
+        ensure_cdr_output_marbl_diagnostics,
+    )
 
 
 # Source-name resolution is single-sourced in ``source_registry`` (a lightweight,
@@ -582,6 +593,39 @@ def build_forge_blueprint(
         settings.setdefault("tides", {})["bry_tides"] = False
         settings.setdefault("sponge_tune", {})["ub_tune"] = False
 
+    # No tidal forcing item: force the run-time tide switches off too. ROMS enables
+    # tides via bry_tides/pot_tides in TIDAL_FRC_SETTINGS (the TIDES cppdef only
+    # stamps a netCDF attribute), so leaving the ModelSpec's defaults on would send
+    # ROMS looking for tidal input data that was never generated. Applied after the
+    # override merge so an explicit bry_tides=True override can't reintroduce the
+    # crash -- except with ana_tides, which computes tides analytically and needs
+    # no input file.
+    if not tidal_items and not settings.get("tides", {}).get("ana_tides", False):
+        tides_settings = settings.setdefault("tides", {})
+        tides_settings["bry_tides"] = False
+        tides_settings["pot_tides"] = False
+
+    # ----- CDR output consistency --------------------------------------------
+    # CDR output is valid without CDR forcing (cdr_frc.cdr_source stays false;
+    # ROMS opens no CDR file), and CDR forcing implies CDR output. Either way
+    # the CDR_FORCING cppdef must be on (it gates compiling ucla-roms'
+    # cdr_output.F90) and the MARBL diagnostics ucla-roms looks up by name,
+    # unchecked, must be in the write list.
+    cdr_out = settings.setdefault("cdr_output", {})
+    do_cdr_output = bool(cdr_out.get("do_cdr_output")) or cdr_forcing is not None
+    cdr_out["do_cdr_output"] = do_cdr_output
+    if do_cdr_output:
+        if bgc_mode != "marbl":
+            raise ValueError(
+                'do_cdr_output=True (or CDR forcing was supplied) but bgc_mode != "marbl": '
+                "ucla-roms only compiles cdr_output.F90 under MARBL && CDR_FORCING."
+            )
+        settings["cppdefs"]["cdr_forcing"] = True
+        marbl = settings.setdefault("marbl_bgc", {})
+        marbl["marbl_diagnostics_to_write"] = ensure_cdr_output_marbl_diagnostics(
+            marbl.get("marbl_diagnostics_to_write")
+        )
+
     # ----- forcing (initial conditions + surface/boundary/tidal/river + CDR) --
     # A child grid (has a parent) receives its boundary values from the parent's
     # nesting.nc extraction, not from reanalysis boundary forcing -- the executor
@@ -924,7 +968,7 @@ def _compute_v_sponge_default(grid_kwargs: dict[str, Any]) -> float:
         raise RuntimeError(
             "v_sponge was not provided and could not be computed: importing "
             "cstar_forge.forge.util failed. Pass v_sponge= explicitly to keep "
-            f"Phase 1 dependency-light. ({exc})"
+            f"resolution dependency-light. ({exc})"
         ) from exc
     return compute_v_sponge_from_grid(grid_kwargs["size_x"], grid_kwargs["nx"])
 
@@ -936,7 +980,7 @@ def _compute_dt_from_cfl(grid_kwargs: dict[str, Any], grid: Any) -> float:
     except Exception as exc:  # pragma: no cover
         raise RuntimeError(
             "dt was not provided and could not be computed: importing "
-            "cstar_forge.forge.util failed. Pass dt= explicitly to keep Phase 1 "
+            "cstar_forge.forge.util failed. Pass dt= explicitly to keep resolution "
             f"dependency-light. ({exc})"
         ) from exc
     if grid is None:

@@ -55,6 +55,7 @@ from cstar_forge.forge.forge_blueprint import (
     OpenBoundaries,
 )
 from cstar_forge.forge.host import HostPaths
+from cstar_forge.forge.namelist_model import ensure_cdr_output_marbl_diagnostics
 from cstar_forge.forge.settings import render_roms_settings, write_roms_namelist
 from cstar_forge.utils import mem_log
 
@@ -148,7 +149,6 @@ class ForgeExecutor(BaseModel):
        - Jinja2 templates rendered with current settings
        - Blueprint updated with rendered code locations
        - **Blueprint persisted to disk** -- the only time this happens
-       - ROMSSimulation instance created
 
     `run()` then hands the persisted blueprint's path to C-Star for execution.
 
@@ -1359,8 +1359,7 @@ class ForgeExecutor(BaseModel):
         clobber: bool = False,
         use_dask: bool = True,
         dask_num_workers: int = 8,
-        subchunk: bool = False,
-        stage_ic_sources: bool = False,
+        subchunk: bool = True,
         test: bool = False,
         only: set[str] | None = None,
     ) -> cstar_models.RomsMarblBlueprint:
@@ -1385,14 +1384,10 @@ class ForgeExecutor(BaseModel):
             oversubscription hangs on high-core HPC nodes. Only applied when
             ``use_dask`` is True. Default 8.
         subchunk : bool, optional
-            Interim hack (see ``glorys_subchunk.py``): just-in-time build a
-            kerchunk-subchunked reference for multi-file GLORYS sources and read
-            from it instead of the raw per-day files. Default False.
-        stage_ic_sources : bool, optional
-            I/O performance experiment: copy the initial-conditions source files
-            (physics + bgc) into the working directory (scratch) before
-            constructing ``rt.InitialConditions`` and read from the copies.
-            Default False.
+            Just-in-time build a kerchunk-subchunked reference for multi-file
+            GLORYS sources (see ``glorys_subchunk.py``) and read from it
+            instead of the raw per-day files. Default True; pass False to
+            read the raw files directly.
         test : bool, optional
             Truncate the generation loop after 2 iterations (for unit tests).
         only : set[str], optional
@@ -1415,12 +1410,11 @@ class ForgeExecutor(BaseModel):
         """
         log.debug(
             "generate_inputs: entering for %r (clobber=%s, use_dask=%s, subchunk=%s, "
-            "stage_ic_sources=%s, start_date=%s, end_date=%s, only=%s)",
+            "start_date=%s, end_date=%s, only=%s)",
             self.name,
             clobber,
             use_dask,
             subchunk,
-            stage_ic_sources,
             self.start_date,
             self.end_date,
             only,
@@ -1462,7 +1456,6 @@ class ForgeExecutor(BaseModel):
                 use_dask=use_dask,
                 dask_num_workers=dask_num_workers,
                 subchunk=subchunk,
-                stage_ic_sources=stage_ic_sources,
                 use_pio=self._use_pio,
                 verbose=self.verbose,
             ).generate_all(clobber=clobber, test=test, only=only)
@@ -1703,7 +1696,7 @@ class ForgeExecutor(BaseModel):
         ``ForgeBlueprint`` (the forge application's blueprint) + the injected ``host``.
 
         This is the single derivation path from a ForgeBlueprint to a runnable builder. The
-        domain-catalog path routes through the Phase-1 resolver
+        domain-catalog path routes through the resolver
         (``forge_blueprint_resolve.build_forge_blueprint``) to produce the ``ForgeBlueprint`` and then
         here — so there is one place that maps blueprint → builder inputs
         (``forge_blueprint_engine.forge_blueprint_to_builder_kwargs``).
@@ -1745,7 +1738,6 @@ class ForgeExecutor(BaseModel):
            (only when `generate_inputs()` has run -- the placeholder blueprint
            cannot validate), so an extra="forbid" mismatch fails at emit time
         8. Persists the blueprint to disk -- the only time it is written
-        9. Creates ROMSSimulation instance from blueprint
 
         This is expected to run after `generate_inputs()` has populated the
         in-memory blueprint with real input data file locations.
@@ -1824,7 +1816,42 @@ class ForgeExecutor(BaseModel):
                 if isinstance(ntimes, float):
                     self._settings_run_time["time_stepping"]["ntimes"] = round(ntimes)
 
-        # Derive n_tracers: prefer the value passed by the Phase-2 engine; otherwise
+        # CDR-output consistency net, mirroring the resolver's consistency block:
+        # stored blueprints reach configure_build without re-resolving, and wizard
+        # accordion overrides apply after the resolver, so this is the enforcement
+        # point of record. A generated CDR forcing implies CDR output regardless of
+        # the stored snapshot.
+        if self.cdr_forcing:
+            self._settings_run_time.setdefault("cdr_output", {})["do_cdr_output"] = True
+        # do_cdr_output requires MARBL plus the CDR_FORCING cppdef (both gate
+        # compiling ucla-roms' cdr_output.F90), and the MARBL diagnostics ucla-roms
+        # looks up by name, unchecked.
+        if self._settings_run_time.get("cdr_output", {}).get("do_cdr_output"):
+            cppdefs = self._settings_compile_time.setdefault("cppdefs", {})
+            if not cppdefs.get("marbl", False):
+                raise ValueError(
+                    "cdr_output.do_cdr_output is True but cppdefs.marbl is False: "
+                    "CDR output requires MARBL (ucla-roms only compiles "
+                    "cdr_output.F90 under MARBL && CDR_FORCING)."
+                )
+            if not cppdefs.get("cdr_forcing"):
+                cppdefs["cdr_forcing"] = True
+                log.info(
+                    "configure_build: do_cdr_output is True; forcing cppdefs.cdr_forcing=True "
+                    "(CDR_FORCING gates ucla-roms' cdr_output.F90)."
+                )
+            marbl = self._settings_run_time.setdefault("marbl_bgc", {})
+            before = list(marbl.get("marbl_diagnostics_to_write") or [])
+            after = ensure_cdr_output_marbl_diagnostics(before)
+            if after != before:
+                marbl["marbl_diagnostics_to_write"] = after
+                log.info(
+                    "configure_build: do_cdr_output is True; added missing required MARBL "
+                    "diagnostics to marbl_bgc.marbl_diagnostics_to_write (%s).",
+                    sorted(set(after) - set(before)),
+                )
+
+        # Derive n_tracers: prefer the value passed by the processing engine; otherwise
         # derive it from the resolved settings (T + S + BGC ntrc_bio + passive).
         if "n_tracers" in kwargs:
             n_tracers = int(kwargs["n_tracers"])

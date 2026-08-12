@@ -1,10 +1,10 @@
-description: ucla-roms main + PIO enabled
+description: Generated blueprint
 bgc_mode: marbl
 use_pio: true
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    commit: main
+    commit: 0.4.1
   marbl:
     location: https://github.com/marbl-ecosys/MARBL.git
     commit: marbl0.45.0

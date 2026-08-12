@@ -168,8 +168,10 @@ _OPT_SECTIONS = [
         ["cdr_source", "cdr_file", "ncdr_parm", "forcing_depth_profiles", "forcing_3d",
          "forcing_parameterized", "time_interpolation", "relocate_to_wet_pts",
          "cdr_volume", "nz_chd"]}),
-    ("cdr_output", "cdr_output", {k: k for k in
-        ["do_cdr", "do_avg", "monthly_averages", "output_period", "nrpf"]}),
+    ("cdr_output", "cdr_output", {
+        **{k: k for k in ["do_avg", "monthly_averages", "output_period", "nrpf"]},
+        "do_cdr": "do_cdr_output",
+    }),
     ("extract_data", "extract_data", {k: k.lower() for k in
         ["do_extract", "extract_file", "nrpf", "N_chd", "theta_s_chd", "theta_b_chd",
          "hc_chd", "extract_period"]}),

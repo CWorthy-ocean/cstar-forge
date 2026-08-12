@@ -10,7 +10,7 @@ Tests cover:
 
 ModelSpec was consolidated into a single YAML (code + flat model_settings, no more
 inputs/split templates-settings/placeholder code repos) -- see
-docs/developer-guide.md and cstar_forge/models.py's module docstring.
+docs/architecture-details.md and cstar_forge/models.py's module docstring.
 """
 
 from pathlib import Path
@@ -359,8 +359,8 @@ class TestLoadModelsYaml:
                     "commit": "x",
                 },
                 "pio": {
-                    "location": "https://github.com/NCAR/ParallelIO.git",
-                    "commit": "pio2_7_0",
+                    "location": "https://github.com/CWorthy-ocean/ParallelIO.git",
+                    "commit": "2.7.1-fork",
                 },
                 "templates_compile_time": {
                     "directory": "templates/compile-time",

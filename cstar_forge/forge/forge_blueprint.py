@@ -3,7 +3,7 @@
 forge application's blueprint. It is fully wired into ``ForgeExecutor`` (see
 ``cstar_forge.forge.executor.ForgeExecutor.from_forge_blueprint`` and
 ``cstar_forge.forge.forge_blueprint_engine.process_forge_blueprint``), split into two phases
-(see ``docs/developer-guide.md``):
+(see ``docs/architecture-details.md``):
 
 1. **Collection / curation** — assemble every option from its source (constructor
    args, the ModelSpec, and the *pure* derived values), validate it, and write one
@@ -17,8 +17,9 @@ forge application's blueprint. It is fully wired into ``ForgeExecutor`` (see
 ``ForgeBlueprint`` subclasses ``cstar.orchestration.models.Blueprint`` (see
 ``cstar/applications/hello_world.py`` for the minimal shape of this contract), which is
 what makes forge a real C-Star application: ``cstar_forge.forge.app.ForgeRunner`` +
-``ForgeApplication`` (registered via ``CSTAR_APP_MODULES=cstar_forge.forge.app``) let
-C-Star's own entrypoint (``cstar blueprint run``) discover and drive it directly.
+``ForgeApplication`` (registered through the ``cstar.applications`` entry point
+cstar-forge declares) let C-Star's own entrypoint (``cstar blueprint run``) discover
+and drive it directly.
 
 Single governing principle
 --------------------------
@@ -328,7 +329,11 @@ _HASH_EXCLUDE = {
 # sub-model is gone, flattened onto the blueprint directly. Migration folded into a
 # ``model_validator(mode="before")`` so it fires on every entry point (C-Star's own
 # ``deserialize``/``model_validate`` included), not just ``from_yaml``.
-FORGE_BLUEPRINT_VERSION = 4
+# v5 (2026-08): ``model_settings.cdr_output.do_cdr`` renamed ``do_cdr_output`` to
+# match the ROMS namelist key directly (CDR output became independently
+# user-controllable, decoupled from CDR forcing -- see ``forge_blueprint_resolve``'s
+# CDR-output consistency block).
+FORGE_BLUEPRINT_VERSION = 5
 
 # Identifies the C-Star application that CONSUMES this blueprint — i.e. the "forge"
 # application (this processing engine), whose blueprint IS the ForgeBlueprint. Do not confuse
@@ -382,6 +387,11 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
     ``ForgeBlueprint``'s ``cstar.orchestration.models.Blueprint`` base, which declares
     ``name``/``description`` as its own top-level fields.
 
+    **v4 -> v5**: ``model_settings.cdr_output.do_cdr`` is renamed ``do_cdr_output``
+    (matches the ROMS namelist key; ``CdrOutputCfg`` also carries a
+    ``validation_alias`` for this spelling, but the migration keeps the on-disk
+    dict itself current).
+
     Idempotent and a no-op on already-current data (e.g. direct keyword
     construction, ``ForgeBlueprint(name=..., ...)``) -- called automatically from a
     ``model_validator(mode="before")`` so it fires on every entry point
@@ -430,6 +440,15 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
             data.setdefault(
                 "description", identity.get("description", "Generated blueprint")
             )
+
+    if version is None or version < 5:
+        model_settings = data.get("model_settings")
+        if isinstance(model_settings, dict):
+            cdr_output = model_settings.get("cdr_output")
+            if isinstance(cdr_output, dict) and (
+                "do_cdr" in cdr_output and "do_cdr_output" not in cdr_output
+            ):
+                cdr_output["do_cdr_output"] = cdr_output.pop("do_cdr")
 
     data["forge_blueprint_version"] = FORGE_BLUEPRINT_VERSION
     return data
@@ -482,7 +501,7 @@ class Partitioning(_Section):
 
 
 class Domain(_Section):
-    """Grid construction inputs (kwargs only — the ``rt.Grid`` is built in Phase 2).
+    """Grid construction inputs (kwargs only — the ``rt.Grid`` is built at processing time).
 
     ``grid_kwargs`` is the single source for grid geometry, including ``theta_s`` /
     ``theta_b`` / ``hc`` when provided; the namelist ``s_coord`` section is filled at
@@ -771,7 +790,7 @@ class Composition(_Section):
 
 class Provenance(_Section):
     """Audit trail. ``generated_at``/``forge_version``/``cstar_version``/
-    ``roms_tools_version`` are never computed inside the resolver (to keep Phase 1
+    ``roms_tools_version`` are never computed inside the resolver (to keep resolution
     deterministic/reproducible, and because ``roms_tools`` isn't guaranteed
     installed there) -- ``ForgeBlueprint.to_yaml_str`` stamps each on first save
     only (a later resave preserves the original value, same as an explicit
@@ -1019,7 +1038,7 @@ class ForgeBlueprint(Blueprint):
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> ForgeBlueprint:
-        """Load and validate a ``forge_blueprint.yaml`` (Phase 2 entry point).
+        """Load and validate a ``forge_blueprint.yaml`` (processing entry point).
 
         Version-check + migration happen automatically via the
         ``_migrate_and_clean`` before-validator -- no need to call

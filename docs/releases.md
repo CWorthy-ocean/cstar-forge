@@ -50,7 +50,7 @@
 * Added an option to build with ParallelIO (PIO)
 * Added support for chunked GLORYS staging on large domains
 * Improved parent/child (nested) grid support
-* `ForgeBlueprint.to_yaml`/`to_yaml_str` now stamp `provenance.generated_at`/`forge_version`/`cstar_version`/`roms_tools_version` on first save (preserved on later resaves), so a saved blueprint records which Forge/C-Star/roms-tools produced it — e.g. for checking out a matching Forge commit later. `cstar_version`/`roms_tools_version` are read from the installed package metadata (which already embeds commit info for an editable/dev checkout, via `setuptools_scm`) and reflect the environment doing the *saving*, not necessarily the one that later runs Phase-2 processing if that happens on a different machine.
+* `ForgeBlueprint.to_yaml`/`to_yaml_str` now stamp `provenance.generated_at`/`forge_version`/`cstar_version`/`roms_tools_version` on first save (preserved on later resaves), so a saved blueprint records which Forge/C-Star/roms-tools produced it — e.g. for checking out a matching Forge commit later. `cstar_version`/`roms_tools_version` are read from the installed package metadata (which already embeds commit info for an editable/dev checkout, via `setuptools_scm`) and reflect the environment doing the *saving*, not necessarily the one that later processes the blueprint, if that happens on a different machine.
 
 ### Bug Fixes
 
@@ -61,9 +61,9 @@
 * Hardened dev-setup scripts against a `~/.local` pip fallback on HPC systems
 * Added CDR (carbon dioxide removal) forcing YAML support
 * Added flexible run-window (`allow_flex_time`) support
-* Add support for new "extract_root_name" nml key (only passes through the default value of `child` for now ([#107](https://github.com/CWorthy-ocean/cstar-forge/pull/107))
-* The output from forge blueprints now defaults to `<root-path>/cstar-forge-run` (instead of `<root-path>/cstar-forge-data/cstar-forge-run` ([#110](https://github.com/CWorthy-ocean/cstar-forge/pull/110))
-* The output from roms blueprints now defaults to `<root-path>/cstar-roms-run` (instead of `<root-path>/cstar-forge-data/cstar-blueprint-run` ([#110](https://github.com/CWorthy-ocean/cstar-forge/pull/110))
+* Add support for new "extract_root_name" nml key (only passes through the default value of `child` for now) ([#107](https://github.com/CWorthy-ocean/cstar-forge/pull/107))
+* The output from forge blueprints now defaults to `<root-path>/cstar-forge-run` (instead of `<root-path>/cstar-forge-data/cstar-forge-run`) ([#110](https://github.com/CWorthy-ocean/cstar-forge/pull/110))
+* The output from roms blueprints now defaults to `<root-path>/cstar-roms-run` (instead of `<root-path>/cstar-forge-data/cstar-blueprint-run`) ([#110](https://github.com/CWorthy-ocean/cstar-forge/pull/110))
 
 ### Miscellaneous
 

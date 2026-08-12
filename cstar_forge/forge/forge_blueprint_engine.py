@@ -1,15 +1,15 @@
 """
-Phase 2 processing engine: ingest a :class:`ForgeBlueprint` and run the heavy work
+Processing engine: ingest a :class:`ForgeBlueprint` and run the heavy work
 (``generate_inputs`` + ``configure_build``) on *this* machine.
 
-This is the counterpart to the Phase-1 resolver (``forge_blueprint_resolve``). It runs
+This is the counterpart to the resolver (``forge_blueprint_resolve``). It runs
 on the user's machine of choice, where the **host** (machine config + data paths) is
 resolved from :mod:`cstar_forge.config` — nothing host-specific is read from the
 config file. The reviewed, host-independent ``ForgeBlueprint`` provides everything else.
 
 Strategy (see ``docs/dev-notes/forge-blueprint-inventory.md`` §3): the existing
 ``ForgeExecutor`` already performs host resolution, grid building, input
-generation, and namelist/cppdefs writing. So Phase 2:
+generation, and namelist/cppdefs writing. So processing:
 
 1. reconstructs a ``ForgeExecutor`` from the config's atomic inputs (identity,
    run window, grid kwargs, boundaries, partitioning, CDR) — the builder resolves
@@ -88,9 +88,9 @@ PROCESSING_FILLED_SECTIONS = (
     "output_root_name",
 )
 
-# Leaf keys that ``generate_inputs`` (Phase 2a, in ``input_data.py``) derives from the
+# Leaf keys that ``generate_inputs`` (in ``input_data.py``) derives from the
 # *actual* generated forcing/tidal objects — never from ``ForgeBlueprint.model_settings``.
-# The resolver (Phase 1) never computes real values for these: it leaves them at
+# The resolver never computes real values for these: it leaves them at
 # whatever the ModelSpec's disabled placeholder says (``river_frc``/``cdr_frc``/
 # ``cdr_output``) or at a merely *declared*, not actually-generated, value (``tides``'
 # ``ntides`` from a tidal item, if the item set one). Unlike ``PROCESSING_FILLED_SECTIONS``,
@@ -105,8 +105,12 @@ PROCESSING_FILLED_SECTIONS = (
 # can restore a stale tidal constituent count — see docs/dev-notes/forge-blueprint-parameter-audit.md
 # §3a for the full trace, and ``tests/test_forge_blueprint.py::TestForgeBlueprintEngine
 # ::test_split_model_settings_excludes_generation_derived_leaves`` /
-# ``test_configure_build_does_not_clobber_generated_river_and_cdr_settings`` for the
+# ``test_configure_build_does_not_clobber_generated_river_and_tidal_settings`` for the
 # regression coverage.
+#
+# ``cdr_output.do_cdr_output`` is deliberately NOT listed: it is a user setting
+# and must survive the overlay. ``ForgeExecutor.configure_build`` re-asserts it
+# True when a CDR forcing was actually generated.
 GENERATION_DERIVED_LEAF_KEYS: dict[str, tuple[str, ...]] = {
     "river_frc": (
         "river_source",
@@ -124,7 +128,6 @@ GENERATION_DERIVED_LEAF_KEYS: dict[str, tuple[str, ...]] = {
         "forcing_parameterized",
         "cdr_volume",
     ),
-    "cdr_output": ("do_cdr",),
     # Only ntides is genuinely generation-derived (the real tidal-constituent count
     # is only known once TPXO data is actually extracted). bry_tides/pot_tides/
     # ana_tides are static booleans -- the resolver/model_settings is their single
@@ -137,7 +140,7 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
     """Convert cfg.forcing to the forcing_override dict for RomsMarblInputData.
 
     Always returns a dict with ``initial_conditions`` and ``forcing`` keys mirroring
-    the model.yaml inputs block. ``cfg.forcing`` is fully resolved by the Phase-1
+    the model.yaml inputs block. ``cfg.forcing`` is fully resolved by the
     resolver (from the model default or an authored/edited selection), so the executor
     always drives input generation from this dict and never reads ``model_spec.inputs``.
     """
@@ -296,14 +299,13 @@ def process_forge_blueprint(
     clobber: bool = False,
     use_dask: bool = True,
     dask_num_workers: int = 8,
-    subchunk: bool = False,
-    stage_ic_sources: bool = False,
+    subchunk: bool = True,
     validate: bool = True,
     executor_factory: ExecutorFactory | None = None,
     only_inputs: Iterable[str] | None = None,
     verbose: bool = False,
 ) -> ForgeBlueprintExecutor:
-    """Run Phase-2 processing for a ``ForgeBlueprint`` (object or path to a YAML file).
+    """Process a ``ForgeBlueprint`` (object or path to a YAML file).
 
     Drives a :class:`ForgeBlueprintExecutor` through ``ensure_source_data`` →
     ``generate_inputs`` → ``configure_build`` (the reviewed ``model_settings`` overlaid
@@ -348,13 +350,10 @@ def process_forge_blueprint(
         oversubscription hangs on high-core HPC nodes. Only applied when
         ``use_dask`` is True. Default 8.
     subchunk :
-        Interim hack (see ``glorys_subchunk.py``): just-in-time build a
-        kerchunk-subchunked reference for multi-file GLORYS sources and read from
-        it instead of the raw per-day files. Default False.
-    stage_ic_sources :
-        I/O performance experiment: copy the initial-conditions source files
-        (physics + bgc) into the working directory (scratch) before constructing
-        ``rt.InitialConditions`` and read from the copies. Default False.
+        Just-in-time build a kerchunk-subchunked reference for multi-file
+        GLORYS sources (see ``glorys_subchunk.py``) and read from it instead
+        of the raw per-day files. Default True; pass False (CLI:
+        ``--no-subchunk``) to read the raw files directly.
     verbose :
         Enable verbose diagnostics: timestamped logging throughout the executor,
         ``verbose=True`` forwarded to the roms-tools calls that support it (Grid,
@@ -414,7 +413,6 @@ def process_forge_blueprint(
             use_dask=use_dask,
             dask_num_workers=dask_num_workers,
             subchunk=subchunk,
-            stage_ic_sources=stage_ic_sources,
             only=resolved_only,
         )
     if configure:

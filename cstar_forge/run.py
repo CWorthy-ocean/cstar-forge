@@ -144,9 +144,14 @@ def process(spec, *, working_dir=None, **kwargs):
         return process_forge_blueprint(cfg, host=host, **kwargs)
 
 
-def main(argv: list | None = None) -> int:
+def main(argv: list | None = None, *, prog: str = "python -m cstar_forge.run") -> int:
+    """Process a forge blueprint from the command line.
+
+    ``prog`` names the invoking command in ``--help`` output; ``cstar_forge.cli``
+    passes ``"cstar forge run"`` so the usage line matches what the user typed.
+    """
     parser = argparse.ArgumentParser(
-        prog="python -m cstar_forge.run",
+        prog=prog,
         description="Process a forge_blueprint.yaml on this machine "
         "(generate inputs + configure build).",
     )
@@ -178,10 +183,12 @@ def main(argv: list | None = None) -> int:
     )
     parser.add_argument(
         "--subchunk",
-        action="store_true",
-        help="interim hack: just-in-time build a kerchunk-subchunked reference for "
-        "multi-file GLORYS sources and read from it instead of the raw per-day "
-        "files (see cstar_forge/forge/glorys_subchunk.py)",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="just-in-time build a kerchunk-subchunked reference for multi-file "
+        "GLORYS sources and read from it instead of the raw per-day files "
+        "(see cstar_forge/forge/glorys_subchunk.py). On by default; disable "
+        "with --no-subchunk",
     )
     parser.add_argument(
         "--only-inputs",
@@ -193,14 +200,6 @@ def main(argv: list | None = None) -> int:
         "emission -- a one-off run for slow or human-checked inputs. Existing "
         "files are still reused per the normal skip-existing logic. Re-run "
         "without this flag later to generate the rest and emit the blueprint.",
-    )
-    parser.add_argument(
-        "--stage-ic-sources",
-        action="store_true",
-        help="I/O performance experiment: copy the initial-conditions source "
-        "netCDF files (physics + bgc) into the working directory (scratch) "
-        "before constructing InitialConditions, and read from those copies "
-        "instead of the originals on project space",
     )
     parser.add_argument(
         "--host-only", action="store_true", help="just print the resolved host and exit"
@@ -305,7 +304,6 @@ def main(argv: list | None = None) -> int:
                 use_dask=not args.no_dask,
                 dask_num_workers=args.dask_num_workers,
                 subchunk=args.subchunk,
-                stage_ic_sources=args.stage_ic_sources,
                 only_inputs=args.only_inputs,
                 verbose=args.verbose,
             )

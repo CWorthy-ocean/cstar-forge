@@ -1,6 +1,7 @@
 # RomsMarblInputData Class Documentation
 
-> **This subsystem is driven by the forge application** (`python -m cstar_forge.run`), which
+> **This subsystem is driven by the forge application** (`cstar forge run`, or the
+> `python -m cstar_forge.run` module CLI it wraps), which
 > calls `ForgeExecutor.generate_inputs()` (`cstar_forge/forge/executor.py`), which constructs a
 > `RomsMarblInputData` and calls `generate_all()` on it. Direct construction, as shown in this
 > document, is for developers debugging or extending input generation.
@@ -35,8 +36,7 @@ class RomsMarblInputData(InputData):
     use_dask: bool = True
     dask_num_workers: int = 8
     use_pio: bool = False
-    subchunk: bool = False
-    stage_ic_sources: bool = False
+    subchunk: bool = True
     verbose: bool = False
 
     roms_marbl_blueprint_elements: RomsMarblBlueprintInputData  # Auto-initialized
@@ -282,8 +282,6 @@ def _generate_input(self, key: str = "input_key", **kwargs):
 - Resolves paths via `_resolve_source_block()` → `SourceData.path_for_source()`
 - Per-day source file lists are trimmed to `[start_date, start_date + 1 day]` (roms-tools only
   needs the day-of and next-day files for `ini_time`) — see `filter_paths_by_time_window()`
-- If `stage_ic_sources` is set, source files are first copied into
-  `input_data_dir/staged_sources` (an I/O-performance experiment; see `_stage_source_files()`)
 
 **Updates ROMS-MARBL Blueprint:**
 - Appends `Resource(s)` to `roms_marbl_blueprint_elements.initial_conditions.data`
@@ -368,7 +366,7 @@ def _generate_input(self, key: str = "input_key", **kwargs):
       self._settings_run_time["forcing"]["boundary_forcing_path"] = paths[0]
   ```
 
-**Note**: Compile-time settings for boundary forcing are not yet populated (TODO in code).
+**Note**: Compile-time settings are not populated by the boundary handler.
 
 ### Tidal Forcing (`forcing.tidal`, order=50)
 
@@ -415,8 +413,9 @@ def _generate_input(self, key: str = "input_key", **kwargs):
 **Key Features:**
 - Passes `include_bgc` and other kwargs through to `rt.RiverForcing`
 - Extracts number of rivers from the generated dataset
-- If `rt.RiverForcing` raises `ValueError` (invalid river configuration for this domain), the
-  step warns and skips generation, clearing `roms_marbl_blueprint_elements.forcing.river`
+- If `rt.RiverForcing` raises the roms-tools `ValueError` whose message contains *no relevant
+  rivers found* (no river mouths survive the domain filters), the step logs at INFO, clears
+  `roms_marbl_blueprint_elements.forcing.river`, and returns; any other `ValueError` propagates
 - If the domain simply has no rivers (`river.ds.sizes["nriver"] == 0`), also clears
   `roms_marbl_blueprint_elements.forcing.river` without treating it as an error
 
@@ -471,13 +470,13 @@ section name
 - **Run-time (`cdr_frc`)**: `cdr_file="cdr.nc"` (the executor/blueprint symlinks to the real
   path), `cdr_source=True`, `ncdr_parm=len(cdr.releases)`, `forcing_parameterized=True`,
   `cdr_volume=(cdr.releases.release_type == "volume")`
-- **Run-time (`cdr_output`)**: `do_cdr = True`
+- **Run-time (`cdr_output`)**: `do_cdr_output = True`
 
 ### Corrections Forcing (`forcing.corrections`, order=90)
 
 **Handler**: `_generate_corrections()`
 
-**Status**: Not yet implemented (raises `NotImplementedError`)
+**Status**: Registered but unwired — the resolver never emits a `corrections` category, so the step never enters `input_list` in production; the handler raises `NotImplementedError`
 
 ## Source Resolution
 
@@ -515,10 +514,11 @@ def _resolve_source_block(
 3. Check streamability: `SourceData.streamable_for_source(name, glorys_layout=...)` — if
    streamable (e.g. ERA5), don't add a path unless one was explicitly provided
 4. Get path: `SourceData.path_for_source(name, glorys_layout=...)` for non-streamable sources
-5. Time-window trim: if `time_window` is given and the path is a multi-file list, trim it via
-   `filter_paths_by_time_window()`
-6. Subchunking: if `subchunk` is enabled and the source is a multi-file GLORYS path, the path is
-   instead replaced with a memoized kerchunk-subchunked reference (`_subchunked_glorys_path()`)
+5. **Either** time-window trim (when `time_window` is given and the path is a multi-file list,
+   via `filter_paths_by_time_window()`) **or** subchunking (when `subchunk` is on and the source
+   is a multi-file GLORYS path: the path is replaced with a memoized kerchunk-subchunked
+   reference, `_subchunked_glorys_path()`) — never both. A trimmed list deliberately skips the
+   subchunk branch so the memoized reference is only ever built from the full file list
 7. Return: Dict with `name` and optional `path`
 
 `SourceData.dataset_key_for_source()` is used elsewhere (subchunk-reference memoization), not
@@ -581,7 +581,7 @@ def _build_input_args(
 - `cppdefs.cdr_forcing`: `True` when CDR forcing is generated
 
 **Boundary Forcing:**
-- Compile-time settings for boundary forcing are not yet populated (TODO in code).
+- Compile-time settings are not populated by the boundary handler.
 
 **Tidal/River Forcing:**
 - `tides` and `river_frc` are **run-time** sections, not compile-time — see below.
@@ -613,7 +613,8 @@ def _build_input_args(
 **CDR Forcing:**
 - `cdr_frc.cdr_file`, `cdr_frc.cdr_source`, `cdr_frc.ncdr_parm`, `cdr_frc.forcing_parameterized`,
   `cdr_frc.cdr_volume`
-- `cdr_output.do_cdr`: `True` when CDR forcing is generated
+- `cdr_output.do_cdr_output`: forced `True` when CDR forcing is generated; also
+  independently user-controllable (CDR output does not require CDR forcing)
 
 ## ROMS-MARBL Blueprint Element Updates
 
@@ -621,9 +622,9 @@ Each handler appends `Resource` objects to the appropriate roms_marbl_blueprint 
 
 **Resource Creation:**
 ```python
-resource = cstar_models.Resource(
-    location=out_path,  # Path to generated NetCDF file
-    partitioned=False   # Set to True after partitioning
+resource = Resource(              # from cstar.orchestration.models
+    location=str(out_path),       # path to generated NetCDF file
+    partitioned=False,            # set to True after partitioning
 )
 ```
 
@@ -688,7 +689,7 @@ input_args = dict(
 ```
 
 **Usage:**
-- `roms_marbl_blueprint_elements`: Merged into main blueprint during POSTCONFIG stage
+- `roms_marbl_blueprint_elements`: Merged into the in-memory `RomsMarblBlueprint` by `generate_inputs()`; persisted in `configure_build()`
 - `compile_time_settings`: Merged with template defaults, used to render `cppdefs.opt`
 - `run_time_settings`: Merged with template defaults, used to write `namelist.nml` (via `write_roms_namelist`)
 
