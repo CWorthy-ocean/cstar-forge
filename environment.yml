@@ -21,7 +21,7 @@ channels:
 - nodefaults
 dependencies:
 - python >=3.12,<3.14
-- roms-tools >=4.0.0,<5
+- roms-tools >=4.1.0,<5
 - cstar-ocean >=0.10.0
 - dask *
 - distributed *
@@ -42,6 +42,7 @@ dependencies:
   - pytest-xdist
   - ruff>=0.12.2
   - pre-commit>=3.8
+  - mystmd
   - netcdf4
   - f90nml
   - jupyterlab
@@ -69,4 +70,4 @@ dependencies:
   - ujson
   - fastparquet
   - cstar-ocean>=0.10.0
-  - roms-tools>=4.0.0, <5
+  - roms-tools>=4.1.0, <5
