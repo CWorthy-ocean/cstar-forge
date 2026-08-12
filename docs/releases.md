@@ -1,5 +1,19 @@
 # Release notes
 
+## Unreleased
+
+### Breaking Changes
+
+### New Features
+
+### Bug Fixes
+
+### Improvements
+
+* Relocation of data output to SCRATCH space on HPCs is now backwards-compatible with blueprints that point to the old default location. ([#120](https://github.com/CWorthy-ocean/cstar-forge/pull/120))
+
+### Miscellaneous
+
 ## 0.4.0
 
 ### Breaking Changes
