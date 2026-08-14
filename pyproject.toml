@@ -174,6 +174,12 @@ packages = ["cstar_forge"]
 # forge-blueprint-wizard.ipynb) that run-wizard-app.sh execs via voila — needed
 # for the `app` extra to be usable from a plain pip/wheel install.
 "*" = ["*.yml", "*.yaml", "*.ipynb"]
+# Explicit: the bundled read-only catalog layer (cstar_forge/catalog/) previously
+# shipped only implicitly, via setuptools_scm's file-finder picking up
+# already-tracked files (the "*" glob above is non-recursive and never matched
+# anything under catalog/); spelled out here so packaging doesn't depend on
+# that implicit behavior for the catalog's .yaml/.gitkeep files.
+cstar_forge = ["catalog/**/*.yaml", "catalog/**/.gitkeep"]
 
 # Configuration for the ruff linter and formatter.
 # Rule selection follows roms-tools (the library Forge wraps): I, E, W, F, D, RUF, UP.
@@ -185,9 +191,8 @@ fix = true
 show-fixes = true
 line-length = 88
 target-version = "py311"
-# Vendored/generated trees are not ours to lint. domain_catalog_sketch.py is an
-# unimported work-in-progress draft (broken references); exclude until it lands.
-extend-exclude = ["external", "docs", "workflows", "cstar_forge/domain_catalog_sketch.py"]
+# Vendored/generated trees are not ours to lint.
+extend-exclude = ["external", "docs", "workflows"]
 
 [tool.ruff.lint]
 extend-select = ["I", "E", "W", "F", "D", "RUF", "UP"]
