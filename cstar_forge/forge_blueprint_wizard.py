@@ -1896,6 +1896,48 @@ def _schedule_coroutine(coro):
         return asyncio.run(coro)
 
 
+_STREAM_READ_SIZE = 2**16  # bytes per subprocess read; also bounds the flush below
+# A run whose child never emits a newline for a long stretch -- classically a
+# ``\r``-redrawn progress bar (git clone, tqdm, download progress) -- would grow an
+# unbounded "line". Flush an unterminated run once it reaches this so memory stays
+# bounded and the log still updates. (This is also what a line-oriented reader could
+# not survive: asyncio's StreamReader.readline() raises ValueError, "Separator is not
+# found, and chunk exceed the limit", at its 64 KiB default -- the bug this avoids.)
+_STREAM_MAX_LINE = 2**16
+
+
+def _drain_stream_buffer(
+    buf: bytes, *, at_eof: bool = False
+) -> tuple[list[str], bytes]:
+    r"""Split accumulated subprocess bytes into display lines, returning
+    ``(lines, remainder)``.
+
+    Segments are cut on ``\r\n``, ``\r`` or ``\n`` and each terminator is normalised
+    to a single trailing ``\n``, so ``\r``-only progress redraws surface as successive
+    log lines instead of one ever-growing line. A lone trailing ``\r`` is held back in
+    the remainder (unless at EOF) so a ``\r\n`` split across two reads is not mistaken
+    for a bare ``\r`` plus a spurious blank line. When not at EOF, an unterminated
+    remainder that reaches ``_STREAM_MAX_LINE`` is emitted as a partial line to keep
+    memory bounded; at EOF any remainder is flushed.
+    """
+    held = b""
+    if not at_eof and buf.endswith(b"\r"):
+        buf, held = buf[:-1], b"\r"
+    tokens = re.split(rb"(\r\n|\r|\n)", buf)
+    remainder = tokens.pop() + held
+    lines = [
+        tokens[i].decode(errors="replace") + "\n" for i in range(0, len(tokens), 2)
+    ]
+    if at_eof:
+        if remainder:
+            lines.append(remainder.decode(errors="replace"))
+        remainder = b""
+    elif len(remainder) >= _STREAM_MAX_LINE:
+        lines.append(remainder.decode(errors="replace"))
+        remainder = b""
+    return lines, remainder
+
+
 class ForgeBlueprintWizard:
     """Build/curate a :class:`ForgeBlueprint` interactively. ``self.config`` holds the
     latest successfully-resolved config (``None`` while inputs are invalid).
@@ -4552,6 +4594,7 @@ class ForgeBlueprintWizard:
         self.run_btn.disabled = True
         self.run_output.clear_output(wait=True)
         self.run_status.value = "<i>saving blueprint…</i>"
+        cmd: list[str] | None = None
         try:
             path = self.config.to_yaml(Path(self.save_path.value))
             cmd = self._build_run_command(str(path))
@@ -4561,12 +4604,24 @@ class ForgeBlueprintWizard:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            # append_stdout (not `with self.run_output: print(...)`) appends
-            # directly to the widget's output list -- it works whether or not a
-            # live Jupyter kernel is routing stdout via iopub messaging, so lines
-            # land in the log both in a real notebook and in tests.
-            async for line in proc.stdout:
-                self.run_output.append_stdout(line.decode(errors="replace"))
+            # Read fixed-size chunks and reassemble lines ourselves rather than
+            # `async for line in proc.stdout` (StreamReader.readline), which raises
+            # ValueError, "Separator is not found, and chunk exceed the limit", when a
+            # child emits 64 KiB without a newline -- e.g. a \r-redrawn progress bar.
+            # append_stdout (not `with self.run_output: print(...)`) appends directly
+            # to the widget's output list, so lines land in the log whether or not a
+            # live Jupyter kernel is routing stdout via iopub messaging.
+            buf = b""
+            while True:
+                chunk = await proc.stdout.read(_STREAM_READ_SIZE)
+                if not chunk:
+                    break
+                lines, buf = _drain_stream_buffer(buf + chunk)
+                for line in lines:
+                    self.run_output.append_stdout(line)
+            lines, buf = _drain_stream_buffer(buf, at_eof=True)
+            for line in lines:
+                self.run_output.append_stdout(line)
             code = await proc.wait()
             # On success the log above names the emitted roms_marbl blueprint (the
             # runner logs where it published it). Point at it rather than restating
@@ -4579,8 +4634,11 @@ class ForgeBlueprintWizard:
                 else f"<span style='color:#b00'>exited with code {code}</span>"
             )
         except Exception as exc:
+            # Name the command in the status so a failure isn't a context-free
+            # error string (cmd is None only if saving the blueprint threw first).
+            where = f" while running: {' '.join(cmd)}" if cmd else ""
             self.run_status.value = (
-                f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
+                f"<span style='color:#b00'>{type(exc).__name__}: {exc}{where}</span>"
             )
         finally:
             self.run_btn.disabled = False

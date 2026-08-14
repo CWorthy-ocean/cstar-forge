@@ -14,6 +14,7 @@ import pytest
 
 from cstar_forge.forge_blueprint_wizard import (
     ForgeBlueprintWizard,
+    _drain_stream_buffer,
     _ForcingEditor,
 )
 
@@ -1029,24 +1030,35 @@ def test_on_run_guards_on_invalid_config(monkeypatch):
 
 
 class _FakeStdout:
-    """Minimal async-iterable mimicking asyncio.StreamReader's line iteration."""
+    """Minimal async stand-in for asyncio.StreamReader's ``read(n)``.
 
-    def __init__(self, lines):
-        self._lines = iter(lines)
+    Serves a flat byte buffer in small, deliberately line-*un*aligned chunks (7
+    bytes by default), so a test exercises the wizard's chunk-to-line reassembly
+    rather than getting one whole line per read (which would prove nothing). Returns
+    ``b""`` at EOF, like the real reader.
 
-    def __aiter__(self):
-        return self
+    Deliberately implements only ``read(n)`` and no ``__aiter__``: the wizard must
+    not go back to ``async for line in proc.stdout`` (StreamReader.readline), whose
+    64 KiB line limit is the bug this change removed -- doing so would fail here.
+    """
 
-    async def __anext__(self):
-        try:
-            return next(self._lines)
-        except StopIteration:
-            raise StopAsyncIteration
+    def __init__(self, data, chunk_size=7):
+        self._data = data if isinstance(data, bytes) else b"".join(data)
+        self._pos = 0
+        self._chunk_size = chunk_size
+
+    async def read(self, n=-1):
+        if self._pos >= len(self._data):
+            return b""
+        take = len(self._data) - self._pos if n < 0 else min(n, self._chunk_size)
+        chunk = self._data[self._pos : self._pos + take]
+        self._pos += len(chunk)
+        return chunk
 
 
 class _FakeProcess:
-    def __init__(self, lines, returncode=0):
-        self.stdout = _FakeStdout(lines)
+    def __init__(self, data, returncode=0, chunk_size=7):
+        self.stdout = _FakeStdout(data, chunk_size=chunk_size)
         self._returncode = returncode
 
     async def wait(self):
@@ -1112,6 +1124,108 @@ def test_on_run_reports_nonzero_exit_code(monkeypatch, tmp_path):
 
     assert "exited with code 1" in wiz.run_status.value
     assert wiz.run_btn.disabled is False
+
+
+def _run_wiz_with_output(monkeypatch, tmp_path, data, *, returncode=0, chunk_size=7):
+    """Drive _on_run with a fake process emitting ``data`` (bytes); return the wizard."""
+    import asyncio
+
+    wiz = ForgeBlueprintWizard()
+    wiz.start.value = date(2012, 1, 1)
+    wiz.end.value = date(2012, 1, 2)
+    wiz._rebuild()
+    wiz.save_path.value = str(tmp_path / "bp.yaml")
+    wiz._boundaries_touched = True  # not exercising boundary derivation here
+
+    async def _fake(*args, **kwargs):
+        return _FakeProcess(data, returncode=returncode, chunk_size=chunk_size)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake)
+    wiz._on_run(None)
+    return wiz
+
+
+def test_on_run_survives_line_longer_than_stream_limit(monkeypatch, tmp_path):
+    r"""A child that emits far more than 64 KiB with no newline (the classic
+    \r-less/progress-less long line) must NOT raise the asyncio StreamReader
+    "Separator is not found, and chunk exceed the limit" ValueError that the old
+    ``async for line in proc.stdout`` loop did -- the content still lands, split
+    across multiple appends by the memory-bounding flush.
+    """
+    from cstar_forge.forge_blueprint_wizard import _STREAM_MAX_LINE
+
+    giant = b"x" * (_STREAM_MAX_LINE * 3 + 17) + b"\ndone\n"
+    # Read in chunks well below the flush threshold and unaligned to it, so the
+    # buffer must *accumulate across many reads* before each flush -- the real
+    # production path (asyncio read() returns whatever is buffered, usually far less
+    # than the threshold), not one oversized read that drains immediately.
+    wiz = _run_wiz_with_output(monkeypatch, tmp_path, giant, chunk_size=3000)
+
+    assert "✓ finished" in wiz.run_status.value  # no exception surfaced
+    text = "".join(o["text"] for o in wiz.run_output.outputs)
+    assert text.count("x") == _STREAM_MAX_LINE * 3 + 17  # every byte preserved
+    assert "done\n" in text
+    # bounded memory => the giant run was flushed as several appends, not held whole
+    assert len(wiz.run_output.outputs) > 3
+
+
+def test_on_run_splits_carriage_return_progress_into_lines(monkeypatch, tmp_path):
+    r"""\r-redrawn progress (git clone / tqdm) surfaces as successive log lines
+    instead of one accumulating line.
+    """
+    wiz = _run_wiz_with_output(monkeypatch, tmp_path, b"10%\r20%\r30%\n")
+
+    texts = [o["text"] for o in wiz.run_output.outputs]
+    assert texts == ["10%\n", "20%\n", "30%\n"]
+
+
+def test_on_run_error_status_names_the_command(monkeypatch, tmp_path):
+    """An exception during the run is reported WITH the command that was running,
+    not as a context-free error string.
+    """
+    import asyncio
+
+    wiz = ForgeBlueprintWizard()
+    wiz.start.value = date(2012, 1, 1)
+    wiz.end.value = date(2012, 1, 2)
+    wiz._rebuild()
+    wiz.save_path.value = str(tmp_path / "bp.yaml")
+    wiz._boundaries_touched = True
+
+    async def _boom(*args, **kwargs):
+        raise OSError("no such executable")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+    wiz._on_run(None)
+
+    assert "OSError: no such executable" in wiz.run_status.value
+    assert "while running:" in wiz.run_status.value
+    assert "bp.yaml" in wiz.run_status.value  # the built command is named
+    assert wiz.run_btn.disabled is False
+
+
+def test_drain_stream_buffer_crlf_split_across_reads():
+    r"""A \r\n straddling a read boundary is one line break, not \r + blank line:
+    the trailing \r is held back for the next chunk.
+    """
+    lines, rem = _drain_stream_buffer(b"abc\ndef\r")
+    assert lines == ["abc\n"]
+    assert rem == b"def\r"  # \r held, not emitted as a terminator yet
+    lines2, rem2 = _drain_stream_buffer(rem + b"\nghi")
+    assert lines2 == ["def\n"]  # the held \r + \n = a single CRLF break
+    assert rem2 == b"ghi"
+
+
+def test_drain_stream_buffer_mixed_terminators_and_eof():
+    r"""\r, \n and \r\n all cut lines (normalised to \n); EOF flushes the
+    unterminated remainder.
+    """
+    lines, rem = _drain_stream_buffer(b"a\rb\nc\r\nd")
+    assert lines == ["a\n", "b\n", "c\n"]
+    assert rem == b"d"
+    flushed, rem2 = _drain_stream_buffer(rem, at_eof=True)
+    assert flushed == ["d"]  # no trailing newline added at EOF
+    assert rem2 == b""
 
 
 # ===========================================================================
