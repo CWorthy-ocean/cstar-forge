@@ -1581,6 +1581,19 @@ class TestCaptureOutput:
         assert "late write" in capsys.readouterr().out
         assert "late write" not in log_path.read_text()
 
+    def test_escaping_exception_traceback_is_written_to_log(self, tmp_path):
+        """An exception that escapes the block is pretty-printed by typer/rich only
+        after the capture context has restored stderr and closed the file, so
+        _capture_output itself must record the traceback before re-raising.
+        """
+        with pytest.raises(ValueError, match="boom"):
+            with forge_run._capture_output(tmp_path) as log_path:
+                raise ValueError("boom")
+
+        content = log_path.read_text()
+        assert "Traceback (most recent call last)" in content
+        assert "ValueError: boom" in content
+
     def test_logging_handler_created_during_capture_survives_exit(
         self, tmp_path, capsys
     ):
