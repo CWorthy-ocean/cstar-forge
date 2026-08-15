@@ -26,6 +26,7 @@ import xarray as xr
 import yaml
 from cstar.orchestration.models import Resource
 from pydantic import BaseModel, ConfigDict, Field
+from roms_tools.utils import save_datasets
 from threadpoolctl import threadpool_limits
 
 from cstar_forge.forge import source_data
@@ -348,6 +349,49 @@ class RomsMarblInputData(InputData):
     # so IC + boundary + bgc-physics-boundary reuse one reference instead of rebuilding.
     _subchunk_refs: dict[str, Path] = field(default_factory=dict, init=False)
 
+    # -- Boundary BGC batching state (see _generate_boundary_forcing) --------------
+    # ``forcing.boundary`` is dispatched once per input_list item by generate_all()'s
+    # generic per-entry loop (same architecture as forcing.surface); rather than
+    # restructure that loop, multiple bgc items sharing this key coordinate through
+    # these fields on self, accumulated across successive per-item handler calls.
+    _boundary_bgc_pending: list[tuple[rt.BoundaryForcing, Path]] = field(
+        default_factory=list, init=False
+    )
+    """Built-but-unsaved (type='bgc') BoundaryForcing objects + their intended output
+    paths, accumulated across per-item ``_generate_boundary_forcing`` calls until the
+    last expected bgc item for this run has been handled (see
+    ``_boundary_bgc_expected``/``_boundary_bgc_handled``), at which point they are
+    flushed together through ``BGCMarbl().process_bgc_fields()`` (derive + save)."""
+    _boundary_bgc_expected: int = field(default=0, init=False)
+    """Total count of ``type='bgc'`` boundary items in this run's ``input_list``,
+    computed once in ``__post_init__``. Reused NetCDFs count too -- reaching this
+    count is what triggers the final flush, regardless of whether each individual
+    item was freshly built or reused from disk."""
+    _boundary_bgc_handled: int = field(default=0, init=False)
+    """Running count of boundary bgc items handled so far this run (built or
+    reused) -- compared against ``_boundary_bgc_expected`` to detect the last one."""
+    _boundary_bgc_any_reused: bool = field(default=False, init=False)
+    """Whether at least one ``type='bgc'`` boundary item this run was reused from an
+    existing NetCDF rather than freshly built -- see ``_flush_boundary_bgc_batch``'s
+    mixed-reuse guard: a reused item's file already has its full MARBL tracer set
+    from whatever bgc items were flushed together *then*; if some OTHER bgc item is
+    fresh now, ``BGCMarbl().process_bgc_fields()`` on just the fresh subset would
+    fill defaults for tracers the reused file(s) may already define, with no
+    guarantee those defaults are absent from (and don't silently duplicate/conflict
+    with) the reused file(s) -- ROMS reads every listed file by variable name, so a
+    conflicting duplicate is silently wrong data, not an error."""
+    _boundary_physics_companion: rt.BoundaryForcing | None = field(
+        default=None, init=False
+    )
+    """Memoized physics ``rt.BoundaryForcing`` companion for density-space BGC
+    interpolation / ESPER (see ``_get_physics_boundary_companion``); there is only
+    ever one boundary category per run, so a single cache slot suffices."""
+    _boundary_physics_companion_built: bool = field(default=False, init=False)
+    """Whether ``_boundary_physics_companion`` has been computed yet this run --
+    distinct from ``is None`` since a legitimate outcome (no physics item found) is
+    itself ``None``, and must not trigger a rebuild (with its user-facing warning)
+    on every subsequent bgc item."""
+
     # Blueprint elements containing input data
     roms_marbl_blueprint_elements: RomsMarblBlueprintInputData = field(init=False)
 
@@ -394,6 +438,21 @@ class RomsMarblInputData(InputData):
             input_list.append(("cdr_forcing", {"cdr_kwargs": self.cdr_forcing}))
 
         self.input_list = input_list
+
+        # Total type='bgc' boundary items expected this run -- see
+        # _boundary_bgc_expected's docstring; drives the batched-flush trigger in
+        # _generate_boundary_forcing.
+        # NB: direct ``==`` (not ``str(...)``) -- "type" may still be a
+        # BoundaryType enum member here (e.g. a caller's forcing_override built
+        # via plain ``.model_dump()`` rather than the engine's
+        # ``mode="json"`` dump); a str-mixin enum member compares equal to its
+        # string value, but ``str(BoundaryType.BGC)`` is "BoundaryType.BGC", not
+        # "bgc", on this Python version.
+        self._boundary_bgc_expected = sum(
+            1
+            for fk, kw in self.input_list
+            if fk == "forcing.boundary" and (kw.get("type") or "physics") == "bgc"
+        )
 
         # Sanity check: verify all function keys are registered
         unique_keys = {fk for fk, _ in self.input_list}
@@ -621,6 +680,81 @@ class RomsMarblInputData(InputData):
             self._settings_run_time,
         )
 
+    @staticmethod
+    def _bgc_output_suffix(
+        source_name: str | None, use_vars: list[str] | None = None
+    ) -> str:
+        """Sanitize a BGC source name (+ optional ``use_vars``) into an output-
+        filename suffix.
+
+        Disambiguates multiple ``type='bgc'`` items sharing a forcing category
+        (e.g. two boundary bgc items would otherwise collide on
+        ``boundary-bgc.nc``) -- lowercased, with any run of non-``[a-z0-9]``
+        characters collapsed to a single underscore (e.g. ``"MBL_co2"`` ->
+        ``"mbl_co2"``). ``use_vars`` additionally disambiguates the documented
+        pattern of splitting ONE source across multiple items (same
+        ``source.name``, different ``use_vars``) -- without it, two such items
+        would collide on this suffix alone; a short discriminator built from the
+        (sorted, so order-independent) variable names is appended. This still
+        doesn't guarantee uniqueness for two items with identical name AND
+        use_vars (a genuinely redundant config) -- see the ``__post_init__``
+        collision check for that final safety net.
+        """
+        sanitized = re.sub(r"[^a-z0-9]+", "_", str(source_name or "").lower()).strip(
+            "_"
+        )
+        sanitized = sanitized or "bgc"
+        if use_vars:
+            vars_tag = "_".join(
+                re.sub(r"[^a-z0-9]+", "", v.lower()) for v in sorted(use_vars)
+            )
+            sanitized = f"{sanitized}-{vars_tag}"
+        return sanitized
+
+    def _forcing_detail_suffix(
+        self,
+        forcing_type: str | None,
+        source_name: str | None,
+        use_vars: list[str] | None = None,
+    ) -> str:
+        """The part of a surface/boundary forcing item's output filename after
+        ``"{category}-"``: the plain ``forcing_type`` for physics/restoring, or
+        ``"bgc-{source suffix}"`` for bgc items -- the single mechanism used by
+        both ``_generate_surface_forcing``/``_generate_boundary_forcing`` and
+        ``_planned_netcdf_outputs`` so planned and actual output names always
+        agree. Replaces the old ad hoc ``surface-bgc-co2`` special case (which
+        left every other bgc source, and boundary bgc entirely, undisambiguated).
+        """
+        if forcing_type is None:
+            return ""
+        if forcing_type == "bgc":
+            return f"bgc-{self._bgc_output_suffix(source_name, use_vars)}"
+        return forcing_type
+
+    @staticmethod
+    def _item_source_name(kwargs: dict[str, Any] | None) -> str | None:
+        """Best-effort ``source.name`` lookup from a raw (unresolved) input_list
+        item's kwargs dict, for planning purposes -- ``source`` may be a plain
+        dict (the normal case) or, in some direct-call/test contexts, a
+        ``SourceSpec``-like object exposing ``.name``.
+        """
+        if not isinstance(kwargs, dict):
+            return None
+        src = kwargs.get("source")
+        if isinstance(src, dict):
+            return src.get("name")
+        return getattr(src, "name", None)
+
+    @staticmethod
+    def _item_use_vars(kwargs: dict[str, Any] | None) -> list[str] | None:
+        """Best-effort ``use_vars`` lookup from a raw (unresolved) input_list
+        item's kwargs dict, mirroring ``_item_source_name``.
+        """
+        if not isinstance(kwargs, dict):
+            return None
+        uv = kwargs.get("use_vars")
+        return list(uv) if uv else None
+
     def _planned_netcdf_outputs(
         self, step_kwargs_list: list[tuple[InputStep, dict[str, Any]]]
     ) -> list[Path]:
@@ -648,12 +782,14 @@ class RomsMarblInputData(InputData):
                 continue
 
             if step.name in {"forcing.surface", "forcing.boundary"}:
+                category = step.name.split(".", 1)[1]
                 forcing_type = kwargs.get("type") if isinstance(kwargs, dict) else None
-                suffix = (
-                    f"{step.name.split('.', 1)[1]}-{forcing_type}"
-                    if forcing_type
-                    else step.name.split(".", 1)[1]
+                detail = self._forcing_detail_suffix(
+                    forcing_type,
+                    self._item_source_name(kwargs),
+                    self._item_use_vars(kwargs),
                 )
+                suffix = f"{category}-{detail}" if detail else category
                 planned.append(self._forcing_filename(suffix))
                 continue
 
@@ -717,19 +853,13 @@ class RomsMarblInputData(InputData):
             return False
         return path.resolve() in self._existing_planned_outputs
 
-    def _existing_output_paths(self, path: Path) -> list[str]:
+    def _glob_matching_outputs(self, path: Path) -> list[str]:
         """
-        Return existing NetCDF paths that correspond to a planned output path.
-
-        Some roms_tools writers produce suffixed outputs that share the same stem.
-        For example, planning may include ``foo_surface-physics.nc`` while existing
-        files are ``foo_surface-physics_202001.nc`` etc. See
-        ``_matches_planned_output`` for exactly which suffixes count and which are
-        excluded.
+        Glob-discover NetCDF file(s) on disk matching ``path``: an exact match, or
+        a roms_tools multi-file suffix sharing its stem (see
+        ``_matches_planned_output``). No clobber guard -- callers decide when
+        that applies (see ``_existing_output_paths`` vs ``_discover_saved_paths``).
         """
-        if self._clobber:
-            return []
-
         matches: list[Path] = []
         if path.exists():
             matches.append(path)
@@ -749,6 +879,35 @@ class RomsMarblInputData(InputData):
             if match_str not in unique:
                 unique.append(match_str)
         return unique
+
+    def _existing_output_paths(self, path: Path) -> list[str]:
+        """
+        Return existing NetCDF paths that correspond to a planned output path.
+
+        Some roms_tools writers produce suffixed outputs that share the same stem.
+        For example, planning may include ``foo_surface-physics.nc`` while existing
+        files are ``foo_surface-physics_202001.nc`` etc. See
+        ``_matches_planned_output`` for exactly which suffixes count and which are
+        excluded.
+        """
+        if self._clobber:
+            return []
+        return self._glob_matching_outputs(path)
+
+    def _discover_saved_paths(self, mangled_path: Path) -> list[str]:
+        """
+        Glob-discover what roms-tools actually wrote for ``mangled_path``'s stem,
+        immediately after a batched ``BGCMarbl().process_bgc_fields(...,
+        filepath=[...])`` save (see ``_flush_boundary_bgc_batch``).
+
+        That helper's per-object ``.save()`` return value isn't propagated back to
+        us, so we can't rely on it the way the single-item save paths elsewhere in
+        this file do -- this glob (no clobber short-circuit; we just wrote these
+        files ourselves this run) covers the same grouped multi-file outputs
+        (e.g. monthly chunks) that ``_existing_output_paths`` handles for reuse.
+        """
+        found = self._glob_matching_outputs(mangled_path)
+        return found or [str(mangled_path)]
 
     def _interp_frc_surface_reuse(
         self, input_args: dict[str, Any], nc_path: Path
@@ -1078,7 +1237,19 @@ class RomsMarblInputData(InputData):
         name="initial_conditions", order=20, label="Generating initial conditions"
     )
     def _generate_initial_conditions(self, key: str = "initial_conditions", **kwargs):
-        """Generate initial conditions input file."""
+        """Generate initial conditions input file.
+
+        ``kwargs["bgc_sources"]`` (see ``forge_blueprint.IcBgcSourceItem``) is zero
+        or more BGC sources. With none, this is the original single-object path
+        (physics only). With one or more, a SEPARATE ``rt.InitialConditions`` is
+        built per bgc source -- each redundantly re-deriving the same physics
+        fields, an accepted roms-tools-level cost for a single IC time snapshot --
+        completed together via ``BGCMarbl().process_bgc_fields()`` (fills missing
+        MARBL tracers in place, no save), then merged into ONE dataset before
+        writing: ROMS's ``inifile`` namelist key is a single scalar path
+        (confirmed at the Fortran level in ucla-roms' ``get_init_mod.F90``), so
+        multiple separate IC NetCDFs cannot be referenced directly.
+        """
         yaml_path = self._yaml_filename(key)
         output_path = self._forcing_filename(input_name="initial_conditions")
         extra = dict(
@@ -1088,18 +1259,17 @@ class RomsMarblInputData(InputData):
         )
         # roms-tools selects the closest time in [ini_time, ini_time + 24h], so
         # per-day source lists only need the day-of and next-day files.
-        input_args = self._build_input_args(
-            key,
-            extra=extra,
-            base_kwargs=kwargs,
-            time_window=(self.start_date, self.start_date + timedelta(days=1)),
-        )
+        time_window = (self.start_date, self.start_date + timedelta(days=1))
+        bgc_sources = kwargs.pop("bgc_sources", None) or []
 
         if self._should_reuse_existing_output(output_path):
             print(f"   ↪ Reusing existing file: {output_path}")
             paths = [str(output_path)]
-            ic = None
-        else:
+
+        elif not bgc_sources:
+            input_args = self._build_input_args(
+                key, extra=extra, base_kwargs=kwargs, time_window=time_window
+            )
             log.info("InitialConditions kwargs: %r", input_args)
             with mem_log("InitialConditions()", enabled=self.verbose):
                 ic = rt.InitialConditions(grid=self.grid, **input_args)
@@ -1116,6 +1286,68 @@ class RomsMarblInputData(InputData):
 
             with mem_log("InitialConditions.save", enabled=self.verbose):
                 paths = self._pio_finalize(ic.save(self._pio_mangle(output_path)))
+
+        else:
+            n = len(bgc_sources)
+            ic_objects: list[rt.InitialConditions] = []
+            for i, bs in enumerate(bgc_sources, start=1):
+                item_kwargs = dict(kwargs)
+                item_kwargs["bgc_source"] = bs.get("source")
+                if bs.get("use_vars"):
+                    item_kwargs["use_vars"] = bs["use_vars"]
+                input_args = self._build_input_args(
+                    key, extra=extra, base_kwargs=item_kwargs, time_window=time_window
+                )
+                log.info(
+                    "InitialConditions kwargs [bgc_source %d/%d]: %r",
+                    i,
+                    n,
+                    input_args,
+                )
+                with mem_log(
+                    f"InitialConditions() [bgc {i}/{n}]", enabled=self.verbose
+                ):
+                    ic_objects.append(
+                        rt.InitialConditions(grid=self.grid, **input_args)
+                    )
+
+            with mem_log(
+                f"BGCMarbl.process_bgc_fields [initial_conditions x{n}]",
+                enabled=self.verbose,
+            ):
+                rt.BGCMarbl().process_bgc_fields(ic_objects, filepath=None)
+
+            # See here: https://github.com/CWorthy-ocean/roms-tools/issues/553
+            try:
+                ic_objects[0].to_yaml(yaml_path)
+            except Exception as e:
+                warnings.warn(
+                    f"Failed to save initial conditions YAML to {yaml_path}: {e}",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+            # The first (primary, physics + first bgc source) object's global
+            # attrs/coords are authoritative; later objects only contribute their
+            # own (non-overlapping, by convention of use_vars) bgc variables.
+            merged_ds = xr.merge(
+                [ic.ds for ic in ic_objects],
+                compat="override",
+                combine_attrs="override",
+            )
+            mangled_path = self._pio_mangle(output_path)
+            # Mirror InitialConditions.save()'s own filepath handling (it strips
+            # ".nc" before delegating to save_datasets, which re-appends it).
+            filepath = (
+                mangled_path.with_suffix("")
+                if mangled_path.suffix == ".nc"
+                else mangled_path
+            )
+            with mem_log("InitialConditions.save [merged]", enabled=self.verbose):
+                saved = save_datasets(
+                    [merged_ds], [str(filepath)], use_dask=self.use_dask
+                )
+            paths = self._pio_finalize([str(p) for p in saved])
 
         # Append Resources directly to roms_marbl_blueprint_elements.initial_conditions
         if isinstance(paths, (list, tuple)):
@@ -1160,12 +1392,16 @@ class RomsMarblInputData(InputData):
             )
 
         source_name = input_args.get("source").get("name")
-        if input_args.get("type") == "bgc" and source_name == "MBL_co2":
-            yaml_path = self._yaml_filename(f"{key}-{type}-co2")
-            output_path = self._forcing_filename(input_name=f"surface-{type}-co2")
-        else:
-            yaml_path = self._yaml_filename(f"{key}-{type}")
-            output_path = self._forcing_filename(input_name=f"surface-{type}")
+        # bgc items get a source-name(+use_vars) suffix (e.g. "bgc-unified",
+        # "bgc-mbl_co2") disambiguating multiple type='bgc' surface items in the
+        # same run, including the documented same-source/different-use_vars
+        # split -- the same mechanism _generate_boundary_forcing uses; see
+        # _forcing_detail_suffix.
+        detail = self._forcing_detail_suffix(
+            type, source_name, input_args.get("use_vars")
+        )
+        yaml_path = self._yaml_filename(f"{key}-{detail}")
+        output_path = self._forcing_filename(input_name=f"surface-{detail}")
 
         existing_paths = self._existing_output_paths(output_path)
         frc = None
@@ -1271,7 +1507,13 @@ class RomsMarblInputData(InputData):
             self._settings_run_time["forcing"] = {}
 
         if "bgc" in type:
-            self._settings_run_time["forcing"]["surface_forcing_bgc_path"] = (
+            # Multiple surface bgc items (e.g. UNIFIED + MBL_co2) each contribute
+            # their own path -- accumulate rather than last-write-wins (see
+            # ForcingCfg.surface_forcing_bgc_path).
+            self._settings_run_time["forcing"].setdefault(
+                "surface_forcing_bgc_path", []
+            )
+            self._settings_run_time["forcing"]["surface_forcing_bgc_path"].append(
                 paths[0] if isinstance(paths, (list, tuple)) else paths
             )
         else:
@@ -1281,27 +1523,36 @@ class RomsMarblInputData(InputData):
 
     def _build_physics_boundary_companion(self, key: str, extra: dict[str, Any]):
         """Build a physics ``rt.BoundaryForcing`` to anchor density-space BGC
-        boundary interpolation (roms-tools >=4 ``physics_forcing=``).
+        boundary interpolation, or ESPER (both roms-tools >=4 ``physics_forcing=``
+        consumers -- ESPER needs it unconditionally, regardless of
+        ``bgc_interpolation_method``).
 
         Locates the physics boundary item registered under ``key`` in
         ``self.input_list`` and constructs a BoundaryForcing from it, reusing the
         same run-time ``extra`` (dates, boundaries, dask). Returns ``None`` (with a
         warning) when no physics boundary item exists, in which case roms-tools
-        falls back to depth-space interpolation.
+        falls back to depth-space interpolation (or raises, for ESPER).
+
+        Not memoized here -- see ``_get_physics_boundary_companion`` for the
+        per-run cache wrapper every caller should use instead of calling this
+        directly.
         """
+        # NB: direct ``==`` (not ``str(...)``) -- see the identical note on
+        # ``_boundary_bgc_expected``'s computation in __post_init__.
         physics_kwargs = next(
             (
                 dict(kw)
                 for k, kw in self.input_list
-                if k == key and str(kw.get("type") or "physics") == "physics"
+                if k == key and (kw.get("type") or "physics") == "physics"
             ),
             None,
         )
         if physics_kwargs is None:
             warnings.warn(
-                "Density-space BGC boundary interpolation was requested but no physics "
-                "boundary item was found to anchor it; roms-tools will fall back to "
-                "depth-space interpolation.",
+                "Density-space BGC boundary interpolation (or an ESPER bgc source) "
+                "was requested but no physics boundary item was found to anchor it; "
+                "roms-tools will fall back to depth-space interpolation (or raise, "
+                "for ESPER).",
                 UserWarning,
                 stacklevel=2,
             )
@@ -1312,18 +1563,122 @@ class RomsMarblInputData(InputData):
         with mem_log("BoundaryForcing() [physics companion]", enabled=self.verbose):
             return rt.BoundaryForcing(grid=self.grid, **physics_args)
 
+    def _get_physics_boundary_companion(self, key: str, extra: dict[str, Any]):
+        """Memoized wrapper over ``_build_physics_boundary_companion``: built at
+        most once per ``generate_all()`` run and reused across every bgc boundary
+        item that needs it (there is only ever one boundary category per run).
+
+        A bool flag (rather than an ``is None`` check) distinguishes "not yet
+        computed" from the legitimate "no physics item found" outcome (``None``),
+        so a missing physics item doesn't re-trigger the build (and its warning)
+        for every subsequent bgc item.
+        """
+        if not self._boundary_physics_companion_built:
+            self._boundary_physics_companion = self._build_physics_boundary_companion(
+                key, extra
+            )
+            self._boundary_physics_companion_built = True
+        return self._boundary_physics_companion
+
+    def _flush_boundary_bgc_batch(self) -> None:
+        """Complete + save every pending ``type='bgc'`` boundary item together.
+
+        Called once the last expected bgc boundary item for this run has been
+        handled (see ``_boundary_bgc_expected``/``_boundary_bgc_handled``).
+        ``BGCMarbl().process_bgc_fields(objs, filepath=[...])`` both derives/fills
+        the remaining MARBL tracer set across all pending objects AND saves each
+        (roms-tools calls ``obj.save(p)`` internally per object) -- since that
+        return value isn't propagated back to us, the actual written path(s) per
+        object are recovered via ``_discover_saved_paths`` (handles roms-tools'
+        grouped multi-file outputs, e.g. monthly chunks, the same way
+        ``_existing_output_paths`` does for the reuse path).
+        """
+        if not self._boundary_bgc_pending:
+            return
+        if self._boundary_bgc_any_reused:
+            # Mixed reuse: some bgc boundary item(s) this run were reused from an
+            # existing NetCDF (already carrying a complete MARBL tracer set from
+            # whatever bgc items were flushed together when THEY were built), while
+            # these pending item(s) are fresh. Running process_bgc_fields() on just
+            # the fresh subset would fill missing tracers with defaults with no
+            # knowledge of what the reused file(s) already define -- ROMS reads every
+            # listed boundary file by variable name, so a silently duplicated or
+            # conflicting tracer is wrong data, not an error. Fail loudly instead of
+            # guessing: ask the user to clear the stale outputs and regenerate the
+            # full bgc set together.
+            raise RuntimeError(
+                "Some, but not all, type='bgc' boundary forcing NetCDFs for this "
+                "domain already exist on disk -- partial reuse combined with fresh "
+                "BGCMarbl processing risks silently duplicated/conflicting tracers "
+                "across files. Delete the existing boundary-bgc-*.nc (and their "
+                ".yaml sidecars) for this domain and rerun so all bgc boundary "
+                "sources are regenerated together."
+            )
+        pending = self._boundary_bgc_pending
+        self._boundary_bgc_pending = []
+        bry_objs = [bry for bry, _ in pending]
+        mangled_paths = [self._pio_mangle(path) for _, path in pending]
+        with mem_log(
+            f"BGCMarbl.process_bgc_fields [boundary x{len(bry_objs)}]",
+            enabled=self.verbose,
+        ):
+            rt.BGCMarbl().process_bgc_fields(
+                bry_objs, filepath=[str(p) for p in mangled_paths]
+            )
+        for mangled_path in mangled_paths:
+            saved = self._discover_saved_paths(mangled_path)
+            finalized = self._pio_finalize(saved)
+            self._record_boundary_forcing_result("bgc", finalized)
+
+    def _record_boundary_forcing_result(self, type_: str, paths) -> None:
+        """Append Resource(s) to ``roms_marbl_blueprint_elements.forcing.boundary``
+        and record the generated path(s) into ``_settings_run_time['forcing']``.
+
+        For ``type_='bgc'``, paths accumulate across multiple bgc boundary items
+        (a list, one entry per item -- see ``ForcingCfg.boundary_forcing_bgc_path``);
+        for ``type_='physics'`` the single physics path is stored as before.
+        """
+        path_list = list(paths) if isinstance(paths, (list, tuple)) else [paths]
+        for path in path_list:
+            resource = Resource(location=path, partitioned=False)
+            self.roms_marbl_blueprint_elements.forcing.boundary.data.append(resource)
+
+        if "forcing" not in self._settings_run_time:
+            self._settings_run_time["forcing"] = {}
+        if type_ == "bgc":
+            self._settings_run_time["forcing"].setdefault(
+                "boundary_forcing_bgc_path", []
+            )
+            self._settings_run_time["forcing"]["boundary_forcing_bgc_path"].append(
+                path_list[0]
+            )
+        else:
+            self._settings_run_time["forcing"]["boundary_forcing_path"] = path_list[0]
+
     @register_input(
         name="forcing.boundary", order=40, label="Generating boundary forcing"
     )
     def _generate_boundary_forcing(self, key: str = "forcing.boundary", **kwargs):
-        """Generate boundary forcing input files."""
+        """Generate boundary forcing input files.
+
+        ``forcing.boundary`` is dispatched once per ``input_list`` item by
+        ``generate_all()``'s generic per-entry loop (the same architecture as
+        ``forcing.surface``) -- rather than restructure that loop to group items
+        by category, ``type='bgc'`` items instead coordinate across these
+        per-item calls via state on ``self`` (``_boundary_bgc_pending`` /
+        ``_boundary_bgc_expected`` / ``_boundary_bgc_handled``): each bgc item is
+        built (or reused from disk) as usual, but instead of saving immediately
+        it is queued, and once the LAST expected bgc item for this run has been
+        handled, all queued items are completed + saved together via
+        ``BGCMarbl().process_bgc_fields()`` (see ``_flush_boundary_bgc_batch``).
+        ``type='physics'`` items are unaffected -- built+saved immediately, as
+        before.
+        """
         # Child/nested domains receive their boundaries from the parent's data
         # extraction (nesting.nc), so they must not generate boundary forcing
         # from reanalysis. A domain is "child" iff it has a parent grid.
         if self.grid_parent is not None:
             return
-        # Extract subkey from "forcing.boundary" -> "boundary"
-        subkey = key.split(".", 1)[1] if "." in key else key
 
         extra = dict(
             start_time=self.start_date,
@@ -1347,23 +1702,82 @@ class RomsMarblInputData(InputData):
                 f"Expected 'type' to be 'physics' or 'bgc'."
             )
 
-        # Density-space BGC boundary interpolation (roms-tools >=4) needs a physics
-        # BoundaryForcing companion to supply the target T/S density coordinate. Build
-        # one from this key's physics item and pass it as `physics_forcing`. Without it,
-        # roms-tools silently falls back to depth interpolation.
-        bgc_interp = str(input_args.get("bgc_interpolation_method") or "depth")
-        if type == "bgc" and bgc_interp in {"density", "density_mld"}:
-            input_args["physics_forcing"] = self._build_physics_boundary_companion(
+        if type == "physics":
+            # Unchanged: built + saved immediately, no batching involved.
+            yaml_path = self._yaml_filename(f"{key}-{type}")
+            output_path = self._forcing_filename(input_name=f"boundary-{type}")
+
+            existing_paths = self._existing_output_paths(output_path)
+            if existing_paths:
+                print(f"   ↪ Reusing existing file(s): {', '.join(existing_paths)}")
+                paths = existing_paths
+                if not yaml_path.exists():
+                    warnings.warn(
+                        f"Boundary forcing NetCDF exists but YAML sidecar is missing ({yaml_path}); "
+                        "constructing BoundaryForcing once to write YAML (this may be slow).",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                    with mem_log(
+                        "BoundaryForcing() [yaml-sidecar-only]", enabled=self.verbose
+                    ):
+                        bry = rt.BoundaryForcing(grid=self.grid, **input_args)
+                    try:
+                        bry.to_yaml(yaml_path)
+                    except Exception as e:
+                        warnings.warn(
+                            f"Failed to save boundary forcing YAML to {yaml_path}: {e}",
+                            UserWarning,
+                            stacklevel=2,
+                        )
+            else:
+                with mem_log("BoundaryForcing()", enabled=self.verbose):
+                    bry = rt.BoundaryForcing(grid=self.grid, **input_args)
+                try:
+                    bry.to_yaml(yaml_path)
+                except Exception as e:
+                    warnings.warn(
+                        f"Failed to save boundary forcing YAML to {yaml_path}: {e}",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+                with mem_log("BoundaryForcing.save", enabled=self.verbose):
+                    paths = self._pio_finalize(bry.save(self._pio_mangle(output_path)))
+
+            self._record_boundary_forcing_result("physics", paths)
+            return
+
+        # type == "bgc": batched path.
+        source_name = (input_args.get("source") or {}).get("name")
+
+        # Density-space BGC boundary interpolation, or an ESPER source (which
+        # needs it unconditionally), needs a physics BoundaryForcing companion to
+        # supply the target T/S. Build (or reuse the memoized) one and pass it as
+        # `physics_forcing`. Without it, roms-tools silently falls back to depth
+        # interpolation (or raises, for ESPER).
+        # NB: direct membership/`==` (not `str(...)`) -- see the identical note on
+        # `_boundary_bgc_expected`'s computation in __post_init__: a str-mixin
+        # enum member's `str()` is its qualified repr ("BgcInterpMethod.DENSITY"),
+        # not its value ("density"), even though `==` against the plain string
+        # works fine.
+        bgc_interp = input_args.get("bgc_interpolation_method") or "depth"
+        needs_companion = bgc_interp in {"density", "density_mld"} or (
+            str(source_name or "").upper() == "ESPER"
+        )
+        if needs_companion:
+            input_args["physics_forcing"] = self._get_physics_boundary_companion(
                 key, extra
             )
 
-        yaml_path = self._yaml_filename(f"{key}-{type}")
-        output_path = self._forcing_filename(input_name=f"boundary-{type}")
+        detail = self._forcing_detail_suffix(
+            type, source_name, input_args.get("use_vars")
+        )
+        yaml_path = self._yaml_filename(f"{key}-{detail}")
+        output_path = self._forcing_filename(input_name=f"boundary-{detail}")
 
         existing_paths = self._existing_output_paths(output_path)
         if existing_paths:
             print(f"   ↪ Reusing existing file(s): {', '.join(existing_paths)}")
-            paths = existing_paths
             if not yaml_path.exists():
                 warnings.warn(
                     f"Boundary forcing NetCDF exists but YAML sidecar is missing ({yaml_path}); "
@@ -1383,8 +1797,10 @@ class RomsMarblInputData(InputData):
                         UserWarning,
                         stacklevel=2,
                     )
+            self._boundary_bgc_any_reused = True
+            self._record_boundary_forcing_result("bgc", existing_paths)
         else:
-            with mem_log("BoundaryForcing()", enabled=self.verbose):
+            with mem_log("BoundaryForcing() [bgc, pre-MARBL]", enabled=self.verbose):
                 bry = rt.BoundaryForcing(grid=self.grid, **input_args)
             try:
                 bry.to_yaml(yaml_path)
@@ -1394,32 +1810,13 @@ class RomsMarblInputData(InputData):
                     UserWarning,
                     stacklevel=2,
                 )
-            with mem_log("BoundaryForcing.save", enabled=self.verbose):
-                paths = self._pio_finalize(bry.save(self._pio_mangle(output_path)))
-        # Append Resources directly to roms_marbl_blueprint_elements.forcing[subkey]
-        if isinstance(paths, (list, tuple)):
-            for path in paths:
-                resource = Resource(location=path, partitioned=False)
-                getattr(self.roms_marbl_blueprint_elements.forcing, subkey).data.append(
-                    resource
-                )
-        else:
-            resource = Resource(location=paths, partitioned=False)
-            getattr(self.roms_marbl_blueprint_elements.forcing, subkey).data.append(
-                resource
-            )
+            # Queue for the batched BGCMarbl().process_bgc_fields() + save, once
+            # every expected bgc item this run has reached this point.
+            self._boundary_bgc_pending.append((bry, output_path))
 
-        if "forcing" not in self._settings_run_time:
-            self._settings_run_time["forcing"] = {}
-
-        if "bgc" in type:
-            self._settings_run_time["forcing"]["boundary_forcing_bgc_path"] = (
-                paths[0] if isinstance(paths, (list, tuple)) else paths
-            )
-        else:
-            self._settings_run_time["forcing"]["boundary_forcing_path"] = (
-                paths[0] if isinstance(paths, (list, tuple)) else paths
-            )
+        self._boundary_bgc_handled += 1
+        if self._boundary_bgc_handled >= self._boundary_bgc_expected:
+            self._flush_boundary_bgc_batch()
 
     @register_input(name="forcing.tidal", order=50, label="Generating tidal forcing")
     def _generate_tidal_forcing(self, key: str = "forcing.tidal", **kwargs):

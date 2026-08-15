@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from cstar_forge.models import (
     BoundaryForcingItem,
+    IcBgcSourceItem,
     InitialConditionsInput,
     RiverForcingItem,
     SourceSpec,
@@ -81,16 +82,44 @@ class TestInitialConditionsInput:
         source = SourceSpec(name="GLORYS")
         ic = InitialConditionsInput(source=source)
         assert ic.source.name == "GLORYS"
-        assert ic.bgc_source is None  # Default value
+        assert ic.bgc_sources == []  # Default value
 
     def test_initialconditionsinput_creation_with_bgc(self):
-        """Test creating InitialConditionsInput with bgc_source."""
+        """Test creating InitialConditionsInput with a single bgc source."""
         source = SourceSpec(name="GLORYS")
         bgc_source = SourceSpec(name="UNIFIED", climatology=True)
-        ic = InitialConditionsInput(source=source, bgc_source=bgc_source)
+        ic = InitialConditionsInput(
+            source=source,
+            bgc_sources=[IcBgcSourceItem(source=bgc_source)],
+        )
         assert ic.source.name == "GLORYS"
-        assert ic.bgc_source.name == "UNIFIED"
-        assert ic.bgc_source.climatology is True
+        assert ic.bgc_sources[0].source.name == "UNIFIED"
+        assert ic.bgc_sources[0].source.climatology is True
+
+    def test_initialconditionsinput_creation_with_multiple_bgc_sources(self):
+        """Multiple bgc_sources, each with its own use_vars down-selection."""
+        ic = InitialConditionsInput(
+            source=SourceSpec(name="GLORYS"),
+            bgc_sources=[
+                IcBgcSourceItem(
+                    source=SourceSpec(name="UNIFIED", climatology=True),
+                    use_vars=["CHL", "PO4", "NO3", "SiO3", "O2"],
+                ),
+                IcBgcSourceItem(
+                    source=SourceSpec(name="GLODAP"), use_vars=["ALK", "DIC"]
+                ),
+                IcBgcSourceItem(
+                    source=SourceSpec(name="constants", constants={"Fe": 3.0e-3})
+                ),
+            ],
+        )
+        assert [b.source.name for b in ic.bgc_sources] == [
+            "UNIFIED",
+            "GLODAP",
+            "constants",
+        ]
+        assert ic.bgc_sources[0].use_vars == ["CHL", "PO4", "NO3", "SiO3", "O2"]
+        assert ic.bgc_sources[2].source.constants == {"Fe": 3.0e-3}
 
     def test_initialconditionsinput_validation_missing_source(self):
         """Test that InitialConditionsInput raises error when source is missing."""

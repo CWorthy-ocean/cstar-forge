@@ -44,6 +44,7 @@ try:  # pragma: no cover - exercised both ways
         Domain,
         Forcing,
         ForgeBlueprint,
+        IcBgcSourceItem,
         InitialConditions,
         OpenBoundaries,
         Partitioning,
@@ -68,6 +69,7 @@ except ImportError:  # pragma: no cover
         Domain,
         Forcing,
         ForgeBlueprint,
+        IcBgcSourceItem,
         InitialConditions,
         OpenBoundaries,
         Partitioning,
@@ -121,19 +123,37 @@ def _resolved_dataset(name: str, glorys_layout: str | None = None) -> ResolvedDa
 
 
 def _parse_source(block: Any) -> SourceSpec:
-    """A model.yaml ``source`` block: a bare name string or a dict."""
+    """A model.yaml ``source`` block: a bare name string or a dict.
+
+    Forwards every ``SourceSpec`` field a source dict may carry -- ``path`` (a
+    custom dataset path, or the required PyESPER package directory for an
+    ``ESPER`` source), ``constants`` (a ``name="constants"`` source's value
+    mapping), and ``esper_method``/``esper_equation`` (an ``ESPER`` source's
+    PyESPER knobs) -- not just ``name``/``climatology``/``glorys_layout``, so a
+    constants/ESPER/custom-path source authored via the wizard (or any
+    ``forcing_inputs`` caller) actually reaches ``SourceSpec`` instead of being
+    silently dropped.
+    """
     if isinstance(block, str):
         name = block
         d: dict[str, Any] = {}
     else:
         d = dict(block or {})
         name = d.get("name")
-    layout = d.get("glorys_layout")
-    return SourceSpec(
-        name=name,
-        climatology=bool(d.get("climatology", False)),
-        glorys_layout=layout,
-    )
+    kw: dict[str, Any] = {
+        "name": name,
+        "climatology": bool(d.get("climatology", False)),
+        "glorys_layout": d.get("glorys_layout"),
+    }
+    if d.get("path"):
+        kw["path"] = d["path"]
+    if d.get("constants"):
+        kw["constants"] = d["constants"]
+    if d.get("esper_method"):
+        kw["esper_method"] = d["esper_method"]
+    if d.get("esper_equation"):
+        kw["esper_equation"] = d["esper_equation"]
+    return SourceSpec(**kw)
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
@@ -654,10 +674,9 @@ def build_forge_blueprint(
             if it.type == "bgc":
                 src_name = it.source.name if it.source else "?"
                 bgc_signals.append(f"boundary[{i}] (source={src_name}, type=bgc)")
-        if sources.initial_conditions.bgc_source is not None:
+        for i, bs in enumerate(sources.initial_conditions.bgc_sources):
             bgc_signals.append(
-                "initial_conditions.bgc_source (source="
-                f"{sources.initial_conditions.bgc_source.name})"
+                f"initial_conditions.bgc_sources[{i}] (source={bs.source.name})"
             )
         for i, it in enumerate(sources.river):
             if it.include_bgc:
@@ -771,76 +790,51 @@ def _build_forcing(
     ic_block = inputs.get("initial_conditions", {}) or {}
     forcing_block = inputs.get("forcing", {}) or {}
 
-    def _items(key, cls, extra):
+    def _items(key, cls, source_fields=("source",)):
+        """Build a list of `cls` instances from forcing_block[key].
+
+        Copies every field the model itself declares (introspected from
+        `cls.model_fields`), except `source_fields` -- which need special parsing
+        (`_parse_source`) rather than a plain copy. This used to be a manually-
+        maintained per-category whitelist tuple (`extra`); that pattern silently
+        dropped any field added to the schema but forgotten here (confirmed for
+        `wind_dropoff`/`options` on every category) -- deriving the field set from
+        the model itself means a new field is picked up with no edit needed here.
+        """
+        plain_fields = set(cls.model_fields) - set(source_fields)
         out = []
         for it in forcing_block.get(key, []) or []:
             it = it or {}
-            kw = {"source": _parse_source(it.get("source"))}
-            for f in extra:
+            kw = {f: _parse_source(it.get(f)) for f in source_fields}
+            for f in plain_fields:
                 if f in it:
                     kw[f] = it[f]
             out.append(cls(**kw))
         return out
 
-    # Source-prefill / horizontal-regrid / destination-extrapolation knobs shared by
-    # SurfaceForcing, BoundaryForcing, TidalForcing, and InitialConditions (roms-tools
-    # >=4). Kept as one tuple so all four load-back whitelists stay in lockstep with
-    # each other and with tests/test_roms_tools_coverage.py::_FORGE_FIELDS.
-    _REGRID_FIELDS = (
-        "prefill",
-        "prefill_kwargs",
-        "regrid_method",
-        "extrap_method",
-        "extrap_kwargs",
-    )
-
+    ic_bgc_sources = [
+        IcBgcSourceItem(
+            source=_parse_source(bs.get("source")), use_vars=bs.get("use_vars")
+        )
+        for bs in (ic_block.get("bgc_sources") or [])
+    ]
+    ic_plain_fields = set(InitialConditions.model_fields) - {"source", "bgc_sources"}
     ic_kw = {
         "source": _parse_source(ic_block.get("source")),
-        "bgc_source": _parse_source(ic_block["bgc_source"])
-        if ic_block.get("bgc_source")
-        else None,
+        "bgc_sources": ic_bgc_sources,
     }
-    for f in ("bgc_interpolation_method", "allow_flex_time", *_REGRID_FIELDS):
+    for f in ic_plain_fields:
         if f in ic_block:
             ic_kw[f] = ic_block[f]
     ic = InitialConditions(**ic_kw)
 
-    surface = _items(
-        "surface",
-        SurfaceForcingItem,
-        (
-            "type",
-            "correct_radiation",
-            "coarse_grid_mode",
-            "restoring_forces",
-            *_REGRID_FIELDS,
-        ),
-    )
-    boundary = (
-        []
-        if is_child
-        else _items(
-            "boundary",
-            BoundaryForcingItem,
-            (
-                "type",
-                "bgc_interpolation_method",
-                *_REGRID_FIELDS,
-            ),
-        )
-    )
-    tidal = _items("tidal", TidalForcingItem, ("ntides", *_REGRID_FIELDS))
-    river = _items(
-        "river",
-        RiverForcingItem,
-        (
-            "include_bgc",
-            "convert_to_climatology",
-            "bgc_source",
-            "coast_snap_buffer_km",
-            "domain_edge_buffer",
-        ),
-    )
+    surface = _items("surface", SurfaceForcingItem)
+    boundary = [] if is_child else _items("boundary", BoundaryForcingItem)
+    tidal = _items("tidal", TidalForcingItem)
+    # `bgc_source` is a plain dict (not a SourceSpec) on RiverForcingItem -- exclude
+    # it from the generic source-parsing path so it copies through as-is via the
+    # plain-fields loop, same as always.
+    river = _items("river", RiverForcingItem, source_fields=("source",))
 
     # snapshot every distinct logical source touched
     resolved: dict[str, ResolvedDataset] = {}
@@ -852,7 +846,8 @@ def _build_forcing(
             )
 
     _note(ic.source)
-    _note(ic.bgc_source)
+    for bs in ic.bgc_sources:
+        _note(bs.source)
     for grp in (surface, boundary, tidal, river):
         for it in grp:
             _note(it.source)

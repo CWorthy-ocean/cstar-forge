@@ -33,6 +33,9 @@ _RT_DATA_INPUTS = {
     "boundaries",
     "filepath",
     "releases",
+    # BGCMarbl.process_bgc_fields: the already-built forcing objects it completes
+    # in place -- pure data, not a user-configurable option.
+    "forcings",
 }
 
 # ── option fields in each Forge item model ───────────────────────────────────
@@ -49,6 +52,8 @@ _FORGE_FIELDS = {
         # model_reference_date is handled run-level; options dict is passthrough
         "model_reference_date",
         "options",
+        # per-bgc_sources-entry down-select (forge_blueprint.IcBgcSourceItem.use_vars)
+        "use_vars",
     },
     "SurfaceForcing": {
         "type",
@@ -74,6 +79,9 @@ _FORGE_FIELDS = {
         "extrap_kwargs",
         "model_reference_date",
         "options",
+        # BoundaryForcingItem.use_vars: down-select which bgc vars this source
+        # contributes (type='bgc' only).
+        "use_vars",
     },
     "TidalForcing": {
         "ntides",
@@ -132,7 +140,7 @@ _SKIP = {
         "chunks",
         "initial_slice_bounds",
         "bypass_validation",
-        "physics_forcing",  # internal object for density interp wiring (set by Forge, not user)
+        "physics_forcing",  # internal object for density interp / ESPER wiring (set by Forge, not user)
         "apply_2d_horizontal_fill",  # deprecated in rt>=4 in favor of `prefill`; Forge exposes prefill instead
     },
     "TidalForcing": {
@@ -188,6 +196,27 @@ def test_all_rt_params_are_exposed_or_skipped(cls_name, forge_cls_name):
         f"rt.{cls_name} has parameters NOT accounted for in Forge: {sorted(uncovered)}. "
         "Either add them as typed fields in models.py/forge_blueprint.py "
         "or add them to the SKIP_LIST in tests/test_roms_tools_coverage.py with a reason."
+    )
+
+
+@pytest.mark.integration
+def test_bgc_marbl_process_bgc_fields_params_are_data_inputs():
+    """``BGCMarbl.process_bgc_fields`` isn't a constructor (so it isn't covered by
+    ``test_all_rt_params_are_exposed_or_skipped`` above) but is still user-facing
+    roms-tools surface Forge drives (batched boundary/IC bgc completion + save --
+    see ``RomsMarblInputData._flush_boundary_bgc_batch``/``_generate_initial_conditions``).
+    Both its params (``forcings``, the already-built objects; ``filepath``, output
+    path(s)) are pure data/output-path inputs, not user-configurable Forge fields.
+    """
+    params = set(
+        inspect.signature(rt.BGCMarbl.process_bgc_fields).parameters.keys()
+    ) - {"self"}
+    uncovered = params - _RT_DATA_INPUTS
+    assert not uncovered, (
+        f"rt.BGCMarbl.process_bgc_fields has parameters NOT accounted for as data "
+        f"inputs: {sorted(uncovered)}. Either add them to _RT_DATA_INPUTS (if "
+        "they're pure data/output-path inputs) or give them proper typed-field/"
+        "SKIP_LIST coverage."
     )
 
 

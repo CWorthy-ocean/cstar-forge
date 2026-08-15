@@ -248,6 +248,10 @@ _FORCING_KEYS = [
     "tidal_forcing_path", "river_path",
 ]
 
+# surface/boundary bgc paths are lists (one per bgc source) in ForcingCfg, not
+# last-write-wins scalars -- see namelist_model.ForcingCfg.
+_FORCING_LIST_KEYS = {"surface_forcing_bgc_path", "boundary_forcing_bgc_path"}
+
 
 def _classify_forcing(path: str) -> str | None:
     p = path.lower()
@@ -318,11 +322,15 @@ def ingest_roms_in(roms_in: Path, rt: dict) -> None:
     if forcing_paths:
         rt.setdefault("forcing", {})
         for k in _FORCING_KEYS:
-            rt["forcing"][k] = None
+            rt["forcing"][k] = [] if k in _FORCING_LIST_KEYS else None
         for p in forcing_paths:
             key = _classify_forcing(p)
             if key is None:
                 _warn(f"could not classify forcing path (left out of frcfiles): {p}")
+                continue
+            if key in _FORCING_LIST_KEYS:
+                # Multiple bgc sources per category are expected -- accumulate.
+                rt["forcing"][key].append(p)
                 continue
             if rt["forcing"].get(key) is not None:
                 _warn(f"multiple forcing paths matched '{key}'; keeping first, dropping: {p}")

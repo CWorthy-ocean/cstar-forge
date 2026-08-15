@@ -252,6 +252,11 @@ class BgcBoundarySource(str, Enum):
 
     UNIFIED = "UNIFIED"
     CESM_REGRIDDED = "CESM_REGRIDDED"
+    GLODAP = "GLODAP"
+    CONSTANTS = (
+        "constants"  # depth-invariant constant value(s); see SourceSpec.constants
+    )
+    ESPER = "ESPER"  # derived from physics T/S via PyESPER; see SourceSpec.esper_*
 
 
 class InitialConditionsSource(str, Enum):
@@ -261,10 +266,15 @@ class InitialConditionsSource(str, Enum):
 
 
 class BgcInitialConditionsSource(str, Enum):
-    """Source names accepted by InitialConditions (bgc_source)."""
+    """Source names accepted by InitialConditions (bgc_sources[].source)."""
 
     UNIFIED = "UNIFIED"
     CESM_REGRIDDED = "CESM_REGRIDDED"
+    GLODAP = "GLODAP"
+    CONSTANTS = (
+        "constants"  # depth-invariant constant value(s); see SourceSpec.constants
+    )
+    ESPER = "ESPER"  # derived from physics T/S via PyESPER; see SourceSpec.esper_*
 
 
 class TidalSource(str, Enum):
@@ -333,7 +343,12 @@ _HASH_EXCLUDE = {
 # match the ROMS namelist key directly (CDR output became independently
 # user-controllable, decoupled from CDR forcing -- see ``forge_blueprint_resolve``'s
 # CDR-output consistency block).
-FORGE_BLUEPRINT_VERSION = 5
+# v6 (2026-08): ``forcing.initial_conditions.bgc_source`` (singular) replaced by
+# ``bgc_sources`` (a list of ``IcBgcSourceItem``), mirroring how boundary/surface
+# forcing already support multiple sources -- lets initial conditions combine
+# multiple BGC datasets (e.g. UNIFIED + GLODAP + a constants source), each
+# down-selected via ``use_vars`` and completed by ``BGCMarbl().process_bgc_fields()``.
+FORGE_BLUEPRINT_VERSION = 6
 
 # Identifies the C-Star application that CONSUMES this blueprint — i.e. the "forge"
 # application (this processing engine), whose blueprint IS the ForgeBlueprint. Do not confuse
@@ -392,6 +407,13 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
     ``validation_alias`` for this spelling, but the migration keeps the on-disk
     dict itself current).
 
+    **v5 -> v6**: ``forcing.initial_conditions.bgc_source`` (a single ``SourceSpec``
+    dict) is rewrapped as ``forcing.initial_conditions.bgc_sources`` (a one-item
+    list of ``{"source": <old dict>}``); absent/``None`` becomes an empty list. If
+    both keys are present in the same dict (an inconsistent, likely hand-edited
+    file -- genuinely already-migrated data would only ever have ``bgc_sources``),
+    raises rather than silently discarding ``bgc_source``.
+
     Idempotent and a no-op on already-current data (e.g. direct keyword
     construction, ``ForgeBlueprint(name=..., ...)``) -- called automatically from a
     ``model_validator(mode="before")`` so it fires on every entry point
@@ -449,6 +471,27 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
                 "do_cdr" in cdr_output and "do_cdr_output" not in cdr_output
             ):
                 cdr_output["do_cdr_output"] = cdr_output.pop("do_cdr")
+
+    if version is None or version < 6:
+        forcing = data.get("forcing")
+        if isinstance(forcing, dict):
+            ic = forcing.get("initial_conditions")
+            if isinstance(ic, dict) and "bgc_source" in ic:
+                old_bgc_source = ic.pop("bgc_source")
+                if "bgc_sources" in ic:
+                    # Both the pre-v6 singular key and the v6+ list key are present
+                    # in the same dict -- an inconsistent/hand-edited file, not
+                    # "already migrated" data (which would only ever have
+                    # `bgc_sources`). Silently discarding `old_bgc_source` here
+                    # would lose a real source with no trace; fail loudly instead.
+                    raise ValueError(
+                        "forcing.initial_conditions has both the pre-v6 'bgc_source' "
+                        "and the v6+ 'bgc_sources' -- remove whichever is stale "
+                        "before loading (this file was likely hand-edited)."
+                    )
+                ic["bgc_sources"] = (
+                    [{"source": old_bgc_source}] if old_bgc_source else []
+                )
 
     data["forge_blueprint_version"] = FORGE_BLUEPRINT_VERSION
     return data
@@ -571,12 +614,52 @@ class SourceSpec(_Section):
     path: str | None = None
     """Explicit dataset path override. ``None`` (the default) means the path is
     derived from :class:`SourceData` at processing time (the standard staged/streamed
-    location). Set this only to point at a non-default local file."""
+    location). Set this only to point at a non-default local file. For an ``ESPER``
+    source, this is the (required) path to the PyESPER package directory (containing
+    ``Mat_fullgrid/`` and ``NeuralNetworks/``), not a dataset file."""
+    constants: dict[str, float] | None = None
+    """Depth-invariant constant value(s) (e.g. ``{"Fe": 3.0e-3}``), mmol/m^3. Required
+    (and only valid) when ``name == "constants"``."""
+    esper_method: Literal["lir", "nn", "mixed"] | None = None
+    """PyESPER estimation method. Only valid when ``name == "ESPER"``; roms-tools
+    defaults to ``"nn"`` when unset."""
+    esper_equation: Literal[8, 16] | None = None
+    """PyESPER predictor equation: 8 (salinity + temperature) or 16 (salinity only).
+    Only valid when ``name == "ESPER"``; roms-tools defaults to 8 when unset."""
 
     @model_validator(mode="after")
     def _glorys_layout_only_for_glorys(self) -> SourceSpec:
         if self.glorys_layout is not None and self.name.upper() != "GLORYS":
             raise ValueError("glorys_layout is only valid when name is GLORYS")
+        return self
+
+    @model_validator(mode="after")
+    def _constants_only_for_constants_source(self) -> SourceSpec:
+        is_constants = self.name.lower() == "constants"
+        if self.constants is not None and not is_constants:
+            raise ValueError("constants is only valid when name is 'constants'")
+        if is_constants:
+            if not self.constants:
+                raise ValueError(
+                    "a 'constants' source requires a non-empty 'constants' mapping"
+                )
+            if self.path is not None:
+                raise ValueError("a 'constants' source does not take a 'path'")
+        return self
+
+    @model_validator(mode="after")
+    def _esper_fields_only_for_esper_source(self) -> SourceSpec:
+        is_esper = self.name.upper() == "ESPER"
+        if (
+            self.esper_method is not None or self.esper_equation is not None
+        ) and not is_esper:
+            raise ValueError(
+                "esper_method/esper_equation are only valid when name is 'ESPER'"
+            )
+        if is_esper and not self.path:
+            raise ValueError(
+                "an 'ESPER' source requires 'path' (the PyESPER package directory)"
+            )
         return self
 
 
@@ -615,6 +698,13 @@ class SurfaceForcingItem(_Section):
 class BoundaryForcingItem(_Section):
     source: SourceSpec
     type: BoundaryType = BoundaryType.PHYSICS
+    use_vars: list[str] | None = None
+    """Down-select which BGC variables this source contributes (``type='bgc'``
+    only). Presence-only check in roms-tools -- raises if a requested variable
+    isn't provided by the source. Required when multiple ``type='bgc'`` boundary
+    items are present, so their variable sets can be arranged not to overlap;
+    ``BGCMarbl().process_bgc_fields()`` is called afterward (across all ``bgc``
+    items for a boundary) to derive/fill the remaining MARBL tracer set."""
     bgc_interpolation_method: BgcInterpMethod = (
         BgcInterpMethod.DEPTH
     )  # BGC vertical interp (type='bgc')
@@ -675,12 +765,38 @@ class RiverForcingItem(_Section):
         return self
 
 
+class IcBgcSourceItem(_Section):
+    """One BGC source contributing (a subset of) BGC tracers to InitialConditions.
+
+    Mirrors ``BoundaryForcingItem``'s ``source``/``use_vars`` pair, but as its own
+    small model rather than folding onto ``InitialConditions`` directly: unlike
+    boundary forcing (each item becomes its own independent roms-tools object and
+    output file), ROMS's ``inifile`` namelist key is a single scalar path, so all
+    ``bgc_sources`` here are built as separate roms-tools ``InitialConditions``
+    objects, completed together via ``BGCMarbl().process_bgc_fields()``, then
+    merged into ONE dataset before writing.
+    """
+
+    source: SourceSpec
+    use_vars: list[str] | None = None
+    """Down-select which BGC variables this source contributes. Presence-only
+    check in roms-tools -- raises if a requested variable isn't provided by the
+    source. Required when multiple ``bgc_sources`` are present, so their variable
+    sets can be arranged not to overlap."""
+
+
 class InitialConditions(_Section):
     source: SourceSpec
-    bgc_source: SourceSpec | None = None
+    bgc_sources: list[IcBgcSourceItem] = Field(default_factory=list)
+    """BGC source(s) for initial conditions. Zero or more sources, each
+    contributing (via ``use_vars``) part of the full MARBL tracer set;
+    ``BGCMarbl().process_bgc_fields()`` derives/fills the rest before the
+    per-source datasets are merged into the single initial-conditions file ROMS
+    requires. Replaces the pre-v6 singular ``bgc_source`` field (migrated
+    automatically: an old ``bgc_source`` becomes a one-item list)."""
     bgc_interpolation_method: BgcInterpMethod = (
         BgcInterpMethod.DEPTH
-    )  # BGC vertical interp
+    )  # BGC vertical interp (shared across all bgc_sources)
     allow_flex_time: bool = False  # ±24h search window around ini_time
     prefill: Prefill | None = None  # source NaN prefill before regridding
     prefill_kwargs: dict[str, Any] | None = None

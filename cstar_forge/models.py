@@ -27,6 +27,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from cstar_forge.forge.forge_blueprint import (
     BoundaryForcingItem,
     CodeRepo,
+    IcBgcSourceItem,
     RiverForcingItem,
     SourceSpec,
     SurfaceForcingItem,
@@ -42,6 +43,7 @@ from cstar_forge.forge.forge_blueprint import (
 
 __all__ = [
     "BoundaryForcingItem",
+    "IcBgcSourceItem",
     "InitialConditionsInput",
     "ModelCode",
     "ModelSpec",

@@ -5,7 +5,7 @@ application: forge
 state: notset
 schema_version: 1.0.0
 working_dir: ~/cstar-forge-run/roms-marbl-0.3-default_wio-toy_10procs
-forge_blueprint_version: 4
+forge_blueprint_version: 6
 run:
   start_date: '2012-01-01T00:00:00'
   end_date: '2012-01-02T00:00:00'
@@ -44,11 +44,19 @@ forcing:
       climatology: false
       glorys_layout: regional
       path: null
-    bgc_source:
-      name: UNIFIED
-      climatology: true
-      glorys_layout: null
-      path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
+    bgc_sources:
+    - source:
+        name: UNIFIED
+        climatology: true
+        glorys_layout: null
+        path: null
+        constants: null
+        esper_method: null
+        esper_equation: null
+      use_vars: null
     bgc_interpolation_method: depth
     allow_flex_time: false
     prefill: null
@@ -63,6 +71,9 @@ forcing:
       climatology: false
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: physics
     correct_radiation: true
     coarse_grid_mode: never
@@ -79,6 +90,9 @@ forcing:
       climatology: true
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: bgc
     correct_radiation: false
     coarse_grid_mode: never
@@ -95,6 +109,9 @@ forcing:
       climatology: false
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: bgc
     correct_radiation: false
     coarse_grid_mode: never
@@ -111,6 +128,9 @@ forcing:
       climatology: true
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: restoring
     correct_radiation: false
     coarse_grid_mode: never
@@ -129,7 +149,11 @@ forcing:
       climatology: false
       glorys_layout: regional
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: physics
+    use_vars: null
     bgc_interpolation_method: depth
     prefill: null
     prefill_kwargs: null
@@ -142,7 +166,11 @@ forcing:
       climatology: true
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: bgc
+    use_vars: null
     bgc_interpolation_method: depth
     prefill: null
     prefill_kwargs: null
@@ -156,6 +184,9 @@ forcing:
       climatology: false
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     ntides: 15
     prefill: null
     prefill_kwargs: null
@@ -169,6 +200,9 @@ forcing:
       climatology: false
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     include_bgc: true
     convert_to_climatology: if_any_missing
     bgc_source: null
@@ -471,11 +505,11 @@ model_settings:
     output_period: 3600.0
     nrpf: 4
   cdr_output:
-    do_cdr: false
     do_avg: true
     monthly_averages: false
     output_period: 3600
     nrpf: 24
+    do_cdr_output: false
   upscale_output:
     do_upscale: false
     nrpf_uscl: 48
@@ -551,5 +585,5 @@ provenance:
   cstar_version: cstar-ocean==0.9.1
   roms_tools_version: roms-tools==4.0.1
   override_files_applied: []
-  content_hash: 22b38e7e6e09781e4e00f8562bcb33e1ea4c2f572f407ccdaa20d6383b9d7307
+  content_hash: aceb54b7db9b4c59a7c30823f4173f3aa871b3b9d0639f8af6b6051dac9a20f1
   notes: null

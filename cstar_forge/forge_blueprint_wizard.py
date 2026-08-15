@@ -40,12 +40,14 @@ from cstar_forge.forge.forge_blueprint import (
     BgcInitialConditionsSource,
     BgcInterpMethod,
     BgcSurfaceSource,
+    BoundaryForcingItem,
     BoundaryType,
     ClimatologyMode,
     CoarseGridMode,
     Composition,
     ExtrapMethod,
     ForgeBlueprint,
+    InitialConditions,
     InitialConditionsSource,
     PhysicsBoundarySource,
     PhysicsSurfaceSource,
@@ -54,8 +56,11 @@ from cstar_forge.forge.forge_blueprint import (
     RegridMethod,
     RestoringSurfaceSource,
     RiverBgcSource,
+    RiverForcingItem,
     RiverSource,
+    SurfaceForcingItem,
     SurfaceType,
+    TidalForcingItem,
     TidalSource,
 )
 from cstar_forge.forge.namelist_model import RunTimeSettings, validate_run_time_sections
@@ -187,6 +192,30 @@ HELP_TEXT: dict[str, str] = {
     # Generic (context-independent) fallback for any source's path box.
     "path": "Explicit path to a custom dataset file for this source. "
     "Leave blank to use the default derived path (staged/streamed location).",
+    # Generic (context-independent) fallbacks shared by IC-BGC/boundary/surface bgc
+    # rows -- SourceSpec.use_vars/constants/esper_method/esper_equation.
+    "use_vars": "Comma-separated list of BGC variables this source contributes "
+    "(bgc sources only), e.g. 'ALK,DIC'. Required when multiple bgc-type sources are "
+    "present so their variable sets don't overlap; the rest are derived/filled by MARBL.",
+    "constants": "Depth-invariant constant value(s) for a 'constants' source, as "
+    "comma- or newline-separated 'key=value' pairs (mmol/m^3), e.g. 'Fe=3.0e-3, ALK=2300'.",
+    "esper_method": "PyESPER estimation method for an 'ESPER' source: 'lir' "
+    "(locally interpolated regression), 'nn' (neural network, roms-tools default), "
+    "or 'mixed'.",
+    "esper_equation": "PyESPER predictor equation for an 'ESPER' source: 8 "
+    "(salinity + temperature) or 16 (salinity only). Blank = roms-tools default (8).",
+    # ---- IC BGC sources (row list) ----------------------------------------------
+    (
+        "ic_bgc",
+        "name",
+    ): "Logical BGC source name for this initial-conditions contributor, e.g. "
+    "'UNIFIED', 'GLODAP', 'constants', or 'ESPER'. Add multiple rows to combine "
+    "sources (down-select each via use_vars).",
+    (
+        "ic_bgc",
+        "climatology",
+    ): "Use this BGC source as a climatology (annual-mean repeated each year) "
+    "rather than a time-varying dataset.",
     # ---- IC --------------------------------------------------------------------
     (
         "ic",
@@ -198,16 +227,6 @@ HELP_TEXT: dict[str, str] = {
         "ic_layout",
     ): "GLORYS spatial layout override: 'regional' (default) or 'global'. "
     "Leave blank for non-GLORYS sources.",
-    (
-        "ic",
-        "ic_bgc_name",
-    ): "Logical source name for BGC initial conditions, e.g. 'UNIFIED'. "
-    "Leave blank to omit BGC initial conditions.",
-    (
-        "ic",
-        "ic_bgc_clim",
-    ): "Use the BGC source as a climatology (annual-mean repeated each year) "
-    "rather than a time-varying dataset.",
     (
         "ic",
         "ic_bgc_interp",
@@ -1008,6 +1027,12 @@ _PREFILL_OPTS = [""] + [e.value for e in Prefill]
 _REGRID_OPTS = [""] + [e.value for e in RegridMethod]
 _EXTRAP_OPTS = [""] + [e.value for e in ExtrapMethod]
 _FORCING_CATEGORIES = ("surface", "boundary", "tidal", "river")
+# Row categories managed by _ForcingEditor's generic add/remove-row machinery
+# (_rows/_make_row/_add/_remove/_render). "ic_bgc" is a pseudo-category: its rows
+# feed `initial_conditions.bgc_sources`, not a `Forcing` list field, so it's kept
+# out of `_FORCING_CATEGORIES` (which drives the `forcing:` dict in `gather()`)
+# but still rendered/added/removed exactly like surface/boundary/tidal/river.
+_ROW_CATEGORIES = ("ic_bgc", *_FORCING_CATEGORIES)
 _GLORYS_LAYOUT_OPTS = ["", "regional", "global"]  # "" = not specified
 
 # Valid source names per (category, type).  Drives name dropdowns in the forcing editor.
@@ -1019,10 +1044,14 @@ _SOURCE_OPTS: dict[Any, list[str]] = {
     ("boundary", BoundaryType.BGC.value): [e.value for e in BgcBoundarySource],
     ("tidal", None): [e.value for e in TidalSource],
     ("river", None): [e.value for e in RiverSource],
+    ("ic_bgc", None): [e.value for e in BgcInitialConditionsSource],
 }
 _IC_SOURCE_OPTS = [e.value for e in InitialConditionsSource]
-_IC_BGC_SOURCE_OPTS = [""] + [e.value for e in BgcInitialConditionsSource]
 _RIVER_BGC_SOURCE_OPTS = [""] + [e.value for e in RiverBgcSource]
+# ESPER source fields (SourceSpec.esper_method/esper_equation); "" = unset (roms-tools
+# default: method="nn", equation=8).
+_ESPER_METHOD_OPTS = ["", "lir", "nn", "mixed"]
+_ESPER_EQUATION_OPTS = ["", "8", "16"]
 
 
 def _add_regrid_widgets(W, w: dict[str, Any], cat: str, item: dict[str, Any], small):
@@ -1069,6 +1098,80 @@ def _add_regrid_widgets(W, w: dict[str, Any], cat: str, item: dict[str, Any], sm
 def _source_opts_for(cat: str, type_val: str | None) -> list[str]:
     """Return the valid source names for a given forcing category and type."""
     return _SOURCE_OPTS.get((cat, type_val), _SOURCE_OPTS.get((cat, None), []))
+
+
+def _dump_constants(constants: Any) -> str:
+    """Serialize a ``SourceSpec.constants`` mapping into the compact textbox format
+    (``"key=value, key2=value2"``); empty/``None`` -> ``''``.
+    """
+    if not constants:
+        return ""
+    return ", ".join(f"{k}={v}" for k, v in constants.items())
+
+
+def _parse_constants(text: str) -> dict[str, float]:
+    """Parse the constants-mapping textbox: comma- or newline-separated ``key=value``
+    pairs (e.g. ``"Fe=3.0e-3, ALK=2300"``) into ``{"Fe": 0.003, "ALK": 2300.0}``.
+
+    Malformed/blank pairs are dropped silently (best-effort, matches ``_parse_options``
+    -- the raw text stays in the widget either way, nothing is lost until it's fixed).
+    """
+    out: dict[str, float] = {}
+    for part in re.split(r"[,\n]", text or ""):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, _, v = part.partition("=")
+        k, v = k.strip(), v.strip()
+        if not k or not v:
+            continue
+        try:
+            out[k] = float(v)
+        except ValueError:
+            continue
+    return out
+
+
+def _add_bgc_source_widgets(W, w: dict[str, Any], cat: str, src: dict[str, Any], small):
+    """Build the shared ``constants``-mapping textbox and ``esper_method``/
+    ``esper_equation`` dropdowns onto row-widget dict ``w`` (see ``SourceSpec.
+    constants``/``esper_method``/``esper_equation``). Used by IC-BGC, boundary, and
+    surface bgc rows -- ``_apply_row_visibility`` only shows the relevant widget when
+    the row's source name is ``"constants"``/``"ESPER"``, so this can be called
+    unconditionally even where the source enum doesn't (yet) offer those names (e.g.
+    surface's ``BgcSurfaceSource``, per roms-tools' ``SurfaceForcing`` not supporting
+    either) -- the widgets simply stay hidden there.
+    """
+    w["constants"] = W.Textarea(
+        value=_dump_constants(src.get("constants")),
+        description="constants:",
+        placeholder="key=value pairs, e.g. Fe=3.0e-3, ALK=2300",
+        style={"description_width": "90px"},
+        layout=W.Layout(width="280px", height="48px"),
+        tooltip=_tip(cat, "constants"),
+    )
+    _method_val = str(src.get("esper_method") or "")
+    if _method_val not in _ESPER_METHOD_OPTS:
+        _method_val = ""
+    w["esper_method"] = W.Dropdown(
+        options=_ESPER_METHOD_OPTS,
+        value=_method_val,
+        description="esper method:",
+        style=small,
+        layout=W.Layout(width="170px"),
+        tooltip=_tip(cat, "esper_method"),
+    )
+    _equation_val = str(src.get("esper_equation") or "")
+    if _equation_val not in _ESPER_EQUATION_OPTS:
+        _equation_val = ""
+    w["esper_equation"] = W.Dropdown(
+        options=_ESPER_EQUATION_OPTS,
+        value=_equation_val,
+        description="esper eqn:",
+        style=small,
+        layout=W.Layout(width="140px"),
+        tooltip=_tip(cat, "esper_equation"),
+    )
 
 
 # The `options` passthrough (see forge_blueprint.py `_OPTIONS_HELP`) is a free-form dict of
@@ -1161,31 +1264,11 @@ class _ForcingEditor:
             layout=W.Layout(width="360px"),
             tooltip=_tip("ic", "path"),
         )
-        bgc = ic.get("bgc_source") or {}
-        _ic_bgc_val = str(bgc.get("name", "") or "")
-        if _ic_bgc_val not in _IC_BGC_SOURCE_OPTS:
-            _ic_bgc_val = ""
-        self.ic_bgc_name = W.Dropdown(
-            options=_IC_BGC_SOURCE_OPTS,
-            value=_ic_bgc_val,
-            description="IC bgc src:",
-            style={"description_width": "110px"},
-            tooltip=_tip("ic", "ic_bgc_name"),
-        )
-        self.ic_bgc_clim = W.Checkbox(
-            value=bool(bgc.get("climatology", False)),
-            description="bgc climatology",
-            indent=False,
-            tooltip=_tip("ic", "ic_bgc_clim"),
-        )
-        self.ic_bgc_path = W.Text(
-            value=str(bgc.get("path") or ""),
-            description="bgc path:",
-            placeholder="(default)",
-            style={"description_width": "110px"},
-            layout=W.Layout(width="360px"),
-            tooltip=_tip("ic", "path"),
-        )
+        # IC BGC source(s): a row-list (see ``_make_row``/``_ROW_CATEGORIES``'s
+        # "ic_bgc" pseudo-category), not a fixed widget group -- ``InitialConditions.
+        # bgc_sources`` is a list (v6+), each row a source + use_vars down-select.
+        # ``bgc_interpolation_method``/``prefill``/etc. below stay scalar: they are
+        # shared across every bgc_sources row, not per-source.
         _ic_bgc_interp = str(
             ic.get("bgc_interpolation_method", BgcInterpMethod.DEPTH.value)
         )
@@ -1239,9 +1322,6 @@ class _ForcingEditor:
             self.ic_name,
             self.ic_layout,
             self.ic_path,
-            self.ic_bgc_name,
-            self.ic_bgc_clim,
-            self.ic_bgc_path,
             self.ic_bgc_interp,
             self.ic_flex_time,
             self.ic_prefill,
@@ -1260,13 +1340,19 @@ class _ForcingEditor:
         self.ic_name.observe(_sync_ic_layout_visibility, names="value")
         _sync_ic_layout_visibility()
 
-        # per-category item rows: list of dicts of widgets
-        self._rows: dict[str, list] = {c: [] for c in _FORCING_CATEGORIES}
+        # per-category item rows: list of dicts of widgets. "ic_bgc" is a pseudo-
+        # category (not a `Forcing` list field like surface/boundary/tidal/river) --
+        # its rows feed `initial_conditions.bgc_sources` instead of `forcing[cat]`,
+        # handled specially in `gather()`/`__init__`'s seeding below.
+        self._rows: dict[str, list] = {c: [] for c in _ROW_CATEGORIES}
         self._containers: dict[str, Any] = {}
-        for cat in _FORCING_CATEGORIES:
+        for cat in _ROW_CATEGORIES:
             container = W.VBox([])
             self._containers[cat] = container
-            for item in forc.get(cat, []) or []:
+            seed_items = (
+                ic.get("bgc_sources") if cat == "ic_bgc" else forc.get(cat)
+            ) or []
+            for item in seed_items:
                 self._rows[cat].append(self._make_row(cat, item))
             self._render(cat)
 
@@ -1294,6 +1380,19 @@ class _ForcingEditor:
             show(w["wind_dropoff"], t == SurfaceType.PHYSICS.value)
         if "glorys_layout" in w:
             show(w["glorys_layout"], name == "GLORYS")
+        # use_vars only makes sense for a bgc-type source: surface/boundary rows with
+        # type="bgc", or an IC-BGC row (no "type" widget at all -- every row there is
+        # implicitly bgc).
+        if "use_vars" in w:
+            show(w["use_vars"], t is None or t == SurfaceType.BGC.value)
+        # constants/ESPER fields (see _add_bgc_source_widgets) only apply to their
+        # matching source name.
+        if "constants" in w:
+            show(w["constants"], name == "constants")
+        if "esper_method" in w:
+            show(w["esper_method"], name == "ESPER")
+        if "esper_equation" in w:
+            show(w["esper_equation"], name == "ESPER")
 
     def _make_row(self, cat: str, item: dict[str, Any]):
         W = self.W
@@ -1369,11 +1468,46 @@ class _ForcingEditor:
                 tooltip=_tip(cat, "glorys_layout"),
             )
 
-            # When the source name changes → the "layout:" box only applies to GLORYS.
+            # When the source name changes → the "layout:" box only applies to GLORYS,
+            # and constants/ESPER fields only apply to their matching source name.
             def _on_name_change(_change, ws=w):
                 self._apply_row_visibility(ws)
 
             w["name"].observe(_on_name_change, names="value")
+
+            # BGC-only knobs: down-select which vars this source contributes, and
+            # constants/ESPER-specific fields (visibility gated to type="bgc"/the
+            # matching source name by _apply_row_visibility).
+            w["use_vars"] = W.Text(
+                value=", ".join(item.get("use_vars") or []),
+                description="use_vars:",
+                style=small,
+                layout=W.Layout(width="200px"),
+                placeholder="ALK,DIC,...",
+                tooltip=_tip(cat, "use_vars"),
+            )
+            _add_bgc_source_widgets(W, w, cat, src, small)
+        if cat == "ic_bgc":
+            w["climatology"] = W.Checkbox(
+                value=bool(src.get("climatology", False)),
+                description="clim",
+                indent=False,
+                tooltip=_tip("ic_bgc", "climatology"),
+            )
+            w["use_vars"] = W.Text(
+                value=", ".join(item.get("use_vars") or []),
+                description="use_vars:",
+                style=small,
+                layout=W.Layout(width="200px"),
+                placeholder="ALK,DIC,...",
+                tooltip=_tip("ic_bgc", "use_vars"),
+            )
+            _add_bgc_source_widgets(W, w, "ic_bgc", src, small)
+
+            def _on_ic_bgc_name_change(_change, ws=w):
+                self._apply_row_visibility(ws)
+
+            w["name"].observe(_on_ic_bgc_name_change, names="value")
         if cat == "surface":
             w["correct_radiation"] = W.Checkbox(
                 value=bool(item.get("correct_radiation", False)),
@@ -1500,7 +1634,11 @@ class _ForcingEditor:
             w["include_bgc"].observe(_sync_river_bgc_visibility, names="value")
             _sync_river_bgc_visibility()
         # Advanced passthrough: raw roms-tools kwargs not (yet) typed above.
-        w["options"] = _options_editor(W, item.get("options"))
+        # IcBgcSourceItem has no `options` field (extra="forbid") -- it isn't its
+        # own roms-tools object, just a source+use_vars contributor to IC's single
+        # `options` passthrough (already on the IC-level widget), so no per-row editor.
+        if cat != "ic_bgc":
+            w["options"] = _options_editor(W, item.get("options"))
         remove = W.Button(
             description="✕", layout=W.Layout(width="36px"), tooltip="Remove this item"
         )
@@ -1520,9 +1658,8 @@ class _ForcingEditor:
 
     def _render(self, cat: str):
         W = self.W
-        add = W.Button(
-            description=f"+ add {cat}", icon="plus", layout=W.Layout(width="130px")
-        )
+        label = "+ add bgc source" if cat == "ic_bgc" else f"+ add {cat}"
+        add = W.Button(description=label, icon="plus", layout=W.Layout(width="150px"))
         add.on_click(lambda _b, c=cat: self._add(c))
         self._containers[cat].children = [self._row_box(w) for w in self._rows[cat]] + [
             add
@@ -1556,9 +1693,21 @@ class _ForcingEditor:
             src["glorys_layout"] = w["glorys_layout"].value
         if "path" in w and w["path"].value.strip():  # blank = derive default path
             src["path"] = w["path"].value.strip()
+        if "constants" in w:  # constants source: {"key": float, ...}
+            constants = _parse_constants(w["constants"].value)
+            if constants:
+                src["constants"] = constants
+        if "esper_method" in w and w["esper_method"].value:  # Dropdown: "" = unset
+            src["esper_method"] = w["esper_method"].value
+        if "esper_equation" in w and w["esper_equation"].value:
+            src["esper_equation"] = int(w["esper_equation"].value)
         item: dict[str, Any] = {"source": src}
         if "type" in w:
             item["type"] = w["type"].value
+        if "use_vars" in w and w["use_vars"].value.strip():
+            item["use_vars"] = [
+                p.strip() for p in w["use_vars"].value.split(",") if p.strip()
+            ]
         if "correct_radiation" in w and w["correct_radiation"].value:
             item["correct_radiation"] = True
         if "wind_dropoff" in w and w["wind_dropoff"].value:
@@ -1614,13 +1763,9 @@ class _ForcingEditor:
         if self.ic_path.value.strip():  # blank = derive default path
             ic_source["path"] = self.ic_path.value.strip()
         ic: dict[str, Any] = {"source": ic_source}
-        if self.ic_bgc_name.value:  # Dropdown: "" means no bgc source
-            ic["bgc_source"] = {
-                "name": self.ic_bgc_name.value,
-                "climatology": bool(self.ic_bgc_clim.value),
-            }
-            if self.ic_bgc_path.value.strip():  # blank = derive default path
-                ic["bgc_source"]["path"] = self.ic_bgc_path.value.strip()
+        bgc_sources = [self._gather_item("ic_bgc", w) for w in self._rows["ic_bgc"]]
+        if bgc_sources:
+            ic["bgc_sources"] = bgc_sources
         if (
             self.ic_bgc_interp.value
             and self.ic_bgc_interp.value != BgcInterpMethod.DEPTH.value
@@ -1654,16 +1799,18 @@ class _ForcingEditor:
                 W.HTML("<i>initial conditions</i>"),
                 W.HBox([self.ic_name, self.ic_layout]),
                 self.ic_path,
-                W.HBox([self.ic_bgc_name, self.ic_bgc_clim]),
-                self.ic_bgc_path,
                 W.HBox([self.ic_bgc_interp, self.ic_flex_time]),
                 W.HBox([self.ic_prefill, self.ic_regrid_method, self.ic_extrap_method]),
                 self.ic_options,
             ]
         )
-        panes = [ic_box] + [self._containers[c] for c in _FORCING_CATEGORIES]
+        panes = [ic_box, self._containers["ic_bgc"]] + [
+            self._containers[c] for c in _FORCING_CATEGORIES
+        ]
         acc = W.Accordion(children=panes, selected_index=None)
-        for i, title in enumerate(["initial_conditions", *_FORCING_CATEGORIES]):
+        for i, title in enumerate(
+            ["initial_conditions", "ic_bgc", *_FORCING_CATEGORIES]
+        ):
             acc.set_title(i, title)
         return acc
 
@@ -2638,88 +2785,86 @@ class ForgeBlueprintWizard:
     def _sources_to_inputs(cfg: ForgeBlueprint) -> dict[str, Any]:
         """Reconstruct an ``inputs``-shaped forcing dict from a ForgeBlueprint's sources
         (reverse of the resolver) so a loaded config seeds the forcing editor.
+
+        The set of plain (non-``source``) fields to copy per item is derived from the
+        item model's own ``model_fields`` -- mirrors ``forge_blueprint_resolve.
+        _build_forcing``'s ``_items()`` helper, which replaced an equivalent hand-
+        maintained whitelist here after it was confirmed to silently drop fields added
+        to the schema but forgotten in the whitelist (``wind_dropoff``/``options``).
+        This fixes the reconstruction into the *seed dict* this function returns; note
+        that ``prefill_kwargs``/``extrap_kwargs`` still have no dedicated widget in
+        ``_make_row``, so they're correctly seeded here but then dropped again on the
+        very next ``gather()`` -- a pre-existing UI gap (no widget ever read them,
+        before or after this change), not something this fix resolves end-to-end. A
+        field is only emitted when it differs from the model's own default (an unset
+        optional, a false flag, an empty dict/list, or the type's default enum member)
+        -- matches the old hand-written checks and keeps a reloaded spec gathering back
+        to the same dict the resolver would have produced.
         """
 
-        def src(spec):
-            d = {"name": spec.name}
+        def src(spec) -> dict[str, Any]:
+            d: dict[str, Any] = {"name": spec.name}
             if spec.climatology:
                 d["climatology"] = True
             if spec.glorys_layout:
                 d["glorys_layout"] = spec.glorys_layout
             if getattr(spec, "path", None):
                 d["path"] = spec.path
+            if getattr(spec, "constants", None):
+                d["constants"] = dict(spec.constants)
+            if getattr(spec, "esper_method", None):
+                d["esper_method"] = getattr(
+                    spec.esper_method, "value", spec.esper_method
+                )
+            if getattr(spec, "esper_equation", None):
+                d["esper_equation"] = spec.esper_equation
+            return d
+
+        def plain(it, cls, skip=("source",)) -> dict[str, Any]:
+            """Copy every field ``cls`` declares (except ``skip``) that differs from
+            its schema default, normalizing Enum members to their plain value.
+            """
+            d: dict[str, Any] = {}
+            for name, finfo in cls.model_fields.items():
+                if name in skip:
+                    continue
+                v = getattr(it, name, None)
+                if v is None or v == finfo.default:
+                    continue
+                if isinstance(v, (list, dict)):
+                    if v:  # skip an explicit-but-empty list/dict (== "unset")
+                        d[name] = list(v) if isinstance(v, list) else dict(v)
+                    continue
+                d[name] = getattr(v, "value", v)
             return d
 
         f = cfg.forcing
-        ic = {"source": src(f.initial_conditions.source)}
-        if f.initial_conditions.bgc_source:
-            ic["bgc_source"] = src(f.initial_conditions.bgc_source)
-        _ic_interp = getattr(f.initial_conditions, "bgc_interpolation_method", None)
-        if (
-            _ic_interp is not None
-            and getattr(_ic_interp, "value", _ic_interp) != BgcInterpMethod.DEPTH.value
-        ):
-            ic["bgc_interpolation_method"] = getattr(_ic_interp, "value", _ic_interp)
-        if getattr(f.initial_conditions, "allow_flex_time", False):
-            ic["allow_flex_time"] = True
-        for f2 in ("prefill", "regrid_method", "extrap_method"):
-            v2 = getattr(f.initial_conditions, f2, None)
-            if v2 is not None:
-                ic[f2] = getattr(v2, "value", v2)
-        if getattr(f.initial_conditions, "options", None):
-            ic["options"] = dict(f.initial_conditions.options)
+        ic: dict[str, Any] = {"source": src(f.initial_conditions.source)}
+        bgc_sources = []
+        for bs in f.initial_conditions.bgc_sources:
+            bd: dict[str, Any] = {"source": src(bs.source)}
+            if bs.use_vars:
+                bd["use_vars"] = list(bs.use_vars)
+            bgc_sources.append(bd)
+        if bgc_sources:
+            ic["bgc_sources"] = bgc_sources
+        ic.update(
+            plain(
+                f.initial_conditions, InitialConditions, skip=("source", "bgc_sources")
+            )
+        )
+
         forcing: dict[str, Any] = {}
-        for cat, items in (
-            ("surface", f.surface),
-            ("boundary", f.boundary),
-            ("tidal", f.tidal),
-            ("river", f.river),
+        for cat, items, cls in (
+            ("surface", f.surface, SurfaceForcingItem),
+            ("boundary", f.boundary, BoundaryForcingItem),
+            ("tidal", f.tidal, TidalForcingItem),
+            ("river", f.river, RiverForcingItem),
         ):
             out = []
             for it in items:
                 d: dict[str, Any] = {"source": src(it.source)}
-                for f in ("type", "coarse_grid_mode"):
-                    v = getattr(it, f, None)
-                    if v is not None:
-                        d[f] = v
-                if getattr(it, "correct_radiation", False):
-                    d["correct_radiation"] = True
-                if getattr(it, "restoring_forces", None):
-                    d["restoring_forces"] = it.restoring_forces
-                if getattr(it, "ntides", None) is not None:
-                    d["ntides"] = it.ntides
-                if getattr(it, "include_bgc", False):
-                    d["include_bgc"] = True
-                if getattr(it, "bgc_source", None):
-                    d["bgc_source"] = dict(it.bgc_source)
-                _ctc = getattr(it, "convert_to_climatology", None)
-                if _ctc is not None:
-                    _ctc_val = getattr(_ctc, "value", _ctc)
-                    if _ctc_val != ClimatologyMode.IF_ANY_MISSING.value:
-                        d["convert_to_climatology"] = _ctc_val
-                # roms-tools >=4 regrid/interp knobs, shared across surface/boundary/
-                # tidal. getattr(v, "value", v) normalizes (str, Enum) members to
-                # their plain string value.
-                _b_interp = getattr(it, "bgc_interpolation_method", None)
-                if (
-                    _b_interp is not None
-                    and getattr(_b_interp, "value", _b_interp)
-                    != BgcInterpMethod.DEPTH.value
-                ):
-                    d["bgc_interpolation_method"] = getattr(
-                        _b_interp, "value", _b_interp
-                    )
-                for f2 in ("prefill", "regrid_method", "extrap_method"):
-                    v2 = getattr(it, f2, None)
-                    if v2 is not None:
-                        d[f2] = getattr(v2, "value", v2)
-                # river coastal/edge buffers
-                if getattr(it, "coast_snap_buffer_km", None) is not None:
-                    d["coast_snap_buffer_km"] = it.coast_snap_buffer_km
-                if getattr(it, "domain_edge_buffer", 20) != 20:
-                    d["domain_edge_buffer"] = it.domain_edge_buffer
-                if getattr(it, "options", None):
-                    d["options"] = dict(it.options)
+                d.update(plain(it, cls))
                 out.append(d)
             forcing[cat] = out
         return {

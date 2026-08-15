@@ -215,7 +215,7 @@ def test_migrate_v4_cdr_output_do_cdr_renamed(tmp_path, legacy_value):
     back = ForgeBlueprint.from_yaml(p)
     assert back.model_settings["cdr_output"]["do_cdr_output"] is legacy_value
     assert "do_cdr" not in back.model_settings["cdr_output"]
-    assert back.forge_blueprint_version == 5
+    assert back.forge_blueprint_version == 6
 
 
 def test_migrate_v4_cdr_output_migration_is_idempotent(tmp_path):
@@ -241,7 +241,85 @@ def test_migrate_tolerates_missing_cdr_output_section():
     from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
 
     migrated = migrate_forge_blueprint_data({"forge_blueprint_version": 4})
-    assert migrated["forge_blueprint_version"] == 5
+    assert migrated["forge_blueprint_version"] == 6
+
+
+def test_migrate_v5_ic_bgc_source_becomes_bgc_sources_list():
+    """v5 -> v6: a v5-shaped singular ``initial_conditions.bgc_source`` is
+    rewrapped as a one-item ``bgc_sources`` list; the old key is gone.
+    """
+    from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
+
+    data = {
+        "forge_blueprint_version": 5,
+        "forcing": {
+            "initial_conditions": {
+                "source": {"name": "GLORYS"},
+                "bgc_source": {"name": "UNIFIED", "climatology": True},
+            }
+        },
+    }
+    migrated = migrate_forge_blueprint_data(data)
+    ic = migrated["forcing"]["initial_conditions"]
+    assert "bgc_source" not in ic
+    assert ic["bgc_sources"] == [{"source": {"name": "UNIFIED", "climatology": True}}]
+    assert migrated["forge_blueprint_version"] == 6
+
+
+def test_migrate_v5_ic_bgc_source_none_becomes_empty_list():
+    """v5 -> v6: an absent/``None`` ``bgc_source`` becomes an empty list, not
+    a list containing ``None``.
+    """
+    from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
+
+    data = {
+        "forge_blueprint_version": 5,
+        "forcing": {
+            "initial_conditions": {"source": {"name": "GLORYS"}, "bgc_source": None}
+        },
+    }
+    migrated = migrate_forge_blueprint_data(data)
+    assert migrated["forcing"]["initial_conditions"]["bgc_sources"] == []
+
+
+def test_migrate_v5_ic_bgc_source_migration_is_idempotent():
+    """Already-current (bgc_sources-shaped) data passes through unchanged."""
+    from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
+
+    data = {
+        "forge_blueprint_version": 6,
+        "forcing": {
+            "initial_conditions": {
+                "source": {"name": "GLORYS"},
+                "bgc_sources": [{"source": {"name": "UNIFIED"}}],
+            }
+        },
+    }
+    migrated = migrate_forge_blueprint_data(data)
+    assert migrated["forcing"]["initial_conditions"]["bgc_sources"] == [
+        {"source": {"name": "UNIFIED"}}
+    ]
+
+
+def test_migrate_v5_ic_bgc_source_and_bgc_sources_both_present_raises():
+    """Both the pre-v6 singular key and the v6+ list key in the same dict is an
+    inconsistent (likely hand-edited) shape -- must raise, not silently discard
+    `bgc_source`.
+    """
+    from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
+
+    data = {
+        "forge_blueprint_version": 5,
+        "forcing": {
+            "initial_conditions": {
+                "source": {"name": "GLORYS"},
+                "bgc_source": {"name": "UNIFIED"},
+                "bgc_sources": [{"source": {"name": "GLODAP"}}],
+            }
+        },
+    }
+    with pytest.raises(ValueError, match="bgc_source.*bgc_sources"):
+        migrate_forge_blueprint_data(data)
 
 
 def test_schema_round_trip_identity(tmp_path):
@@ -1398,7 +1476,7 @@ def test_sources_resolved_from_modelspec():
     # dataset_key is no longer stored on SourceSpec — derive it when needed
     ic_src = s.initial_conditions.source
     assert resolve_dataset_key(ic_src.name, ic_src.glorys_layout) == "GLORYS_REGIONAL"
-    bgc_src = s.initial_conditions.bgc_source
+    bgc_src = s.initial_conditions.bgc_sources[0].source
     assert resolve_dataset_key(bgc_src.name, bgc_src.glorys_layout) == "UNIFIED_BGC"
     assert [i.source.name for i in s.surface] == ["ERA5", "UNIFIED", "MBL_co2", "WOA"]
     assert s.tidal[0].ntides == 15
@@ -2161,6 +2239,149 @@ class TestForgeBlueprintWizard:
         assert w2.config.composition.forcing.origin == "catalog"
         assert w2.config.composition.forcing.modified is True
 
+    def test_ic_bgc_multi_source_round_trips_through_load(self, tmp_path):
+        """Two (or more) IC-BGC rows -- different sources, each with its own
+        use_vars down-select -- must gather -> resolve -> reload with both rows
+        (and their use_vars) intact, both into `config.forcing` and back into a
+        freshly-loaded wizard's own IC-BGC rows.
+        """
+        w1 = self._wizard()
+        if "glorys-era5-unified" in w1.forcing_dd.options:
+            w1.forcing_dd.value = "glorys-era5-unified"
+        fe = w1._forcing_editor
+        for ws in list(fe._rows["ic_bgc"]):
+            fe._remove("ic_bgc", ws)
+        fe._add("ic_bgc")
+        row1 = fe._rows["ic_bgc"][-1]
+        row1["name"].value = "UNIFIED"
+        row1["use_vars"].value = "ALK, DIC"
+        fe._add("ic_bgc")
+        row2 = fe._rows["ic_bgc"][-1]
+        row2["name"].value = "GLODAP"
+        row2["use_vars"].value = "PO4, NO3"
+
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+        assert [
+            bs.source.name for bs in w1.config.forcing.initial_conditions.bgc_sources
+        ] == [
+            "UNIFIED",
+            "GLODAP",
+        ]
+
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        bgc_sources = w2.config.forcing.initial_conditions.bgc_sources
+        assert [bs.source.name for bs in bgc_sources] == ["UNIFIED", "GLODAP"]
+        assert bgc_sources[0].use_vars == ["ALK", "DIC"]
+        assert bgc_sources[1].use_vars == ["PO4", "NO3"]
+        # the reloaded wizard's own IC-BGC rows reflect the same, so re-editing and
+        # re-gathering round-trips too (not just the one-shot load).
+        fe2 = w2._forcing_editor
+        assert [r["name"].value for r in fe2._rows["ic_bgc"]] == ["UNIFIED", "GLODAP"]
+        assert fe2._rows["ic_bgc"][0]["use_vars"].value == "ALK, DIC"
+        assert fe2._rows["ic_bgc"][1]["use_vars"].value == "PO4, NO3"
+
+    def test_boundary_bgc_use_vars_round_trips_through_load(self, tmp_path):
+        """A boundary type='bgc' row's use_vars down-select must survive save/load."""
+        w1 = self._wizard()
+        if "glorys-era5-unified" in w1.forcing_dd.options:
+            w1.forcing_dd.value = "glorys-era5-unified"
+        fe = w1._forcing_editor
+        bgc_rows = [
+            ws
+            for ws in fe._rows["boundary"]
+            if ws.get("type") and ws["type"].value == "bgc"
+        ]
+        assert bgc_rows, "expected a bgc boundary row in the bundled ForcingSpec"
+        bgc_rows[0]["use_vars"].value = "ALK, DIC, NO3"
+
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        bgc_items = [it for it in w2.config.forcing.boundary if it.type == "bgc"]
+        assert bgc_items and bgc_items[0].use_vars == ["ALK", "DIC", "NO3"]
+
+    def test_ic_bgc_constants_source_round_trips_through_load(self, tmp_path):
+        """A `name="constants"` IC-BGC row's constants mapping must survive save/load."""
+        w1 = self._wizard()
+        if "glorys-era5-unified" in w1.forcing_dd.options:
+            w1.forcing_dd.value = "glorys-era5-unified"
+        fe = w1._forcing_editor
+        for ws in list(fe._rows["ic_bgc"]):
+            fe._remove("ic_bgc", ws)
+        fe._add("ic_bgc")
+        row = fe._rows["ic_bgc"][-1]
+        row["name"].value = "constants"
+        row["constants"].value = "Fe=3.0e-3, ALK=2300"
+
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+        assert w1.config.forcing.initial_conditions.bgc_sources[0].source.constants == {
+            "Fe": 3.0e-3,
+            "ALK": 2300.0,
+        }
+
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        bgc_sources = w2.config.forcing.initial_conditions.bgc_sources
+        assert bgc_sources[0].source.name == "constants"
+        assert bgc_sources[0].source.constants == {"Fe": 3.0e-3, "ALK": 2300.0}
+        from cstar_forge.forge_blueprint_wizard import _parse_constants
+
+        fe2 = w2._forcing_editor
+        assert _parse_constants(fe2._rows["ic_bgc"][0]["constants"].value) == {
+            "Fe": 3.0e-3,
+            "ALK": 2300.0,
+        }
+
+    def test_ic_bgc_esper_source_round_trips_through_load(self, tmp_path):
+        """A `name="ESPER"` IC-BGC row's esper_method/esper_equation must survive
+        save/load (and its otherwise-required path).
+        """
+        w1 = self._wizard()
+        if "glorys-era5-unified" in w1.forcing_dd.options:
+            w1.forcing_dd.value = "glorys-era5-unified"
+        fe = w1._forcing_editor
+        for ws in list(fe._rows["ic_bgc"]):
+            fe._remove("ic_bgc", ws)
+        fe._add("ic_bgc")
+        row = fe._rows["ic_bgc"][-1]
+        row["name"].value = "ESPER"
+        row["path"].value = "/data/PyESPER"
+        row["esper_method"].value = "mixed"
+        row["esper_equation"].value = "16"
+
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+        esper_src = w1.config.forcing.initial_conditions.bgc_sources[0].source
+        assert esper_src.esper_method == "mixed"
+        assert esper_src.esper_equation == 16
+
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        bgc_sources = w2.config.forcing.initial_conditions.bgc_sources
+        assert bgc_sources[0].source.name == "ESPER"
+        assert bgc_sources[0].source.esper_method == "mixed"
+        assert bgc_sources[0].source.esper_equation == 16
+        fe2 = w2._forcing_editor
+        assert fe2._rows["ic_bgc"][0]["esper_method"].value == "mixed"
+        assert fe2._rows["ic_bgc"][0]["esper_equation"].value == "16"
+
     def test_nest_from_domain_dropdown_prefills_child(self):
         w = self._wizard()
         if "gulf-guinea-toy" not in w.nest_domain_dd.options:
@@ -2882,9 +3103,10 @@ class TestSaveModifiedPiecesToCatalog:
 
     def test_save_forcing_piece_marks_unmodified(self, isolated_catalog):
         wiz = self._wizard(isolated_catalog)
-        wiz._forcing_editor.ic_bgc_clim.value = (
-            not wiz._forcing_editor.ic_bgc_clim.value
-        )
+        # Toggle the climatology checkbox on the first IC-BGC row (the bundled
+        # "glorys-era5-unified" ForcingSpec seeds one -- UNIFIED, climatology=true).
+        ic_bgc_row = wiz._forcing_editor._rows["ic_bgc"][0]
+        ic_bgc_row["climatology"].value = not ic_bgc_row["climatology"].value
         wiz._on_forcing_change()
         assert wiz.config.composition.forcing.modified is True
 

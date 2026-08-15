@@ -5,7 +5,7 @@ application: forge
 state: notset
 schema_version: 1.0.0
 working_dir: ~/cstar-forge-run/wio-toy-simple
-forge_blueprint_version: 5
+forge_blueprint_version: 6
 run:
   start_date: '2012-01-01T00:00:00'
   end_date: '2012-01-02T00:00:00'
@@ -44,11 +44,19 @@ forcing:
       climatology: false
       glorys_layout: regional
       path: null
-    bgc_source:
-      name: UNIFIED
-      climatology: true
-      glorys_layout: null
-      path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
+    bgc_sources:
+    - source:
+        name: UNIFIED
+        climatology: true
+        glorys_layout: null
+        path: null
+        constants: null
+        esper_method: null
+        esper_equation: null
+      use_vars: null
     bgc_interpolation_method: depth
     allow_flex_time: false
     prefill: null
@@ -63,6 +71,9 @@ forcing:
       climatology: false
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: physics
     correct_radiation: true
     coarse_grid_mode: never
@@ -79,6 +90,9 @@ forcing:
       climatology: true
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: bgc
     correct_radiation: false
     coarse_grid_mode: never
@@ -96,7 +110,11 @@ forcing:
       climatology: false
       glorys_layout: regional
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: physics
+    use_vars: null
     bgc_interpolation_method: depth
     prefill: null
     prefill_kwargs: null
@@ -109,7 +127,11 @@ forcing:
       climatology: true
       glorys_layout: null
       path: null
+      constants: null
+      esper_method: null
+      esper_equation: null
     type: bgc
+    use_vars: null
     bgc_interpolation_method: depth
     prefill: null
     prefill_kwargs: null
@@ -471,5 +493,5 @@ provenance:
   cstar_version: cstar-ocean==0.10.0
   roms_tools_version: roms-tools==4.0.2.dev5+g8b6cd6c7c
   override_files_applied: []
-  content_hash: 86e8ec8eeb49f1ada8f0e3db3177d435151cc478ae5df05d302d511d2b9ecc07
+  content_hash: fe330ae9dc0d016d34532b51238b0c9715a503127bbb8e9ea8198179cafefbb5
   notes: null

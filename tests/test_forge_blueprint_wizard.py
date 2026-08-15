@@ -412,7 +412,8 @@ def test_bgc_dd_none_forces_nhy_nox_forcing_off_in_the_wizard():
     for ws in list(fe._rows["river"]):
         if "include_bgc" in ws:
             ws["include_bgc"].value = False
-    fe.ic_bgc_name.value = ""
+    for ws in list(fe._rows["ic_bgc"]):
+        fe._remove("ic_bgc", ws)
 
     wiz.bgc_dd.value = "none"
     wiz._rebuild()

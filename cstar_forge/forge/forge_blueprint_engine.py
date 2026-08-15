@@ -149,6 +149,17 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
         d: dict[str, Any] = {"name": spec.name, "climatology": spec.climatology}
         if spec.glorys_layout:
             d["glorys_layout"] = spec.glorys_layout
+        if spec.path:
+            d["path"] = spec.path
+        if spec.constants:
+            d["constants"] = spec.constants
+        # roms-tools' own source-dict keys are "method"/"equation" (see
+        # roms_tools.setup.esper.estimate_bgc_fields); esper_method/esper_equation
+        # are namespaced on SourceSpec since it's shared by every source type.
+        if spec.esper_method:
+            d["method"] = spec.esper_method
+        if spec.esper_equation:
+            d["equation"] = spec.esper_equation
         return d
 
     def _item(item) -> dict[str, Any]:
@@ -162,16 +173,23 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
         return {k: v for k, v in d.items() if v is not None}
 
     def _ic(spec) -> dict[str, Any]:
-        # Mirror _item, but IC carries a second SourceSpec (bgc_source) that also
-        # needs _src conversion. Forwarding the typed fields
-        # (bgc_interpolation_method, allow_flex_time) and the options passthrough
-        # here is what lets authored/UI IC choices actually reach input_data —
-        # previously only source/bgc_source were propagated, so any other IC field
-        # set in the wizard was silently dropped on the ForgeBlueprint path.
-        d = spec.model_dump(exclude={"source", "bgc_source"}, mode="json")
+        # Mirror _item, but IC carries `bgc_sources` (a list of source+use_vars
+        # items, each needing its own _src conversion) rather than a single nested
+        # SourceSpec. Forwarding the typed fields (bgc_interpolation_method,
+        # allow_flex_time) and the options passthrough here is what lets
+        # authored/UI IC choices actually reach input_data — previously only
+        # source/bgc_source were propagated, so any other IC field set in the
+        # wizard was silently dropped on the ForgeBlueprint path.
+        d = spec.model_dump(exclude={"source", "bgc_sources"}, mode="json")
         d["source"] = _src(spec.source)
-        if spec.bgc_source:
-            d["bgc_source"] = _src(spec.bgc_source)
+        if spec.bgc_sources:
+            d["bgc_sources"] = [
+                {
+                    "source": _src(bs.source),
+                    **({"use_vars": bs.use_vars} if bs.use_vars else {}),
+                }
+                for bs in spec.bgc_sources
+            ]
         return {k: v for k, v in d.items() if v is not None}
 
     f = cfg.forcing

@@ -2027,6 +2027,10 @@ class TestGoldenNamelist:
         ):
             mock_ic_instance = MagicMock()
             mock_ic_instance.save.side_effect = self._touch_save_list
+            # This suite's IC has an (IC) bgc_sources entry, so
+            # _generate_initial_conditions takes the multi-object merge path,
+            # which needs a real Dataset (not a MagicMock) to xr.merge().
+            mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
 
             mock_surface_instance = MagicMock()
@@ -2217,6 +2221,10 @@ class TestForgeRunnerEndToEnd:
         ):
             mock_ic_instance = MagicMock()
             mock_ic_instance.save.side_effect = TestGoldenNamelist._touch_save_list
+            # This suite's IC has an (IC) bgc_sources entry, so
+            # _generate_initial_conditions takes the multi-object merge path,
+            # which needs a real Dataset (not a MagicMock) to xr.merge().
+            mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
 
             mock_surface_instance = MagicMock()
@@ -2459,6 +2467,10 @@ class TestOnlyInputsReuseIsIdempotent:
         ):
             mock_ic_instance = MagicMock()
             mock_ic_instance.save.side_effect = self._touch_save_list
+            # This suite's IC has an (IC) bgc_sources entry, so
+            # _generate_initial_conditions takes the multi-object merge path,
+            # which needs a real Dataset (not a MagicMock) to xr.merge().
+            mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
 
             mock_surface_instance = MagicMock()
