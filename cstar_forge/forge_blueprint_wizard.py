@@ -5105,12 +5105,14 @@ class ForgeBlueprintWizardApp:
     bar above it. Blank input loads the default layered stack (your writable
     ``~/cstar-forge-data/catalog`` -- or ``CSTAR_FORGE_CATALOG`` -- layer over the
     read-only bundled in-repo catalog, see
-    :func:`~cstar_forge.domain_catalog.default_catalog_stack`). Entering a single
-    location (a local path, ``"local"``, a GitHub URL, or an http URL) loads that
-    one store, exactly as :class:`~cstar_forge.domain_catalog.DomainCatalog` accepts
-    for ``catalog_root``. Entering several ``os.pathsep``-separated locations builds
-    a :class:`~cstar_forge.domain_catalog.LayeredCatalog` from them (first = writable
-    top, rest read-only). Clicking Reload rebuilds the wizard against the new catalog.
+    :func:`~cstar_forge.domain_catalog.default_catalog_stack`). Entering one or more
+    ``os.pathsep``-separated local paths builds a
+    :class:`~cstar_forge.domain_catalog.LayeredCatalog` exactly like the same value
+    in ``CSTAR_FORGE_CATALOG`` would (first = writable top, rest read-only, bundled
+    catalog appended at the bottom). Entering a single GitHub/http URL or the
+    literal ``"local"`` loads exactly that one store, read-only, for browsing
+    (saves then default to CWD-relative filenames, and the status line says so).
+    Clicking Reload rebuilds the wizard against the new catalog.
 
     Usage (in a Jupyter notebook)::
 
@@ -5148,6 +5150,7 @@ class ForgeBlueprintWizardApp:
         from cstar_forge.domain_catalog import (
             DomainCatalog,
             LayeredCatalog,
+            _is_github_catalog_url,
             build_catalog_stack,
             default_catalog_stack,
         )
@@ -5160,12 +5163,21 @@ class ForgeBlueprintWizardApp:
                 cat = default_catalog_stack()
             else:
                 entries = [e for e in val.split(os.pathsep) if e]
-                if len(entries) <= 1:
-                    cat = DomainCatalog(catalog_root=val)
+                if len(entries) == 1 and (
+                    _is_github_catalog_url(entries[0])
+                    or entries[0].startswith("http")
+                    or entries[0].strip().lower() == "local"
+                ):
+                    # A remote URL or the literal "local" (bundled catalog)
+                    # can never be a writable top layer, so load it as exactly
+                    # one read-only store for browsing.
+                    cat = DomainCatalog(catalog_root=entries[0])
                 else:
                     # Same builder as the CSTAR_FORGE_CATALOG env handling
                     # (first entry writable top, rest read-only, bundled
-                    # appended at the bottom) so the two paths cannot drift.
+                    # appended at the bottom) so the two paths cannot drift --
+                    # a single local path gets the bundled layer underneath,
+                    # exactly like the same value in the env var.
                     cat = build_catalog_stack(entries)
             inner = ForgeBlueprintWizard(catalog=cat)
         except Exception as exc:
@@ -5189,10 +5201,19 @@ class ForgeBlueprintWizardApp:
                 f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>"
             )
         else:
+            # Single stores can be read-only (a remote URL or "local"): the
+            # save-path defaults then silently fall back to CWD-relative
+            # filenames, so say so instead of leaving the fallback invisible.
+            ro_note = (
+                " <span style='color:#b60'>(read-only catalog -- saves default "
+                "to the current directory)</span>"
+                if getattr(cat, "read_only", False)
+                else ""
+            )
             self._cat_status.value = (
                 f"<span style='color:#2a2'>Loaded {cat.catalog_root} -- "
                 f"{len(cat.model_names)} models, "
-                f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>"
+                f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>{ro_note}"
             )
         self._outer.children = [
             self.W.VBox(
