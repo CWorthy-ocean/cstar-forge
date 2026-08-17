@@ -23,7 +23,6 @@ project:
 
     - title: Reference
       children:
-        - file: docs/reference-machines.md
         - file: docs/reference-model-yaml.md
         - file: docs/reference-domains.md
         - file: docs/reference-roms-marbl-blueprint.md
