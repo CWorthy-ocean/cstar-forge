@@ -34,6 +34,7 @@ project:
         - file: docs/INSTALLATION-CHANGES.md
         - file: docs/machine-config.md
         - file: docs/architecture-details.md
+        - file: docs/catalog-plan.md
         - file: docs/domain-generation-overview.md
         - file: docs/source-data-intro.md
         - file: docs/source-data-example.md
