@@ -71,7 +71,7 @@ forge = "cstar_forge.cli:app"
 forge = "cstar_forge.forge.app"
 
 [project.optional-dependencies]
-# The wizard/notebook app stack: running cstar_forge/_voila_app.ipynb
+# The wizard/notebook app stack: running cstar_forge/ui/_voila_app.ipynb
 # under voila (see run-wizard-app.sh), or interactively in Jupyter.
 app = [
     "jupyterlab",
@@ -170,16 +170,23 @@ fallback_version = "0.1.0"
 packages = ["cstar_forge"]
 
 [tool.setuptools.package-data]
-# *.ipynb ships the wizard app (cstar_forge/_voila_app.ipynb,
-# forge-blueprint-wizard.ipynb) that run-wizard-app.sh execs via voila — needed
-# for the `app` extra to be usable from a plain pip/wheel install.
+# *.ipynb ships the user-facing wizard notebook (cstar_forge/forge-blueprint-wizard.ipynb)
+# that runs in Jupyter — needed for the `app` extra to be usable from a plain
+# pip/wheel install. The Voilà app notebook now lives under cstar_forge/ui/ and is
+# shipped by the explicit entry below.
 "*" = ["*.yml", "*.yaml", "*.ipynb"]
-# Explicit: the bundled read-only catalog layer (cstar_forge/catalog/) previously
-# shipped only implicitly, via setuptools_scm's file-finder picking up
+# Explicit: the bundled read-only catalog layer (cstar_forge/catalog/) and the
+# wizard UI layer (cstar_forge/ui/: the Voilà app notebook + branding logo)
+# previously shipped only implicitly, via setuptools_scm's file-finder picking up
 # already-tracked files (the "*" glob above is non-recursive and never matched
-# anything under catalog/); spelled out here so packaging doesn't depend on
-# that implicit behavior for the catalog's .yaml/.gitkeep files.
-cstar_forge = ["catalog/**/*.yaml", "catalog/**/.gitkeep"]
+# anything under those subdirs); spelled out here so packaging doesn't depend on
+# that implicit behavior.
+cstar_forge = [
+    "catalog/**/*.yaml",
+    "catalog/**/.gitkeep",
+    "ui/assets/*.png",
+    "ui/*.ipynb",
+]
 
 # Configuration for the ruff linter and formatter.
 # Rule selection follows roms-tools (the library Forge wraps): I, E, W, F, D, RUF, UP.
