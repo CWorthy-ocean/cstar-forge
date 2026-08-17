@@ -44,7 +44,8 @@ cstar-forge/
 │   ├── forge_blueprint_wizard.py   # ForgeBlueprintWizard (ipywidgets UI) +
 │   │                               # ForgeBlueprintWizardApp (adds catalog-location bar)
 │   ├── forge-blueprint-wizard.ipynb     # wizard notebook (run in Jupyter)
-│   ├── forge-blueprint-wizard-app.ipynb # wizard app notebook (served by Voilà)
+│   ├── _voila_app.ipynb        # wizard app notebook served by Voilà; internal,
+│   │                           # not for manual runs (see run-wizard-app.sh)
 │   ├── models.py               # Spec classes (ModelSpec, etc.)
 │   ├── domain_catalog.py       # DomainCatalog: scans the catalog, exposes accessors;
 │   │                           # LayeredCatalog stacks a writable user layer

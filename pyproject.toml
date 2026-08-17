@@ -71,7 +71,7 @@ forge = "cstar_forge.cli:app"
 forge = "cstar_forge.forge.app"
 
 [project.optional-dependencies]
-# The wizard/notebook app stack: running cstar_forge/forge-blueprint-wizard-app.ipynb
+# The wizard/notebook app stack: running cstar_forge/_voila_app.ipynb
 # under voila (see run-wizard-app.sh), or interactively in Jupyter.
 app = [
     "jupyterlab",
@@ -170,7 +170,7 @@ fallback_version = "0.1.0"
 packages = ["cstar_forge"]
 
 [tool.setuptools.package-data]
-# *.ipynb ships the wizard app (cstar_forge/forge-blueprint-wizard-app.ipynb,
+# *.ipynb ships the wizard app (cstar_forge/_voila_app.ipynb,
 # forge-blueprint-wizard.ipynb) that run-wizard-app.sh execs via voila — needed
 # for the `app` extra to be usable from a plain pip/wheel install.
 "*" = ["*.yml", "*.yaml", "*.ipynb"]

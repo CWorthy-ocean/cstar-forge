@@ -16,7 +16,7 @@
 # Requires: voila (pip install voila) in the active environment.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec voila "${HERE}/cstar_forge/forge-blueprint-wizard-app.ipynb" \
+exec voila "${HERE}/cstar_forge/_voila_app.ipynb" \
   --port=8866 \
   --Voila.tornado_settings='{"allow_origin": "*"}' \
   "$@"
