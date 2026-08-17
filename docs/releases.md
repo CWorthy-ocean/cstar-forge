@@ -20,6 +20,8 @@
 
 ### Miscellaneous
 
+* Get rid of "pieces" terminology throughout code, wizard, docs ([#123](https://github.com/CWorthy-ocean/cstar-forge/pull/123))
+
 ## 0.4.0
 
 ### Breaking Changes
