@@ -819,12 +819,24 @@ class RomsMarblInputData(InputData):
         Excludes two things that would otherwise cause a false "already present":
         - Leftover ``_nc4``-mangled files (see ``_pio_mangle``): the pre-nccopy
           intermediate from a prior run that didn't finish converting, not a valid
-          finished output.
+          finished output. This exclusion only applies when ``planned`` itself is
+          *not* ``_nc4``-mangled -- ``_discover_saved_paths`` calls this with an
+          already-mangled ``planned`` (it's hunting for the just-written ``_nc4``
+          intermediate(s) to hand to ``_pio_finalize``), and every legitimate
+          match necessarily shares that ``_nc4`` substring too (it's part of
+          ``planned``'s own stem). Excluding it unconditionally meant
+          ``_flush_boundary_bgc_batch`` could never find PIO-mangled, roms-tools-
+          grouped (e.g. monthly) boundary-bgc outputs -- glob always came back
+          empty, silently falling back to the (never-written) unsuffixed mangled
+          path, which then made ``_pio_finalize``'s ``nccopy`` fail with "No such
+          file or directory".
         - Any *other* planned output's file (e.g. a child grid's NetCDF must not
           count as evidence the parent grid's NetCDF exists, even though both share
           the ``{domain}_grid`` prefix) -- checked via ``_planned_output_paths``.
         """
-        if candidate.suffix != ".nc" or "_nc4" in candidate.name:
+        if candidate.suffix != ".nc":
+            return False
+        if "_nc4" in candidate.name and "_nc4" not in planned.name:
             return False
         resolved = candidate.resolve()
         if resolved != planned.resolve() and resolved in self._planned_output_paths:
@@ -982,8 +994,13 @@ class RomsMarblInputData(InputData):
         # streamable_for_source prefers the pinned ForgeBlueprint resolved_datasets
         # snapshot over a live source_registry check (see SourceData.streamable_for_source).
         if self.source_data.streamable_for_source(name, glorys_layout=glorys_layout):
-            if "path" not in out:
-                return out
+            return out
+
+        # A derived/computed pseudo-source (ESPER/constants) is never staged by Forge
+        # at all -- there is no self.paths entry for it, so path_for_source would raise
+        # a KeyError. Its own explicit path (ESPER's required PyESPER directory; absent
+        # for constants) must be used as-is, same as a streamable source's path above.
+        if self.source_data.derived_for_source(name):
             return out
 
         path = self.source_data.path_for_source(name, glorys_layout=glorys_layout)
@@ -1241,14 +1258,28 @@ class RomsMarblInputData(InputData):
 
         ``kwargs["bgc_sources"]`` (see ``forge_blueprint.IcBgcSourceItem``) is zero
         or more BGC sources. With none, this is the original single-object path
-        (physics only). With one or more, a SEPARATE ``rt.InitialConditions`` is
-        built per bgc source -- each redundantly re-deriving the same physics
-        fields, an accepted roms-tools-level cost for a single IC time snapshot --
-        completed together via ``BGCMarbl().process_bgc_fields()`` (fills missing
-        MARBL tracers in place, no save), then merged into ONE dataset before
-        writing: ROMS's ``inifile`` namelist key is a single scalar path
-        (confirmed at the Fortran level in ucla-roms' ``get_init_mod.F90``), so
-        multiple separate IC NetCDFs cannot be referenced directly.
+        (physics only). With one or more, ONE physics-only ``rt.InitialConditions``
+        is built first (``bgc_source=None``), then a SEPARATE, bgc-only
+        ``rt.InitialConditions`` is built per bgc source via
+        ``physics_forcing=<the physics object>`` (roms-tools >=4, mirroring
+        ``BoundaryForcing.physics_forcing`` -- see
+        ``InitialConditions.physics_forcing``): each bgc object reuses the physics
+        object's temp/salt directly (for ESPER derivation and/or density/density_mld
+        vertical interpolation) instead of redundantly regridding the full physics
+        variable set (u, v, zeta, w, barotropic velocities, ...) again for itself.
+        The bgc objects are completed together via ``BGCMarbl().process_bgc_fields()``
+        (fills missing MARBL tracers in place, no save), then merged with the physics
+        object into ONE dataset before writing: ROMS's ``inifile`` namelist key is a
+        single scalar path (confirmed at the Fortran level in ucla-roms'
+        ``get_init_mod.F90``), so multiple separate IC NetCDFs cannot be referenced
+        directly.
+
+        Note: temp/salt themselves are still regridded once *per bgc-consuming
+        object* under dask's lazy graph model (each references the same upstream
+        DataArray, but that reference is recomputed by whichever object's own graph
+        touches it) unless a caller explicitly materializes them beforehand; the
+        redundancy eliminated here is everything else (u, v, zeta, w, barotropic
+        velocities), which dwarfs temp/salt in practice.
         """
         yaml_path = self._yaml_filename(key)
         output_path = self._forcing_filename(input_name="initial_conditions")
@@ -1289,10 +1320,25 @@ class RomsMarblInputData(InputData):
 
         else:
             n = len(bgc_sources)
+
+            # One physics-only object, built once and reused (via physics_forcing=)
+            # by every bgc-only object below -- avoids each bgc source redundantly
+            # regridding the full physics variable set for itself.
+            physics_input_args = self._build_input_args(
+                key, extra=extra, base_kwargs=dict(kwargs), time_window=time_window
+            )
+            log.info("InitialConditions kwargs [physics]: %r", physics_input_args)
+            with mem_log("InitialConditions() [physics]", enabled=self.verbose):
+                ic_physics = rt.InitialConditions(grid=self.grid, **physics_input_args)
+
             ic_objects: list[rt.InitialConditions] = []
             for i, bs in enumerate(bgc_sources, start=1):
                 item_kwargs = dict(kwargs)
+                # physics_forcing supplies temp/salt; a second `source` here would
+                # be redundant and is rejected by InitialConditions.__post_init__.
+                item_kwargs.pop("source", None)
                 item_kwargs["bgc_source"] = bs.get("source")
+                item_kwargs["physics_forcing"] = ic_physics
                 if bs.get("use_vars"):
                     item_kwargs["use_vars"] = bs["use_vars"]
                 input_args = self._build_input_args(
@@ -1318,6 +1364,12 @@ class RomsMarblInputData(InputData):
                 rt.BGCMarbl().process_bgc_fields(ic_objects, filepath=None)
 
             # See here: https://github.com/CWorthy-ocean/roms-tools/issues/553
+            # The physics object's own to_yaml already embeds nothing bgc-specific;
+            # the first bgc object's to_yaml embeds both its own bgc_source config
+            # AND the physics object's config (nested under `physics_forcing`), so
+            # it round-trips the full picture for that one bgc source (later bgc
+            # sources, if any, are not individually captured here -- pre-existing
+            # limitation, unchanged from before this object was split in two).
             try:
                 ic_objects[0].to_yaml(yaml_path)
             except Exception as e:
@@ -1327,14 +1379,15 @@ class RomsMarblInputData(InputData):
                     stacklevel=2,
                 )
 
-            # The first (primary, physics + first bgc source) object's global
-            # attrs/coords are authoritative; later objects only contribute their
-            # own (non-overlapping, by convention of use_vars) bgc variables.
-            merged_ds = xr.merge(
-                [ic.ds for ic in ic_objects],
-                compat="override",
-                combine_attrs="override",
-            )
+            # rt.InitialConditions.merge() does the actual xr.merge (physics
+            # object's global attrs/coords are authoritative; the bgc objects only
+            # contribute their own, non-overlapping-by-convention-of-use_vars bgc
+            # variables) plus a physics_forcing-consistency check; it's kept in
+            # roms-tools so this exact assembly is available to standalone
+            # roms-tools users too, not just Forge. The save itself stays here
+            # (not passed via merge()'s own filepath=) so Forge keeps control of
+            # PIO mangling/finalization.
+            merged_ds = rt.InitialConditions.merge(ic_physics, ic_objects)
             mangled_path = self._pio_mangle(output_path)
             # Mirror InitialConditions.save()'s own filepath handling (it strips
             # ".nc" before delegating to save_datasets, which re-appends it).

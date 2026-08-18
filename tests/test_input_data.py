@@ -190,6 +190,9 @@ def sample_source_data(tmp_path):
     mock_source_data.streamable_for_source = MagicMock(
         side_effect=lambda name, glorys_layout=None: name.upper() in {"ERA5", "DAI"}
     )
+    mock_source_data.derived_for_source = MagicMock(
+        side_effect=lambda name: name.upper() in {"ESPER", "CONSTANTS"}
+    )
 
     # Mock STREAMABLE_SOURCES
     with patch("cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES", {"ERA5"}):
@@ -703,6 +706,25 @@ class TestRomsMarblInputDataHelperMethods:
             )
         assert result == {"name": "CONSTANTS"}
 
+    def test_resolve_source_block_esper_source_is_derived_not_staged(
+        self, sample_roms_marbl_input_data
+    ):
+        """Regression: an ESPER-named source (with its required explicit `path` --
+        the PyESPER package directory) must not crash. ESPER is derived/computed by
+        PyESPER at generation time, not staged by Forge (see DERIVED_BGC_SOURCES in
+        source_registry.py) -- there is no `self.paths["ESPER"]` entry, so calling
+        `path_for_source` previously raised `KeyError: 'ESPER'`. The source's own
+        explicit path must survive untouched, the same way a streamable source's
+        does. Uses a real SourceData (unpatched STREAMABLE_SOURCES/DERIVED_BGC_SOURCES)
+        so the real registry logic is exercised, not just the mock.
+        """
+        real_sd = source_data.SourceData(datasets=[])
+        sample_roms_marbl_input_data.source_data = real_sd
+        result = sample_roms_marbl_input_data._resolve_source_block(
+            {"name": "ESPER", "path": "/data/PyESPER"}
+        )
+        assert result == {"name": "ESPER", "path": "/data/PyESPER"}
+
     def test_resolve_source_block_time_window_trims_daily_list(
         self, sample_roms_marbl_input_data
     ):
@@ -1003,6 +1025,53 @@ class TestPlannedOutputReuseDetection:
         self._set_planned(data, grid_path)
 
         assert not data._planned_netcdf_already_present(grid_path)
+
+    def test_discover_saved_paths_finds_nc4_mangled_grouped_outputs(
+        self, sample_roms_marbl_input_data
+    ):
+        """Regression: ``_discover_saved_paths`` (used by
+        ``_flush_boundary_bgc_batch`` to hand PIO-mangled outputs to
+        ``_pio_finalize``) must find roms-tools' grouped (e.g. monthly) ``_nc4``
+        outputs -- not just an exact match.
+
+        Before the fix, ``_matches_planned_output`` unconditionally rejected any
+        candidate containing ``"_nc4"``, including when the *planned* path being
+        searched for was itself ``_nc4``-mangled (every real match necessarily
+        shares that substring). The glob then always came back empty,
+        ``_discover_saved_paths`` fell back to the never-written unsuffixed
+        mangled path, and ``_pio_finalize``'s ``nccopy`` failed with "No such
+        file or directory" -- this crashed a real run generating monthly
+        boundary-bgc ESPER output under ``use_pio``.
+        """
+        data = sample_roms_marbl_input_data
+        surface_path = data._forcing_filename("surface-physics")
+        mangled = surface_path.with_name(
+            surface_path.stem + "_nc4" + surface_path.suffix
+        )
+        grouped_a = mangled.parent / f"{mangled.stem}_201212.nc"
+        grouped_b = mangled.parent / f"{mangled.stem}_201301.nc"
+        grouped_a.write_bytes(b"a")
+        grouped_b.write_bytes(b"b")
+
+        found = data._discover_saved_paths(mangled)
+
+        assert found == [str(grouped_a), str(grouped_b)]
+
+    def test_nc4_exclusion_still_applies_when_planned_is_unmangled(
+        self, sample_roms_marbl_input_data
+    ):
+        """The ``_nc4``-leftover exclusion must still hold for the original
+        use case: searching for a *finished* (unmangled) planned output must not
+        be satisfied by a leftover, unfinished ``_nc4`` intermediate sharing a
+        grouped-suffix-like name.
+        """
+        data = sample_roms_marbl_input_data
+        surface_path = data._forcing_filename("surface-physics")
+        leftover = surface_path.parent / f"{surface_path.stem}_nc4_201212.nc"
+        leftover.write_bytes(b"leftover")
+        self._set_planned(data, surface_path)
+
+        assert not data._planned_netcdf_already_present(surface_path)
 
 
 class TestRomsMarblInputDataGeneration:
@@ -1789,9 +1858,12 @@ class TestRomsMarblInputDataGenerateAll:
         mock_ic_instance.to_yaml = MagicMock()
         # sample_forcing_override has one IC bgc_sources entry, so
         # _generate_initial_conditions takes the multi-object merge path, which
-        # needs a real Dataset (not a MagicMock) to xr.merge().
+        # needs a real Dataset (not a MagicMock) from rt.InitialConditions.merge()
+        # -- the whole class is mocked here, so that classmethod needs its own
+        # return value too.
         mock_ic_instance.ds = xr.Dataset()
         mock_ic.return_value = mock_ic_instance
+        mock_ic.merge.return_value = xr.Dataset()
 
         mock_surface_instance = MagicMock()
 
@@ -2025,9 +2097,12 @@ class TestRomsMarblInputDataGenerateAll:
         mock_ic_instance.to_yaml = MagicMock()
         # sample_forcing_override has one IC bgc_sources entry, so
         # _generate_initial_conditions takes the multi-object merge path, which
-        # needs a real Dataset (not a MagicMock) to xr.merge().
+        # needs a real Dataset (not a MagicMock) from rt.InitialConditions.merge()
+        # -- the whole class is mocked here, so that classmethod needs its own
+        # return value too.
         mock_ic_instance.ds = xr.Dataset()
         mock_ic.return_value = mock_ic_instance
+        mock_ic.merge.return_value = xr.Dataset()
 
         mock_surface_instance = MagicMock()
 
@@ -2156,10 +2231,13 @@ class TestRomsMarblInputDataGenerateAll:
         # Mock all forcing classes
         # sample_forcing_override has one IC bgc_sources entry, so
         # _generate_initial_conditions takes the multi-object merge path, which
-        # needs a real Dataset (not a MagicMock) to xr.merge().
+        # needs a real Dataset (not a MagicMock) from rt.InitialConditions.merge()
+        # -- the whole class is mocked here, so that classmethod needs its own
+        # return value too.
         mock_ic_instance = create_mock_forcing_class()
         mock_ic_instance.ds = xr.Dataset()
         mock_ic_class.return_value = mock_ic_instance
+        mock_ic_class.merge.return_value = xr.Dataset()
         mock_surface_class.return_value = create_mock_forcing_class()
         mock_boundary_class.return_value = create_mock_forcing_class()
         mock_tidal_class.return_value = create_mock_forcing_class()
@@ -2452,6 +2530,7 @@ class TestGlorysSubchunkIntegration:
         mock_sd.path_for_source = MagicMock(return_value=list(synthetic_glorys_files))
         mock_sd.dataset_key_for_source = MagicMock(return_value="GLORYS_REGIONAL")
         mock_sd.streamable_for_source = MagicMock(return_value=False)
+        mock_sd.derived_for_source = MagicMock(return_value=False)
         mock_sd.source_data_dir = tmp_path / "cache"
         mock_sd.start_time = datetime(2020, 1, 1)
         mock_sd.end_time = datetime(2020, 1, 3)
@@ -2922,11 +3001,23 @@ class TestInitialConditionsMultipleBgcSources:
         sample_roms_marbl_input_data,
         tmp_path,
     ):
+        ic_physics = MagicMock()
+        ic_physics.ds = xr.Dataset({"temp": (("dim",), [10.0])})
         ic_unified = MagicMock()
         ic_unified.ds = xr.Dataset({"PO4": (("dim",), [1.0])})
         ic_glodap = MagicMock()
         ic_glodap.ds = xr.Dataset({"Fe": (("dim",), [2.0])})
-        mock_ic_class.side_effect = [ic_unified, ic_glodap]
+        mock_ic_class.side_effect = [ic_physics, ic_unified, ic_glodap]
+        # rt.InitialConditions.merge() is a real roms-tools classmethod (see
+        # test_roms_tools.test_esper for its own dedicated coverage); here it's
+        # mocked like the rest of the (fully patched) rt.InitialConditions class,
+        # so reproduce just enough of its behavior (the actual xr.merge) to
+        # exercise _generate_initial_conditions' handling of the result.
+        mock_ic_class.merge.return_value = xr.merge(
+            [ic_physics.ds, ic_unified.ds, ic_glodap.ds],
+            compat="override",
+            combine_attrs="override",
+        )
 
         mock_marbl_instance = MagicMock()
         mock_bgc_marbl_class.return_value = mock_marbl_instance
@@ -2944,21 +3035,34 @@ class TestInitialConditionsMultipleBgcSources:
             ],
         )
 
-        # One InitialConditions object built per bgc source.
-        assert mock_ic_class.call_count == 2
+        # One physics-only InitialConditions object, plus one per bgc source.
+        assert mock_ic_class.call_count == 3
 
-        # Completed together (in place, no save) via a single BGCMarbl call.
+        # Each bgc-only call reuses the physics object via physics_forcing=, and
+        # carries no `source` of its own (mutually exclusive with physics_forcing).
+        for call in mock_ic_class.call_args_list[1:]:
+            assert call.kwargs["physics_forcing"] is ic_physics
+            assert "source" not in call.kwargs
+
+        # Completed together (in place, no save) via a single BGCMarbl call --
+        # the physics object is not part of this call (nothing to derive/fill on it).
         mock_marbl_instance.process_bgc_fields.assert_called_once()
         called_args, called_kwargs = mock_marbl_instance.process_bgc_fields.call_args
         assert called_args[0] == [ic_unified, ic_glodap]
         assert called_kwargs["filepath"] is None
 
-        # Written exactly ONCE, as a single merged dataset containing both
-        # sources' variables -- not one file per source.
+        # Assembled via rt.InitialConditions.merge() (physics object + both bgc
+        # objects), not a hand-rolled xr.merge in Forge itself.
+        mock_ic_class.merge.assert_called_once_with(ic_physics, [ic_unified, ic_glodap])
+
+        # Written exactly ONCE, as a single merged dataset containing the physics
+        # object's variables plus both bgc sources' variables -- not one file per
+        # source.
         mock_save_datasets.assert_called_once()
         saved_datasets, _saved_filenames = mock_save_datasets.call_args.args
         assert len(saved_datasets) == 1
         merged = saved_datasets[0]
+        assert "temp" in merged.data_vars
         assert "PO4" in merged.data_vars
         assert "Fe" in merged.data_vars
 

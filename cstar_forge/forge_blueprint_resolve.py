@@ -89,9 +89,17 @@ except ImportError:  # pragma: no cover
 # Source-name resolution (alias map, metadata, streamable) — single source of truth,
 # dependency-free. Dual import to keep the resolver standalone-importable.
 try:  # pragma: no cover - exercised both ways
-    from cstar_forge.forge.source_registry import resolve_dataset_key, resolve_source
+    from cstar_forge.forge.source_registry import (
+        DERIVED_BGC_SOURCES,
+        resolve_dataset_key,
+        resolve_source,
+    )
 except ImportError:  # pragma: no cover
-    from source_registry import resolve_dataset_key, resolve_source  # type: ignore
+    from source_registry import (  # type: ignore
+        DERIVED_BGC_SOURCES,
+        resolve_dataset_key,
+        resolve_source,
+    )
 
 # Default repo serving the render templates (now at the forge repo root `templates/`,
 # decoupled from the ModelSpec). A ModelSpec pins the serving commit via
@@ -840,7 +848,10 @@ def _build_forcing(
     resolved: dict[str, ResolvedDataset] = {}
 
     def _note(src: SourceSpec):
-        if src and src.name:
+        # DERIVED_BGC_SOURCES (CONSTANTS/ESPER) are computed at generation time, not
+        # fetched/staged by Forge -- noting them here would land them in
+        # resolved_datasets/datasets and raise "Unknown dataset" downstream in SourceData.
+        if src and src.name and str(src.name).upper() not in DERIVED_BGC_SOURCES:
             resolved.setdefault(
                 src.name, _resolved_dataset(src.name, src.glorys_layout)
             )
@@ -852,14 +863,14 @@ def _build_forcing(
         for it in grp:
             _note(it.source)
     # River BGC source (a plain dict, not a SourceSpec — separate from it.source, the
-    # river discharge source). CONSTANTS is not noted: it is roms-tools' own
-    # auto-downloaded default and has no Forge SourceData handler/registry entry, so
-    # staging it here would raise "Unknown dataset" downstream. Only a genuinely
+    # river discharge source). DERIVED_BGC_SOURCES (CONSTANTS) is not noted: it is
+    # roms-tools' own auto-downloaded default and has no Forge SourceData handler/registry
+    # entry, so staging it here would raise "Unknown dataset" downstream. Only a genuinely
     # Forge-staged BGC source (e.g. RIVR2O) needs to land in resolved_datasets/datasets
     # so the executor verifies it.
     for it in river:
         bgc_name = (it.bgc_source or {}).get("name")
-        if bgc_name and str(bgc_name).upper() != "CONSTANTS":
+        if bgc_name and str(bgc_name).upper() not in DERIVED_BGC_SOURCES:
             resolved.setdefault(str(bgc_name).upper(), _resolved_dataset(bgc_name))
     # topography source (now a Domain-level input, not read from ForcingSpec)
     topo = getattr(topography_source, "value", topography_source)

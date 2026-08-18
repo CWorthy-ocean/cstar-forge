@@ -1975,6 +1975,9 @@ class TestGoldenNamelist:
         mock_sd.streamable_for_source = MagicMock(
             side_effect=lambda name, glorys_layout=None: name.upper() in {"ERA5", "DAI"}
         )
+        mock_sd.derived_for_source = MagicMock(
+            side_effect=lambda name: name.upper() in {"ESPER", "CONSTANTS"}
+        )
         return mock_sd
 
     def test_golden_namelist_test_tiny(self, mock_grid, tmp_path):
@@ -2029,9 +2032,12 @@ class TestGoldenNamelist:
             mock_ic_instance.save.side_effect = self._touch_save_list
             # This suite's IC has an (IC) bgc_sources entry, so
             # _generate_initial_conditions takes the multi-object merge path,
-            # which needs a real Dataset (not a MagicMock) to xr.merge().
+            # which needs a real Dataset (not a MagicMock) from
+            # rt.InitialConditions.merge() -- the whole class is mocked here, so
+            # that classmethod needs its own return value too.
             mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
+            mock_ic.merge.return_value = xr.Dataset()
 
             mock_surface_instance = MagicMock()
             mock_surface_instance.save.side_effect = self._touch_save
@@ -2223,9 +2229,12 @@ class TestForgeRunnerEndToEnd:
             mock_ic_instance.save.side_effect = TestGoldenNamelist._touch_save_list
             # This suite's IC has an (IC) bgc_sources entry, so
             # _generate_initial_conditions takes the multi-object merge path,
-            # which needs a real Dataset (not a MagicMock) to xr.merge().
+            # which needs a real Dataset (not a MagicMock) from
+            # rt.InitialConditions.merge() -- the whole class is mocked here, so
+            # that classmethod needs its own return value too.
             mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
+            mock_ic.merge.return_value = xr.Dataset()
 
             mock_surface_instance = MagicMock()
             mock_surface_instance.save.side_effect = TestGoldenNamelist._touch_save
@@ -2431,6 +2440,9 @@ class TestOnlyInputsReuseIsIdempotent:
         mock_sd.streamable_for_source = MagicMock(
             side_effect=lambda name, glorys_layout=None: name.upper() in {"ERA5", "DAI"}
         )
+        mock_sd.derived_for_source = MagicMock(
+            side_effect=lambda name: name.upper() in {"ESPER", "CONSTANTS"}
+        )
         return mock_sd
 
     def _run_one_pass(self, cfg, host, mock_grid, tmp_path):
@@ -2469,9 +2481,12 @@ class TestOnlyInputsReuseIsIdempotent:
             mock_ic_instance.save.side_effect = self._touch_save_list
             # This suite's IC has an (IC) bgc_sources entry, so
             # _generate_initial_conditions takes the multi-object merge path,
-            # which needs a real Dataset (not a MagicMock) to xr.merge().
+            # which needs a real Dataset (not a MagicMock) from
+            # rt.InitialConditions.merge() -- the whole class is mocked here, so
+            # that classmethod needs its own return value too.
             mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
+            mock_ic.merge.return_value = xr.Dataset()
 
             mock_surface_instance = MagicMock()
             mock_surface_instance.save.side_effect = self._touch_save

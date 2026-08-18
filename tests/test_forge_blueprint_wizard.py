@@ -77,18 +77,19 @@ def test_surface_row_visibility_by_type(editor):
 
 
 def test_boundary_row_layout_visibility_by_source_name(editor):
-    """Item 7: glorys_layout only shows when the source name is GLORYS. Switching
-    the boundary `type` to bgc resets `name` away from GLORYS (bgc boundary sources
-    are UNIFIED/CESM_REGRIDDED) and must hide the layout box via the same cascade
-    that resets the name dropdown's options (_on_type_change).
+    """Item 7: glorys_layout only shows when the source name is GLORYS. "boundary"
+    is physics-only now (no per-row `type` dropdown -- see _make_row/_ROW_CATEGORIES);
+    BGC boundary sources (UNIFIED/CESM_REGRIDDED/GLODAP/constants/ESPER) live in their
+    own "boundary_bgc" row-list/pane instead, which never offers GLORYS and has no
+    glorys_layout widget at all (not just hidden -- absent).
     """
-    w = editor._make_row("boundary", {"type": "physics", "source": {"name": "GLORYS"}})
+    w = editor._make_row("boundary", {"source": {"name": "GLORYS"}})
     assert w["name"].value == "GLORYS"
     assert _display(w["glorys_layout"]) == ""
 
-    w["type"].value = "bgc"
-    assert w["name"].value != "GLORYS"
-    assert _display(w["glorys_layout"]) == "none"
+    bgc_w = editor._make_row("boundary_bgc", {"source": {"name": "UNIFIED"}})
+    assert bgc_w["name"].value != "GLORYS"
+    assert "glorys_layout" not in bgc_w
 
 
 def test_surface_row_never_shows_layout(editor):
@@ -113,18 +114,53 @@ def test_ic_layout_visibility_initial_state():
     assert _display(ed.ic_layout) == ""
 
 
-def test_row_box_puts_type_first(editor):
-    """Item 3: `type` (when present) is the left-most widget in the row."""
+def test_row_box_puts_remove_button_first_then_type(editor):
+    """The remove button is always left-most (never clipped off-screen by a wide
+    row -- see _row_box); `type` (when present) comes right after it.
+    """
     w = editor._make_row("surface", {"type": "bgc", "source": {"name": "ERA5"}})
-    box = editor._row_box(w)
-    assert box.children[0] is w["type"]
+    box = editor._row_box(w, "surface")
+    assert box.children[0] is w["_remove_btn"]
+    assert box.children[1] is w["type"]
 
 
 def test_row_box_without_type_unaffected(editor):
     """tidal/river rows have no `type`; ordering must not error or reorder oddly."""
     w = editor._make_row("tidal", {"ntides": 15, "source": {"name": "TPXO"}})
-    box = editor._row_box(w)
+    box = editor._row_box(w, "tidal")
     assert w["ntides"] in box.children
+
+
+def test_boundary_add_button_hidden_once_a_row_exists(editor):
+    """The "boundary" category (physics-only) supports only a single, required item --
+    roms-tools' BoundaryForcing physics source is one mandatory GLORYS dataset, not an
+    optional/combinable list -- so the "add" button must disappear once a row exists,
+    and the remove button is hidden too (removing it would leave an invalid, zero-item
+    blueprint; the "name" dropdown already lets a user change the source in place).
+    Other categories (e.g. "boundary_bgc") keep their add/remove buttons regardless of
+    row count.
+    """
+    assert editor._rows["boundary"] == []
+    editor._render("boundary")
+    assert any(
+        getattr(c, "description", "") == "add boundary"
+        for c in editor._containers["boundary"].children
+    )
+
+    editor._add("boundary")
+    assert len(editor._rows["boundary"]) == 1
+    assert not any(
+        getattr(c, "description", "").startswith("add")
+        for c in editor._containers["boundary"].children
+    )
+    remove_btn = editor._rows["boundary"][0]["_remove_btn"]
+    assert remove_btn.layout.display == "none"
+
+    editor._add("boundary_bgc")
+    assert any(
+        getattr(c, "description", "") == "add boundary_bgc"
+        for c in editor._containers["boundary_bgc"].children
+    )
 
 
 @pytest.mark.parametrize("cat", ["surface", "boundary", "tidal"])

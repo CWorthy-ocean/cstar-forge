@@ -83,6 +83,20 @@ STREAMABLE_SOURCES = ["ERA5", "DAI", "CONSTANTS"]
 # a real @register_dataset("GLOFAS") handler, same as the TPXO/WOA user-provided pattern.
 UNSTAGED_DATASETS: set[str] = {"ETOPO5", "DAI"}
 
+# Pseudo-source names that are computed/derived at generation time, not fetched or staged
+# by Forge at all -- unlike UNSTAGED_DATASETS above, these aren't datasets in any sense
+# (no @register_dataset handler exists or ever will), so they must never reach SourceData
+# or land in ForgeBlueprint.datasets/resolved_datasets in the first place:
+#   - "CONSTANTS": depth-invariant constant value(s) supplied inline in the blueprint
+#                  (SourceSpec.constants), or roms-tools' own auto-downloaded river-BGC
+#                  default -- either way, nothing for Forge to stage.
+#   - "ESPER":     BGC fields derived from physics T/S via PyESPER at generation time
+#                  (SourceSpec.esper_method/esper_equation); see input_data.py's ESPER
+#                  handling, which already recognizes this by name, not by dataset lookup.
+# Consulted by forge_blueprint_resolve.py's source-collection code (_note() and the
+# river-bgc-source carve-out) to exclude these before they ever reach _resolved_dataset().
+DERIVED_BGC_SOURCES: set[str] = {"CONSTANTS", "ESPER"}
+
 # Per-key provenance metadata (snapshotted into ForgeBlueprint.sources.resolved_datasets).
 DATASET_METADATA: dict[str, dict[str, str]] = {
     "GLORYS_REGIONAL": {"dataset_id": GLORYS_DATASET_ID},

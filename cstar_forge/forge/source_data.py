@@ -66,6 +66,7 @@ def register_dataset(name: str, requires: list[str] | None = None) -> Callable:
 # without the heavy acquisition deps). Re-exported here for existing consumers.
 # -----------------------------------------
 from cstar_forge.forge.source_registry import (  # noqa: E402,F401  (re-export)
+    DERIVED_BGC_SOURCES,
     GLOFAS_CDS_URL,
     GLOFAS_FILENAME,
     GLORYS_DATASET_ID,
@@ -265,6 +266,16 @@ class SourceData:
         return (
             logical_name.upper() in upper_streamable or key.upper() in upper_streamable
         )
+
+    def derived_for_source(self, logical_name: str) -> bool:
+        """
+        Whether ``logical_name`` is a derived/computed pseudo-source (e.g. ``ESPER``,
+        ``constants``) -- never staged by Forge at all, so there is no ``self.paths``
+        entry to look up. Callers must use the source's own explicit ``path`` (if any,
+        e.g. ESPER's required PyESPER directory) as-is, the same way a streamable
+        source's path is left untouched -- see ``streamable_for_source``.
+        """
+        return logical_name.upper() in DERIVED_BGC_SOURCES
 
     def path_for_source(
         self,

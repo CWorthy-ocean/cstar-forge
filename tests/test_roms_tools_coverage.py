@@ -130,6 +130,7 @@ _SKIP = {
         "chunks",  # advanced Dask tuning; expose via options passthrough
         "initial_slice_bounds",  # advanced spatial Dask subsetting
         "bypass_validation",  # dev/debug knob; expose via options passthrough
+        "physics_forcing",  # internal object for density interp / ESPER wiring (set by Forge, not user)
     },
     "SurfaceForcing": {
         "chunks",

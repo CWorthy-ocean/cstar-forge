@@ -678,6 +678,72 @@ def test_resolver_threads_river_bgc_source_and_climatology():
     assert "CONSTANTS" not in cfg.datasets
 
 
+def test_resolver_ic_bgc_esper_source_excluded_from_datasets():
+    """Regression: an ESPER-named IC-BGC source (SourceSpec.name == "ESPER") is
+    derived from physics T/S via PyESPER at generation time -- Forge has no
+    SourceData handler for it and never will, so it must never land in
+    datasets/resolved_datasets (see DERIVED_BGC_SOURCES in source_registry.py);
+    doing so previously raised "Unknown dataset(s) requested: ESPER" downstream
+    in SourceData.__post_init__.
+    """
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    fdata["initial_conditions"]["bgc_sources"] = [
+        {"source": {"name": "ESPER", "path": "/tmp/PyESPER"}}
+    ]
+
+    cfg = _build(forcing_inputs=fdata)
+
+    assert cfg.forcing.initial_conditions.bgc_sources[0].source.name == "ESPER"
+    assert "ESPER" not in cfg.datasets
+    assert "ESPER" not in cfg.forcing.resolved_datasets
+
+
+def test_resolver_boundary_bgc_esper_source_excluded_from_datasets():
+    """Same regression as above, for an ESPER-named boundary (type="bgc") source."""
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["boundary"][-1]["source"] = {
+        "name": "ESPER",
+        "path": "/tmp/PyESPER",
+    }
+
+    cfg = _build(forcing_inputs=fdata)
+
+    assert cfg.forcing.boundary[-1].source.name == "ESPER"
+    assert "ESPER" not in cfg.datasets
+    assert "ESPER" not in cfg.forcing.resolved_datasets
+
+
+def test_resolver_ic_bgc_constants_source_excluded_from_datasets():
+    """Same regression, via the generic IC-BGC path (not the river bgc_source path
+    already covered by test_resolver_threads_river_bgc_source_and_climatology) --
+    a "constants"-named source must not land in datasets either.
+    """
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    fdata["initial_conditions"]["bgc_sources"] = [
+        {"source": {"name": "constants", "constants": {"Fe": 3.0e-3}}}
+    ]
+
+    cfg = _build(forcing_inputs=fdata)
+
+    assert cfg.forcing.initial_conditions.bgc_sources[0].source.constants == {
+        "Fe": 3.0e-3
+    }
+    assert "CONSTANTS" not in cfg.datasets
+    assert "CONSTANTS" not in cfg.forcing.resolved_datasets
+
+
 def test_resolver_topography_source_emod_lands_in_datasets():
     cfg = _build(topography_source="EMOD")
     assert "EMOD" in cfg.datasets
@@ -1726,6 +1792,33 @@ class TestProvenanceStamping:
         assert back.provenance.forge_version == "abc1234"
 
 
+class _ReadOnlyValueGuard:
+    """Wraps a widget so a bare ``.value = ...`` raises ``TraitError``, the way a
+    read-only ``value`` trait would -- while ``.set_trait("value", ...)`` (the
+    sanctioned traitlets escape hatch) and plain reads still work.
+
+    ``FileUpload.value`` is read-only in some installed ipywidgets versions (e.g.
+    7.x -- confirmed via ``ipywidgets.FileUpload.value.read_only`` there) but not
+    others (e.g. this repo's dev env, ipywidgets>=8), so a bug in code that does
+    `widget.value = ...` directly can pass every test here yet crash for a real
+    user on a different ipywidgets version. This wrapper reproduces that failure
+    mode regardless of which version happens to be installed for the test run.
+    """
+
+    def __init__(self, widget):
+        object.__setattr__(self, "_widget", widget)
+
+    def __getattr__(self, name):
+        return getattr(self._widget, name)
+
+    def __setattr__(self, name, value):
+        if name == "value":
+            from traitlets import TraitError
+
+            raise TraitError('The "value" trait is read-only.')
+        setattr(self._widget, name, value)
+
+
 # ---------------------------------------------------------------------------
 # Wizard (headless: ipywidgets value get/set/observe work without rendering)
 # ---------------------------------------------------------------------------
@@ -2286,16 +2379,17 @@ class TestForgeBlueprintWizard:
         assert fe2._rows["ic_bgc"][1]["use_vars"].value == "PO4, NO3"
 
     def test_boundary_bgc_use_vars_round_trips_through_load(self, tmp_path):
-        """A boundary type='bgc' row's use_vars down-select must survive save/load."""
+        """A boundary type='bgc' row's use_vars down-select must survive save/load.
+
+        "boundary_bgc" is its own row-list/pane now (mirroring "ic_bgc"), split out
+        of "boundary" (physics-only, no per-row type widget anymore) -- see
+        _ROW_CATEGORIES/_make_row. Every row seeded there is implicitly bgc-type.
+        """
         w1 = self._wizard()
         if "glorys-era5-unified" in w1.forcing_dd.options:
             w1.forcing_dd.value = "glorys-era5-unified"
         fe = w1._forcing_editor
-        bgc_rows = [
-            ws
-            for ws in fe._rows["boundary"]
-            if ws.get("type") and ws["type"].value == "bgc"
-        ]
+        bgc_rows = fe._rows["boundary_bgc"]
         assert bgc_rows, "expected a bgc boundary row in the bundled ForcingSpec"
         bgc_rows[0]["use_vars"].value = "ALK, DIC, NO3"
 
@@ -2548,6 +2642,53 @@ class TestForgeBlueprintWizard:
         assert "color:#b00" in w.load_status.value
         w._load_bytes(b"not: [valid spec config")
         assert "color:#b00" in w.load_status.value
+
+    def test_cdr_clear_button_resets_upload_value_without_error(self):
+        """Regression: clicking the CDR 'clear' button used to do
+        `self.cdr_upload.value = ()` directly, which raises `TraitError` on an
+        ipywidgets version where `FileUpload.value` is read-only (real user report:
+        `TraitError: The "value" trait is read-only.` from `_on_cdr_clear`). Forced
+        via `_ReadOnlyValueGuard` so this is caught regardless of the installed
+        ipywidgets version's own read-only-ness (see class docstring).
+        """
+        wiz = self._wizard()
+        real_upload = wiz.cdr_upload
+        wiz.cdr_upload = _ReadOnlyValueGuard(real_upload)
+        try:
+            wiz._cdr_forcing = {"releases": [{"lon": 1.0, "lat": 2.0}]}
+            wiz._on_cdr_clear(None)  # must not raise TraitError
+        finally:
+            wiz.cdr_upload = real_upload
+        assert wiz._cdr_forcing is None
+        assert wiz.cdr_status.value == ""
+
+    def test_loading_blueprint_with_cdr_forcing_does_not_raise(self, tmp_path):
+        """Regression: loading a saved blueprint that has `cdr_forcing` set used to
+        crash in `_populate_from` for the same reason as the clear-button bug above
+        (`self.cdr_upload.value = ()` on a read-only trait) -- this is the exact
+        path the original bug report hit (`ForgeBlueprintWizard._on_load_path` ->
+        `_populate_from`, loading `.../ccs-4km_64procs.forge_blueprint.yaml`).
+        """
+        w1 = self._wizard()
+        w1._cdr_forcing = {"releases": [{"lon": 1.0, "lat": 2.0}]}
+        w1._rebuild()
+        assert w1.config.forcing.cdr_forcing == w1._cdr_forcing
+
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+
+        w2 = self._wizard()
+        real_upload = w2.cdr_upload
+        w2.cdr_upload = _ReadOnlyValueGuard(real_upload)
+        try:
+            w2.load_path.value = str(p)
+            w2._on_load_path(None)  # must not raise TraitError
+        finally:
+            w2.cdr_upload = real_upload
+        assert "color:#b00" not in w2.load_status.value
+        assert w2._cdr_forcing == w1._cdr_forcing
 
     def test_download_link_encodes_the_config(self):
         """The browser-download link (used by Voilà) carries the resolved YAML."""
