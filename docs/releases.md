@@ -27,6 +27,7 @@
 * Get rid of "pieces" terminology throughout code, wizard, docs ([#123](https://github.com/CWorthy-ocean/cstar-forge/pull/123))
 * Voila backing notebook moved to avoid confusion with user-runnable wizard notebook. ([#125](https://github.com/CWorthy-ocean/cstar-forge/pull/125))
 * A conda activate/deactivate script will be in the next conda build that performs runtime protection against .local shadowing (similar to harden-env.sh, but for conda installs) ([#127](https://github.com/CWorthy-ocean/cstar-forge/pull/127))
+* Pin `compilers<2` to get around temporary mpicc wrapper error from mpich ([#129](https://github.com/CWorthy-ocean/cstar-forge/pull/129))
 
 ## 0.4.0
 
