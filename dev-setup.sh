@@ -294,7 +294,7 @@ if [[ "$WITH_COMPILERS" == "true" ]]; then
 elif [[ "$BATCH_MODE" == "true" ]]; then
   echo "Batch mode enabled: skipping interactive compiler/library install prompt."
   echo "To install compilers/libraries later, run:"
-  echo "  ${CONDA_LIKE_CMD} install -y -c conda-forge compilers mpich netcdf-fortran"
+  echo "  ${CONDA_LIKE_CMD} install -y -c conda-forge 'compilers<2' mpich netcdf-fortran"
 else
   echo ""
   echo "C-Star Forge requires a FORTRAN compiler and supporting libraries (netcdf, MPI)."
@@ -307,10 +307,13 @@ fi
 
 if [[ "$INSTALL_FORTRAN_LIBS" == "true" ]]; then
   echo "Installing compilers and library packages from conda-forge..."
+  # compilers<2: metapackage 2.0.0 drops the triplet clang wrapper that
+  # conda-forge mpich's mpicc hardcodes (broken mpicc on fresh osx-arm64 envs);
+  # unpin once mpich is rebuilt against the new compilers
   if [[ "$PACKAGE_MANAGER" == "micromamba" ]]; then
-    micromamba install -y -c conda-forge compilers mpich netcdf-fortran
+    micromamba install -y -c conda-forge 'compilers<2' mpich netcdf-fortran
   else
-    "$CONDA_LIKE_CMD" install -y -c conda-forge compilers mpich netcdf-fortran
+    "$CONDA_LIKE_CMD" install -y -c conda-forge 'compilers<2' mpich netcdf-fortran
   fi
   echo "✓ Compiler installation completed successfully!"
 else
