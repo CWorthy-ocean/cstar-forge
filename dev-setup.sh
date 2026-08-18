@@ -20,8 +20,9 @@
 #   script downloads and installs micromamba locally to ./bin (no root required).
 #
 # HPC hardening (PYTHONNOUSERSITE, env-active assertions) lives in
-# scripts/harden-env.sh; Jupyter kernel registration lives in
-# scripts/register-kernel.sh. Both are sourced below.
+# scripts/harden-env.sh (sourced below); Jupyter kernel registration is done
+# by the installed package itself, via `cstar forge register-kernel`
+# (cstar_forge/register_kernel.py).
 #
 # Prefer pixi? `pixi install` sets up the same environment from pyproject.toml
 # without any of this script; see docs/installation.md.
@@ -368,8 +369,18 @@ _ensure_env_active
 ENV_PREFIX="$("$(_env_python)" -c 'import sys; print(sys.prefix)')"
 _install_pythonnousersite_hooks "$ENV_PREFIX"
 export ENV_PREFIX
-# shellcheck source=scripts/register-kernel.sh
-source "$SCRIPT_DIR/scripts/register-kernel.sh"
+
+# Register the Jupyter kernel (+ activation wrapper) through the CLI the
+# just-installed package ships: `cstar forge register-kernel`
+# (cstar_forge/register_kernel.py). Installed users run the same command.
+_register_kernel_args=(register-kernel --name "$KERNEL_NAME" --package-manager "$PACKAGE_MANAGER")
+if [[ "$CLEAN_MODE" == "true" ]]; then
+  _register_kernel_args+=(--clean)
+fi
+if [[ -n "${MICROMAMBA_CMD:-}" ]]; then
+  _register_kernel_args+=(--micromamba-bin "$MICROMAMBA_CMD")
+fi
+"$(_env_python)" -m cstar_forge.cli "${_register_kernel_args[@]}"
 
 #--------------------------------------------------------
 # Verify installation (advisory only — never fatal)
