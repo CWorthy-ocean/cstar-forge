@@ -143,13 +143,14 @@ cstar-forge = ">=0.3.0"
 # packages export CC/CXX/FC on activation and their bin/ shadows module
 # toolchains on PATH, silently hijacking ucla-roms builds on clusters.
 [tool.pixi.feature.compilers.dependencies]
-# <2 pin: compiler metapackages 2.0.0 (conda-forge "raw compilers" migration,
-# 2026-08-13) drop clang_osx-arm64, whose triplet-named clang wrapper
-# conda-forge mpich's mpicc hardcodes — fresh osx-arm64 solves get a broken
-# mpicc ("arm64-apple-darwin20.0.0-clang: command not found"). Unpin once
-# conda-forge mpich is rebuilt against the new compilers.
-compilers = "<2"
+compilers = "*"
+# mpich-mpicc/mpich-mpifort pin the exact mpich build plus the activation
+# package providing the compiler its wrappers hardcode; bare mpich + raw
+# compilers 2.0 can otherwise solve to a broken mpicc on osx-arm64
+# (conda-forge/mpich-feedstock#142)
 mpich = "*"
+mpich-mpicc = "*"
+mpich-mpifort = "*"
 netcdf-fortran = "*"
 libpnetcdf = "*"
 cmake = "*"
