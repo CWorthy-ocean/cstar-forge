@@ -325,6 +325,7 @@ def process_forge_blueprint(
     clobber: bool = False,
     use_dask: bool = True,
     dask_num_workers: int = 8,
+    serialize_dask_write: bool | None = None,
     subchunk: bool = True,
     validate: bool = True,
     executor_factory: ExecutorFactory | None = None,
@@ -372,9 +373,17 @@ def process_forge_blueprint(
         skip-existing logic) and emit the blueprint.
     dask_num_workers :
         Cap on dask's default threaded-scheduler worker count during input
-        generation (paired with pinning BLAS/OpenMP to 1 thread), to avoid thread
-        oversubscription hangs on high-core HPC nodes. Only applied when
-        ``use_dask`` is True. Default 8.
+        generation, to avoid thread oversubscription (each worker's own
+        BLAS/numba call is, in turn, capped to its own share of the remaining
+        cores) on high-core HPC nodes. Only applied when ``use_dask`` is True.
+        Default 8.
+    serialize_dask_write :
+        Forwarded to every IC/boundary ``.save()`` call as ``serialize_dask=``
+        (see :func:`roms_tools.utils.save_datasets`). Default ``None``: each
+        source's own ``HIGH_MEMORY_METHOD`` decides automatically (serialized
+        for an ML-backed source like ESPER, concurrent otherwise). Pass
+        ``True``/``False`` to force the same choice everywhere instead. Only
+        applied when ``use_dask`` is True.
     subchunk :
         Just-in-time build a kerchunk-subchunked reference for multi-file
         GLORYS sources (see ``glorys_subchunk.py``) and read from it instead
@@ -438,6 +447,7 @@ def process_forge_blueprint(
             clobber=clobber,
             use_dask=use_dask,
             dask_num_workers=dask_num_workers,
+            serialize_dask_write=serialize_dask_write,
             subchunk=subchunk,
             only=resolved_only,
         )

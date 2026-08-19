@@ -1372,6 +1372,7 @@ class ForgeExecutor(BaseModel):
         clobber: bool = False,
         use_dask: bool = True,
         dask_num_workers: int = 8,
+        serialize_dask_write: bool | None = None,
         subchunk: bool = True,
         test: bool = False,
         only: set[str] | None = None,
@@ -1393,9 +1394,17 @@ class ForgeExecutor(BaseModel):
             Use dask for parallel computations. Default True.
         dask_num_workers : int, optional
             Cap on dask's default threaded-scheduler worker count while generating
-            inputs (paired with pinning BLAS/OpenMP to 1 thread), to avoid thread
-            oversubscription hangs on high-core HPC nodes. Only applied when
+            inputs, to avoid thread oversubscription (each worker's own BLAS/numba
+            call is, in turn, capped to its own share of the remaining cores --
+            see ``RomsMarblInputData.generate_all``). Only applied when
             ``use_dask`` is True. Default 8.
+        serialize_dask_write : bool, optional
+            Forwarded to every IC/boundary ``.save()`` call as ``serialize_dask=``
+            (see :func:`roms_tools.utils.save_datasets`). Default ``None``: each
+            source's own ``HIGH_MEMORY_METHOD`` decides automatically (serialized
+            for an ML-backed source like ESPER, concurrent otherwise). Pass
+            ``True``/``False`` to force the same choice everywhere instead. Only
+            applied when ``use_dask`` is True.
         subchunk : bool, optional
             Just-in-time build a kerchunk-subchunked reference for multi-file
             GLORYS sources (see ``glorys_subchunk.py``) and read from it
@@ -1468,6 +1477,7 @@ class ForgeExecutor(BaseModel):
                 cdr_forcing=self.cdr_forcing,
                 use_dask=use_dask,
                 dask_num_workers=dask_num_workers,
+                serialize_dask_write=serialize_dask_write,
                 subchunk=subchunk,
                 use_pio=self._use_pio,
                 verbose=self.verbose,

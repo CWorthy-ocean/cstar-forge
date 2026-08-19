@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import re
 import subprocess
 import warnings
@@ -21,6 +22,7 @@ from typing import Any
 
 import cstar.applications.roms_marbl.models as cstar_models
 import dask
+import numba
 import roms_tools as rt
 import xarray as xr
 import yaml
@@ -37,6 +39,29 @@ log = logging.getLogger(__name__)
 # Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name contains the
 # substring ``cdr.nc`` by convention (a former C-Star build check enforced this).
 CDR_FORCING_NETCDF_STEM = "cdr"
+
+
+@contextlib.contextmanager
+def _numba_num_threads(n: int):
+    """Pin numba's own internal (``prange``) thread pool to ``n`` threads.
+
+    ``threadpool_limits`` (used alongside this, for BLAS/OpenMP) does NOT reach
+    numba: ``threadpoolctl.threadpool_info()`` never lists numba's threading layer
+    as a controllable pool. A numba ``@njit(parallel=True)`` kernel (e.g. PyESPER's
+    ``_tansig_kernel``, used by the ESPER BGC source) otherwise claims
+    ``numba.get_num_threads()`` threads -- all visible cores -- *per call*, which
+    combined with `dask_num_workers` concurrent dask worker threads each
+    independently triggering that is the same N-outer x N-inner oversubscription
+    BLAS needs pinning for. Pinning to ``n`` (not 1, and not unconstrained) splits
+    the machine's cores between dask's own worker count and each worker's internal
+    BLAS/numba parallelism instead of forcing either extreme.
+    """
+    prev = numba.get_num_threads()
+    numba.set_num_threads(n)
+    try:
+        yield
+    finally:
+        numba.set_num_threads(prev)
 
 # Matches the part of a candidate filename's stem that follows a planned output's
 # stem, for the known roms-tools multi-file suffixes: grouped time chunks
@@ -318,12 +343,30 @@ class RomsMarblInputData(InputData):
     use_dask: bool = True
     dask_num_workers: int = 8
     """Cap on dask's default threaded-scheduler worker count during ``generate_all``'s
-    per-step loop, paired with pinning BLAS/OpenMP to 1 thread (via ``threadpoolctl``).
-    Without this, on high-core HPC nodes each dask worker's own BLAS call spawns a
-    core-sized thread pool, causing N-workers x N-threads oversubscription that can
-    hang. Only applied when ``use_dask`` is True -- the eager (non-dask) path has no
+    per-step loop. Each worker's own BLAS/numba call is, in turn, capped to its own
+    share of the remaining cores (see ``generate_all``'s ``inner_threads``
+    computation) rather than pinned to 1 -- without any cap, on high-core HPC nodes
+    each dask worker's own BLAS/numba call would spawn a core-sized thread pool,
+    N-workers x N-threads oversubscription that can hang or badly thrash. Only
+    applied when ``use_dask`` is True -- the eager (non-dask) path has no
     dask-driven parallelism to protect against. Default 8; configurable via
     ``--dask-num-workers``."""
+    serialize_dask_write: bool | None = None
+    """Passed through as ``serialize_dask=`` to every roms-tools ``.save()`` call
+    (see :func:`roms_tools.utils.save_datasets`). Default ``None``: each
+    ``InitialConditionsSource``/``BoundaryForcingSource``'s own
+    ``HIGH_MEMORY_METHOD`` decides automatically -- serialized (dask's
+    synchronous scheduler, one task at a time, with BLAS/numba boosted to every
+    visible core for that one call) for a high-memory, ML-backed source like
+    ``ESPER``, left fully concurrent (dask's normal several-worker scheduler) for
+    an ordinary regrid-only source. This matters because an ML-backed source's
+    per-chunk memory cost (PyESPER's ``run_nets``: ~10 KB/point, tens of GB for
+    one chunk at production scale) multiplies by however many dask workers run
+    concurrently -- confirmed via a kernel OOM-kill log to exhaust all memory on
+    a 251 GB machine when left fully concurrent, whereas an ordinary source's
+    per-chunk cost never approaches that regardless of worker count. Pass
+    ``True``/``False`` to force the same choice onto every save instead of
+    auto-detecting. Only applied when ``use_dask`` is True."""
     use_pio: bool = False
     """Whether ROMS is built against ParallelIO. Every roms-tools save is left at
     its default format (NETCDF4/HDF5 -- fast); when ``use_pio`` is True, each
@@ -571,27 +614,32 @@ class RomsMarblInputData(InputData):
             )
 
         # On high-core HPC nodes, dask's default threaded scheduler spawns ~one
-        # worker per core, and each worker's own BLAS/OpenMP call spawns its own
-        # core-sized thread pool -- N-workers x N-threads oversubscription that can
-        # hang. Cap dask's worker count and pin BLAS/OpenMP to 1 thread so dask alone
-        # provides the parallelism. Only meaningful when dask is actually driving the
-        # computation; the eager (use_dask=False) path has nothing to oversubscribe.
-        # (numba is NOT pinned here -- the ESPER BGC source has its own, narrower
-        # mitigation for its own numba usage: see `esper.py`'s
-        # `estimate_bgc_fields`, which forces its dask chunks to run one at a time
-        # instead, so numba's internal `prange` parallelism stays the *only*
-        # parallelism for that one call and can use every core. Pinning numba to 1
-        # thread globally here, on top of that, was tried and made every step --
-        # not just ESPER -- single-core for no benefit.)
+        # worker per core, and each worker's own BLAS/OpenMP/numba call spawning its
+        # own core-sized thread pool is N-workers x N-threads oversubscription that
+        # can hang or, at minimum, badly thrash. Rather than pin BLAS/numba to 1
+        # thread each (correct but forces every step fully single-core-per-worker,
+        # even ones with real per-worker parallelism to gain), split the machine's
+        # cores between the *outer* (dask worker count) and *inner* (BLAS/numba
+        # per-worker) levels of parallelism. Below 16 cores, fall back to the
+        # original conservative 1-thread pin -- the division below would give a
+        # very small/degenerate share per worker anyway, and a modest workstation
+        # is exactly the case that pin was first written for. Only meaningful when
+        # dask is actually driving the computation; the eager (use_dask=False) path
+        # has nothing to oversubscribe.
+        cpu_count = os.cpu_count()
+        inner_threads = max(1, cpu_count // self.dask_num_workers) if cpu_count >= 16 else 1
         dask_cm = (
             dask.config.set(num_workers=self.dask_num_workers)
             if self.use_dask
             else contextlib.nullcontext()
         )
         threadpool_cm = (
-            threadpool_limits(limits=1) if self.use_dask else contextlib.nullcontext()
+            threadpool_limits(limits=inner_threads)
+            if self.use_dask
+            else contextlib.nullcontext()
         )
-        with dask_cm, threadpool_cm:
+        numba_cm = _numba_num_threads(inner_threads) if self.use_dask else contextlib.nullcontext()
+        with dask_cm, threadpool_cm, numba_cm:
             # Execute
             for idx, (step, kwargs) in enumerate(step_kwargs_list, start=1):
                 if step.name == "forcing.boundary" and not any(
@@ -1310,7 +1358,12 @@ class RomsMarblInputData(InputData):
                 )
 
             with mem_log("InitialConditions.save", enabled=self.verbose):
-                paths = self._pio_finalize(ic.save(self._pio_mangle(output_path)))
+                paths = self._pio_finalize(
+                    ic.save(
+                        self._pio_mangle(output_path),
+                        serialize_dask=self.serialize_dask_write,
+                    )
+                )
 
         # Append Resources directly to roms_marbl_blueprint_elements.initial_conditions
         if isinstance(paths, (list, tuple)):
@@ -1659,6 +1712,7 @@ class RomsMarblInputData(InputData):
             physics_paths, _ = bry.save(
                 self._pio_mangle(physics_output_path),
                 [str(p) for p in bgc_mangled_paths] or None,
+                serialize_dask=self.serialize_dask_write,
             )
         self._record_boundary_forcing_result(
             "physics", self._pio_finalize(physics_paths)

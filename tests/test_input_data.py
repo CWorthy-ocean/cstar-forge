@@ -1843,7 +1843,7 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_ic_instance = MagicMock()
 
-        def ic_save(path):
+        def ic_save(path, serialize_dask=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
             # Code expects paths[0], so return a list
@@ -1873,7 +1873,7 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None):
+        def boundary_save(path, bgc_paths=None, serialize_dask=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
             return [path], bgc_paths or []
@@ -1948,7 +1948,7 @@ class TestRomsMarblInputDataGenerateAll:
         # Mock BoundaryForcing to prevent file operations
         mock_boundary = MagicMock()
 
-        def boundary_save(path, bgc_paths=None):
+        def boundary_save(path, bgc_paths=None, serialize_dask=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
             return [path], bgc_paths or []
@@ -2017,7 +2017,7 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None):
+        def boundary_save(path, bgc_paths=None, serialize_dask=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
             return [path], bgc_paths or []
@@ -2083,7 +2083,7 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_ic_instance = MagicMock()
 
-        def ic_save(path):
+        def ic_save(path, serialize_dask=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
             return [path]
@@ -2112,7 +2112,7 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None):
+        def boundary_save(path, bgc_paths=None, serialize_dask=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
             return [path], bgc_paths or []
@@ -2196,7 +2196,7 @@ class TestRomsMarblInputDataGenerateAll:
         def create_mock_forcing_class():
             mock_obj = MagicMock()
 
-            def save(path_arg):
+            def save(path_arg, **kwargs):
                 Path(path_arg).parent.mkdir(parents=True, exist_ok=True)
                 Path(path_arg).touch()
                 # Return as list since _generate_initial_conditions uses paths[0]
@@ -2240,7 +2240,7 @@ class TestRomsMarblInputDataGenerateAll:
         # (physics_paths, bgc_paths) out.
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None):
+        def boundary_save(path, bgc_paths=None, serialize_dask=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
             return [path], bgc_paths or []
@@ -2796,7 +2796,9 @@ class TestBoundaryBgcSources:
         call_kwargs = mock_bf_class.call_args.kwargs
         assert call_kwargs["bgc_sources"] == []
         assert call_kwargs["bgc_model"] is None
-        mock_bf.save.assert_called_once_with(mock_bf.save.call_args.args[0], None)
+        mock_bf.save.assert_called_once_with(
+            mock_bf.save.call_args.args[0], None, serialize_dask=None
+        )
 
     @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
     def test_mixed_reuse_raises_rather_than_silently_rebuilding_a_subset(

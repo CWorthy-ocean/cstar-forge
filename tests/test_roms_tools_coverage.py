@@ -43,6 +43,12 @@ _RT_DATA_INPUTS = {
     # user-facing option knob.
     "bgc_sources",
     "bgc_model",
+    # `.save()`/`process_bgc_fields(filepath=...)`'s write-strategy switch (see
+    # `roms_tools.utils.save_datasets`): not a constructor field this coverage
+    # test's SKIP_LIST mechanism covers, but IS a real, intentional Forge option
+    # -- `RomsMarblInputData.serialize_dask_write`, forwarded to every
+    # IC/boundary `.save()` call.
+    "serialize_dask",
 }
 
 # ── option fields in each Forge item model ───────────────────────────────────

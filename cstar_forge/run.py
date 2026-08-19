@@ -176,10 +176,23 @@ def main(argv: list | None = None, *, prog: str = "python -m cstar_forge.run") -
         type=int,
         default=8,
         help="cap on dask's default local threaded-scheduler worker count during "
-        "input generation, paired with pinning BLAS/OpenMP to 1 thread, to avoid "
-        "thread oversubscription hangs on high-core HPC nodes. Ignored with "
-        "--no-dask. Distinct from --dask-workers, which sizes the opt-in "
-        "--dask distributed Client.",
+        "input generation (each worker's own BLAS/numba call is, in turn, capped "
+        "to its own share of the remaining cores), to avoid thread oversubscription "
+        "hangs on high-core HPC nodes. Ignored with --no-dask. Distinct from "
+        "--dask-workers, which sizes the opt-in --dask distributed Client.",
+    )
+    parser.add_argument(
+        "--serialize-dask-write",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="force every IC/boundary NetCDF write onto dask's synchronous "
+        "scheduler, one task at a time with BLAS/numba boosted to every core "
+        "(bounded peak memory, safe for an ML-backed source like ESPER) with "
+        "--serialize-dask-write, or force it fully concurrent instead (faster, "
+        "safe only for ordinary regrid-only sources) with "
+        "--no-serialize-dask-write. Default: neither flag given, each source "
+        "decides for itself based on its own HIGH_MEMORY_METHOD. Ignored with "
+        "--no-dask.",
     )
     parser.add_argument(
         "--subchunk",
@@ -303,6 +316,7 @@ def main(argv: list | None = None, *, prog: str = "python -m cstar_forge.run") -
                 clobber=args.clobber,
                 use_dask=not args.no_dask,
                 dask_num_workers=args.dask_num_workers,
+                serialize_dask_write=args.serialize_dask_write,
                 subchunk=args.subchunk,
                 only_inputs=args.only_inputs,
                 verbose=args.verbose,
