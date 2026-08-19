@@ -36,6 +36,13 @@ _RT_DATA_INPUTS = {
     # BGCMarbl.process_bgc_fields: the already-built forcing objects it completes
     # in place -- pure data, not a user-configurable option.
     "forcings",
+    # InitialConditions/BoundaryForcing (roms-tools >=5 monolithic wrapper): the
+    # resolved bgc_sources list (forge_blueprint.BgcSourceItem, each already
+    # resolved through SourceData) and the BGCModel class Forge always passes
+    # (rt.BGCMarbl) when bgc_sources is non-empty -- both pure data, never a raw
+    # user-facing option knob.
+    "bgc_sources",
+    "bgc_model",
 }
 
 # ── option fields in each Forge item model ───────────────────────────────────
@@ -52,7 +59,8 @@ _FORGE_FIELDS = {
         # model_reference_date is handled run-level; options dict is passthrough
         "model_reference_date",
         "options",
-        # per-bgc_sources-entry down-select (forge_blueprint.IcBgcSourceItem.use_vars)
+        # legacy single-bgc-source convenience (forge never emits this directly,
+        # but rt.InitialConditions' own wrapper constructor still accepts it)
         "use_vars",
     },
     "SurfaceForcing": {
@@ -70,7 +78,8 @@ _FORGE_FIELDS = {
         "options",
     },
     "BoundaryForcing": {
-        "type",
+        # `type` dropped entirely in the roms-tools >=5 wrapper (physics is the
+        # required `source`, bgc is the `bgc_sources` list -- no discriminator).
         "bgc_interpolation_method",
         "prefill",
         "prefill_kwargs",
@@ -79,9 +88,6 @@ _FORGE_FIELDS = {
         "extrap_kwargs",
         "model_reference_date",
         "options",
-        # BoundaryForcingItem.use_vars: down-select which bgc vars this source
-        # contributes (type='bgc' only).
-        "use_vars",
     },
     "TidalForcing": {
         "ntides",
@@ -130,19 +136,27 @@ _SKIP = {
         "chunks",  # advanced Dask tuning; expose via options passthrough
         "initial_slice_bounds",  # advanced spatial Dask subsetting
         "bypass_validation",  # dev/debug knob; expose via options passthrough
-        "physics_forcing",  # internal object for density interp / ESPER wiring (set by Forge, not user)
     },
     "SurfaceForcing": {
         "chunks",
         "initial_slice_bounds",
         "bypass_validation",
+        # padding an extra time record before/after the run window; roms-tools
+        # defaults (True/True) are correct for the normal case, not yet exposed
+        # as a Forge option (same gap as BoundaryForcing's).
+        "start_time_pad",
+        "end_time_pad",
     },
     "BoundaryForcing": {
         "chunks",
         "initial_slice_bounds",
         "bypass_validation",
-        "physics_forcing",  # internal object for density interp / ESPER wiring (set by Forge, not user)
         "apply_2d_horizontal_fill",  # deprecated in rt>=4 in favor of `prefill`; Forge exposes prefill instead
+        # padding an extra time record before/after the run window; roms-tools
+        # defaults (True/True) are correct for the normal ROMS boundary-interp
+        # case, not yet exposed as a Forge option.
+        "start_time_pad",
+        "end_time_pad",
     },
     "TidalForcing": {
         "bypass_validation",
@@ -230,9 +244,10 @@ def test_bgc_marbl_process_bgc_fields_params_are_data_inputs():
 _ITEM_MODEL_PAIRS = [
     ("InitialConditionsInput", "InitialConditions"),
     ("SurfaceForcingItem", "SurfaceForcingItem"),
-    ("BoundaryForcingItem", "BoundaryForcingItem"),
+    ("BoundaryForcing", "BoundaryForcing"),
     ("TidalForcingItem", "TidalForcingItem"),
     ("RiverForcingItem", "RiverForcingItem"),
+    ("BgcSourceItem", "BgcSourceItem"),
 ]
 
 

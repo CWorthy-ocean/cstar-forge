@@ -132,13 +132,6 @@ class SurfaceType(str, Enum):
     RESTORING = "restoring"  # SSS restoring (WOA, UNIFIED)
 
 
-class BoundaryType(str, Enum):
-    """Accepted values for ``BoundaryForcing.type``."""
-
-    PHYSICS = "physics"  # T, S, u, v, ζ (GLORYS)
-    BGC = "bgc"  # BGC tracers (UNIFIED, CESM_REGRIDDED)
-
-
 class CoarseGridMode(str, Enum):
     """Accepted values for ``SurfaceForcing.coarse_grid_mode``."""
 
@@ -344,10 +337,15 @@ _HASH_EXCLUDE = {
 # user-controllable, decoupled from CDR forcing -- see ``forge_blueprint_resolve``'s
 # CDR-output consistency block).
 # v6 (2026-08): ``forcing.initial_conditions.bgc_source`` (singular) replaced by
-# ``bgc_sources`` (a list of ``IcBgcSourceItem``), mirroring how boundary/surface
+# ``bgc_sources`` (a list of ``BgcSourceItem``), mirroring how boundary/surface
 # forcing already support multiple sources -- lets initial conditions combine
 # multiple BGC datasets (e.g. UNIFIED + GLODAP + a constants source), each
 # down-selected via ``use_vars`` and completed by ``BGCMarbl().process_bgc_fields()``.
+# Also within v6 (never released outside this branch, so no bump/migration needed):
+# ``forcing.boundary`` changed from a flat, ``type``-discriminated
+# ``list[BoundaryForcingItem]`` to a singular ``BoundaryForcing`` section (``source``
+# + ``bgc_sources: list[BgcSourceItem]``), mirroring ``InitialConditions`` exactly --
+# both sections now build on the same roms-tools wrapper API.
 FORGE_BLUEPRINT_VERSION = 6
 
 # Identifies the C-Star application that CONSUMES this blueprint — i.e. the "forge"
@@ -695,29 +693,6 @@ class SurfaceForcingItem(_Section):
     options: dict[str, Any] = Field(default_factory=dict, description=_OPTIONS_HELP)
 
 
-class BoundaryForcingItem(_Section):
-    source: SourceSpec
-    type: BoundaryType = BoundaryType.PHYSICS
-    use_vars: list[str] | None = None
-    """Down-select which BGC variables this source contributes (``type='bgc'``
-    only). Presence-only check in roms-tools -- raises if a requested variable
-    isn't provided by the source. Required when multiple ``type='bgc'`` boundary
-    items are present, so their variable sets can be arranged not to overlap;
-    ``BGCMarbl().process_bgc_fields()`` is called afterward (across all ``bgc``
-    items for a boundary) to derive/fill the remaining MARBL tracer set."""
-    bgc_interpolation_method: BgcInterpMethod = (
-        BgcInterpMethod.DEPTH
-    )  # BGC vertical interp (type='bgc')
-    prefill: Prefill | None = None  # source NaN prefill before regridding
-    prefill_kwargs: dict[str, Any] | None = None
-    regrid_method: RegridMethod | None = None  # horizontal regrid engine (None -> auto)
-    extrap_method: ExtrapMethod | None = (
-        None  # destination extrapolation (default path)
-    )
-    extrap_kwargs: dict[str, Any] | None = None
-    options: dict[str, Any] = Field(default_factory=dict, description=_OPTIONS_HELP)
-
-
 class TidalForcingItem(_Section):
     source: SourceSpec
     ntides: int | None = None
@@ -765,16 +740,19 @@ class RiverForcingItem(_Section):
         return self
 
 
-class IcBgcSourceItem(_Section):
-    """One BGC source contributing (a subset of) BGC tracers to InitialConditions.
+class BgcSourceItem(_Section):
+    """One BGC source contributing (a subset of) BGC tracers to
+    ``InitialConditions`` or ``BoundaryForcing``.
 
-    Mirrors ``BoundaryForcingItem``'s ``source``/``use_vars`` pair, but as its own
-    small model rather than folding onto ``InitialConditions`` directly: unlike
-    boundary forcing (each item becomes its own independent roms-tools object and
-    output file), ROMS's ``inifile`` namelist key is a single scalar path, so all
-    ``bgc_sources`` here are built as separate roms-tools ``InitialConditions``
-    objects, completed together via ``BGCMarbl().process_bgc_fields()``, then
-    merged into ONE dataset before writing.
+    Shared by both sections rather than folded onto them directly: each source
+    becomes its own internal roms-tools object (built via
+    ``physics_forcing=``-based T/S reuse against the section's physics object),
+    completed together via ``BGCMarbl().process_bgc_fields()``. What differs
+    between IC and boundary is only what happens to the *result* -- IC merges
+    every bgc source into ONE dataset (ROMS's ``inifile`` namelist key is a
+    single scalar path), while boundary writes each to its own file (ROMS's
+    ``frcfiles`` namelist key accepts a list) -- not the per-source shape
+    itself, which is why one model suffices for both.
     """
 
     source: SourceSpec
@@ -783,11 +761,17 @@ class IcBgcSourceItem(_Section):
     check in roms-tools -- raises if a requested variable isn't provided by the
     source. Required when multiple ``bgc_sources`` are present, so their variable
     sets can be arranged not to overlap."""
+    bgc_interpolation_method: BgcInterpMethod | None = None
+    """Per-source override of the section's ``bgc_interpolation_method``
+    default. ``None`` means "inherit the section default" -- roms-tools' own
+    ``build_bgc_companions()`` only applies a per-source override when one is
+    actually given, so ``None`` here correctly falls through to the section's
+    own setting."""
 
 
 class InitialConditions(_Section):
     source: SourceSpec
-    bgc_sources: list[IcBgcSourceItem] = Field(default_factory=list)
+    bgc_sources: list[BgcSourceItem] = Field(default_factory=list)
     """BGC source(s) for initial conditions. Zero or more sources, each
     contributing (via ``use_vars``) part of the full MARBL tracer set;
     ``BGCMarbl().process_bgc_fields()`` derives/fills the rest before the
@@ -796,8 +780,35 @@ class InitialConditions(_Section):
     automatically: an old ``bgc_source`` becomes a one-item list)."""
     bgc_interpolation_method: BgcInterpMethod = (
         BgcInterpMethod.DEPTH
-    )  # BGC vertical interp (shared across all bgc_sources)
+    )  # BGC vertical interp default; overridable per-source (see BgcSourceItem)
     allow_flex_time: bool = False  # ±24h search window around ini_time
+    prefill: Prefill | None = None  # source NaN prefill before regridding
+    prefill_kwargs: dict[str, Any] | None = None
+    regrid_method: RegridMethod | None = None  # horizontal regrid engine (None -> auto)
+    extrap_method: ExtrapMethod | None = (
+        None  # destination extrapolation (default path)
+    )
+    extrap_kwargs: dict[str, Any] | None = None
+    options: dict[str, Any] = Field(default_factory=dict, description=_OPTIONS_HELP)
+
+
+class BoundaryForcing(_Section):
+    """Structural mirror of ``InitialConditions`` -- see its docstring and
+    ``BgcSourceItem`` for the shared design. Unlike IC, each bgc source here
+    ends up in its own NetCDF file (ROMS's ``frcfiles`` accepts a list), not
+    merged into one -- purely a consequence of how the files are written, not
+    a difference in how sources are configured.
+    """
+
+    source: SourceSpec
+    bgc_sources: list[BgcSourceItem] = Field(default_factory=list)
+    """BGC source(s) for boundary forcing. Zero or more sources, each
+    contributing (via ``use_vars``) part of the full MARBL tracer set;
+    ``BGCMarbl().process_bgc_fields()`` derives/fills the rest before each
+    source is written to its own boundary-bgc NetCDF file."""
+    bgc_interpolation_method: BgcInterpMethod = (
+        BgcInterpMethod.DEPTH
+    )  # BGC vertical interp default; overridable per-source (see BgcSourceItem)
     prefill: Prefill | None = None  # source NaN prefill before regridding
     prefill_kwargs: dict[str, Any] | None = None
     regrid_method: RegridMethod | None = None  # horizontal regrid engine (None -> auto)
@@ -829,7 +840,10 @@ class Forcing(_Section):
 
     initial_conditions: InitialConditions
     surface: list[SurfaceForcingItem] = Field(default_factory=list)
-    boundary: list[BoundaryForcingItem] = Field(default_factory=list)
+    boundary: BoundaryForcing | None = None
+    """``None`` when this domain has no boundary forcing at all -- a child/nested
+    grid (boundaries come from the parent's ``nesting.nc`` extraction instead) or
+    a domain with every open boundary disabled."""
     tidal: list[TidalForcingItem] = Field(default_factory=list)
     river: list[RiverForcingItem] = Field(default_factory=list)
     cdr_forcing: dict[str, Any] | None = None

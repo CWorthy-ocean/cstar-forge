@@ -37,14 +37,14 @@ import yaml
 # Dual import: package context (production) or standalone file (lightweight / UI / test).
 try:  # pragma: no cover - exercised both ways
     from cstar_forge.forge.forge_blueprint import (
-        BoundaryForcingItem,
+        BgcSourceItem,
+        BoundaryForcing,
         Code,
         CodeRepo,
         Composition,
         Domain,
         Forcing,
         ForgeBlueprint,
-        IcBgcSourceItem,
         InitialConditions,
         OpenBoundaries,
         Partitioning,
@@ -62,14 +62,14 @@ try:  # pragma: no cover - exercised both ways
     )
 except ImportError:  # pragma: no cover
     from forge_blueprint import (  # type: ignore
-        BoundaryForcingItem,
+        BgcSourceItem,
+        BoundaryForcing,
         Code,
         CodeRepo,
         Composition,
         Domain,
         Forcing,
         ForgeBlueprint,
-        IcBgcSourceItem,
         InitialConditions,
         OpenBoundaries,
         Partitioning,
@@ -678,10 +678,11 @@ def build_forge_blueprint(
             if it.type == "bgc":
                 src_name = it.source.name if it.source else "?"
                 bgc_signals.append(f"surface[{i}] (source={src_name}, type=bgc)")
-        for i, it in enumerate(sources.boundary):
-            if it.type == "bgc":
-                src_name = it.source.name if it.source else "?"
-                bgc_signals.append(f"boundary[{i}] (source={src_name}, type=bgc)")
+        if sources.boundary is not None:
+            for i, bs in enumerate(sources.boundary.bgc_sources):
+                bgc_signals.append(
+                    f"boundary.bgc_sources[{i}] (source={bs.source.name})"
+                )
         for i, bs in enumerate(sources.initial_conditions.bgc_sources):
             bgc_signals.append(
                 f"initial_conditions.bgc_sources[{i}] (source={bs.source.name})"
@@ -820,24 +821,40 @@ def _build_forcing(
             out.append(cls(**kw))
         return out
 
-    ic_bgc_sources = [
-        IcBgcSourceItem(
-            source=_parse_source(bs.get("source")), use_vars=bs.get("use_vars")
-        )
-        for bs in (ic_block.get("bgc_sources") or [])
-    ]
-    ic_plain_fields = set(InitialConditions.model_fields) - {"source", "bgc_sources"}
-    ic_kw = {
-        "source": _parse_source(ic_block.get("source")),
-        "bgc_sources": ic_bgc_sources,
-    }
-    for f in ic_plain_fields:
-        if f in ic_block:
-            ic_kw[f] = ic_block[f]
-    ic = InitialConditions(**ic_kw)
+    def _build_bgc_section(cls, block):
+        """Build an `InitialConditions`/`BoundaryForcing`-shaped section: a
+        required physics `source` plus zero or more `BgcSourceItem` `bgc_sources`.
+
+        Both sections share this exact shape (see `BgcSourceItem`'s docstring),
+        so one builder serves both instead of two hand-written, driftable copies
+        -- mirrors `_items`'s model-introspection approach for the plain fields,
+        but `bgc_sources` needs its own nested construction the generic loop
+        can't do.
+        """
+        bgc_sources = [
+            BgcSourceItem(
+                source=_parse_source(bs.get("source")),
+                use_vars=bs.get("use_vars"),
+                bgc_interpolation_method=bs.get("bgc_interpolation_method"),
+            )
+            for bs in (block.get("bgc_sources") or [])
+        ]
+        plain_fields = set(cls.model_fields) - {"source", "bgc_sources"}
+        kw = {"source": _parse_source(block.get("source")), "bgc_sources": bgc_sources}
+        for f in plain_fields:
+            if f in block:
+                kw[f] = block[f]
+        return cls(**kw)
+
+    ic = _build_bgc_section(InitialConditions, ic_block)
 
     surface = _items("surface", SurfaceForcingItem)
-    boundary = [] if is_child else _items("boundary", BoundaryForcingItem)
+    boundary_block = forcing_block.get("boundary")
+    boundary = (
+        None
+        if is_child or not boundary_block
+        else _build_bgc_section(BoundaryForcing, boundary_block)
+    )
     tidal = _items("tidal", TidalForcingItem)
     # `bgc_source` is a plain dict (not a SourceSpec) on RiverForcingItem -- exclude
     # it from the generic source-parsing path so it copies through as-is via the
@@ -859,7 +876,11 @@ def _build_forcing(
     _note(ic.source)
     for bs in ic.bgc_sources:
         _note(bs.source)
-    for grp in (surface, boundary, tidal, river):
+    if boundary is not None:
+        _note(boundary.source)
+        for bs in boundary.bgc_sources:
+            _note(bs.source)
+    for grp in (surface, tidal, river):
         for it in grp:
             _note(it.source)
     # River BGC source (a plain dict, not a SourceSpec — separate from it.source, the

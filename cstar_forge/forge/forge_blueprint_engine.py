@@ -163,7 +163,7 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
         return d
 
     def _item(item) -> dict[str, Any]:
-        # mode="json" coerces enum-typed fields (SurfaceType, BoundaryType, …) to their
+        # mode="json" coerces enum-typed fields (SurfaceType, CoarseGridMode, …) to their
         # string values. Plain model_dump() would leave them as enum *instances*, which
         # then leak into output filenames (f"{key}-{type}") and into roms-tools' SafeDumper
         # (which cannot represent a Forge enum) → the "cannot represent an object" warning.
@@ -172,14 +172,16 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
         d["source"] = _src(item.source)
         return {k: v for k, v in d.items() if v is not None}
 
-    def _ic(spec) -> dict[str, Any]:
-        # Mirror _item, but IC carries `bgc_sources` (a list of source+use_vars
-        # items, each needing its own _src conversion) rather than a single nested
-        # SourceSpec. Forwarding the typed fields (bgc_interpolation_method,
-        # allow_flex_time) and the options passthrough here is what lets
-        # authored/UI IC choices actually reach input_data — previously only
-        # source/bgc_source were propagated, so any other IC field set in the
-        # wizard was silently dropped on the ForgeBlueprint path.
+    def _bgc_section(spec) -> dict[str, Any]:
+        # Mirror _item, but this section carries `bgc_sources` (a list of
+        # source+use_vars+bgc_interpolation_method items, each needing its own
+        # _src conversion) rather than a single nested SourceSpec. Shared by
+        # InitialConditions and BoundaryForcing, which have this identical shape.
+        # Forwarding the typed fields (bgc_interpolation_method, allow_flex_time)
+        # and the options passthrough here is what lets authored/UI choices
+        # actually reach input_data — previously only source/bgc_source were
+        # propagated, so any other field set in the wizard was silently dropped
+        # on the ForgeBlueprint path.
         d = spec.model_dump(exclude={"source", "bgc_sources"}, mode="json")
         d["source"] = _src(spec.source)
         if spec.bgc_sources:
@@ -187,18 +189,24 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
                 {
                     "source": _src(bs.source),
                     **({"use_vars": bs.use_vars} if bs.use_vars else {}),
+                    **(
+                        {"bgc_interpolation_method": bs.bgc_interpolation_method.value}
+                        if bs.bgc_interpolation_method is not None
+                        else {}
+                    ),
                 }
                 for bs in spec.bgc_sources
             ]
         return {k: v for k, v in d.items() if v is not None}
 
     f = cfg.forcing
-    ic = _ic(f.initial_conditions)
+    ic = _bgc_section(f.initial_conditions)
 
     forc: dict[str, Any] = {}
+    if f.boundary is not None:
+        forc["boundary"] = _bgc_section(f.boundary)
     for cat, items in [
         ("surface", f.surface),
-        ("boundary", f.boundary),
         ("tidal", f.tidal),
         ("river", f.river),
     ]:

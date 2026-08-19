@@ -593,29 +593,32 @@ def test_resolver_parent_grid_stored_and_is_child():
 
 
 def test_resolver_parent_grid_clears_boundary_forcing():
-    # the bundled glorys-era5-unified ForcingSpec carries boundary items --
+    # the bundled glorys-era5-unified ForcingSpec carries a boundary section --
     # a child grid (has a parent) must not generate boundary forcing (it
     # receives boundaries from the parent's nesting.nc extraction instead).
     fi = _CATALOG.forcing_data("glorys-era5-unified")
-    assert fi["forcing"]["boundary"]  # sanity: fixture actually has boundary items
+    assert fi["forcing"]["boundary"]  # sanity: fixture actually has a boundary section
     cfg = _build(grid_kwargs_parent=_PARENT_GRID_KWARGS)
-    assert cfg.forcing.boundary == []
+    assert cfg.forcing.boundary is None
     # open-boundary edge flags are untouched -- edges stay open, just fed by
     # nesting.nc instead of reanalysis boundary forcing.
     assert cfg.domain.open_boundaries.model_dump() == _BOUNDARIES
 
 
 def test_resolver_parent_grid_skips_boundary_only_dataset():
-    # Boundary items must be skipped entirely (not just cleared afterward) so a
+    # Boundary must be skipped entirely (not just cleared afterward) so a
     # boundary-only source never leaks into resolved_datasets/datasets -- e.g.
     # CESM_REGRIDDED here isn't used by surface/IC/tidal/river in this fixture,
     # so a stale post-hoc clear would still leave it in cfg.datasets.
     import copy
 
     fi = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
-    fi["forcing"]["boundary"] = [{"source": {"name": "CESM_REGRIDDED"}, "type": "bgc"}]
+    fi["forcing"]["boundary"] = {
+        "source": {"name": "GLORYS"},
+        "bgc_sources": [{"source": {"name": "CESM_REGRIDDED"}}],
+    }
     cfg = _build(grid_kwargs_parent=_PARENT_GRID_KWARGS, forcing_inputs=fi)
-    assert cfg.forcing.boundary == []
+    assert cfg.forcing.boundary is None
     assert "CESM_REGRIDDED" not in cfg.datasets
     assert "CESM_REGRIDDED" not in cfg.forcing.resolved_datasets
 
@@ -638,7 +641,8 @@ def test_resolver_child_grid_is_parent_and_keeps_boundary_forcing():
     )
     assert cfg.domain.is_parent is True
     assert cfg.domain.is_child is False
-    assert cfg.forcing.boundary  # a parent-only grid keeps its own boundary forcing
+    # a parent-only grid keeps its own boundary forcing
+    assert cfg.forcing.boundary is not None
 
 
 def test_resolver_restoring_sets_sal_restore():
@@ -703,20 +707,20 @@ def test_resolver_ic_bgc_esper_source_excluded_from_datasets():
 
 
 def test_resolver_boundary_bgc_esper_source_excluded_from_datasets():
-    """Same regression as above, for an ESPER-named boundary (type="bgc") source."""
+    """Same regression as above, for an ESPER-named boundary bgc source."""
     import copy
 
     from cstar_forge.domain_catalog import default_catalog as cat
 
     fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
-    fdata["forcing"]["boundary"][-1]["source"] = {
+    fdata["forcing"]["boundary"]["bgc_sources"][-1]["source"] = {
         "name": "ESPER",
         "path": "/tmp/PyESPER",
     }
 
     cfg = _build(forcing_inputs=fdata)
 
-    assert cfg.forcing.boundary[-1].source.name == "ESPER"
+    assert cfg.forcing.boundary.bgc_sources[-1].source.name == "ESPER"
     assert "ESPER" not in cfg.datasets
     assert "ESPER" not in cfg.forcing.resolved_datasets
 
@@ -893,7 +897,7 @@ def test_regrid_options_survive_wizard_load_back():
 
 
 def test_forcing_override_coerces_enums_to_strings():
-    """Regression: enum-typed item fields (SurfaceType, BoundaryType, BgcInterpMethod,
+    """Regression: enum-typed item fields (SurfaceType, BgcInterpMethod,
     ClimatologyMode, …) must be dumped as plain strings, not enum instances. Enum
     instances leaked into output filenames (f"{key}-{type}") and into roms-tools'
     SafeDumper (→ 'cannot represent an object'). The bridge dumps with mode="json".
@@ -2401,7 +2405,7 @@ class TestForgeBlueprintWizard:
         w2 = self._wizard()
         w2.load_path.value = str(p)
         w2._on_load_path(None)
-        bgc_items = [it for it in w2.config.forcing.boundary if it.type == "bgc"]
+        bgc_items = w2.config.forcing.boundary.bgc_sources
         assert bgc_items and bgc_items[0].use_vars == ["ALK", "DIC", "NO3"]
 
     def test_ic_bgc_constants_source_round_trips_through_load(self, tmp_path):
@@ -2542,7 +2546,7 @@ class TestForgeBlueprintWizard:
 
     def test_parent_ui_stores_grid_kwargs_parent_and_clears_boundary_forcing(self):
         w = self._wizard()
-        assert w.config.forcing.boundary  # sanity: default forcing has boundary items
+        assert w.config.forcing.boundary is not None  # sanity: default forcing has one
         w.parent_enable.value = True
         w.parent_w["N"].value = 25
         cfg = w.config
@@ -2550,7 +2554,7 @@ class TestForgeBlueprintWizard:
         assert cfg.domain.grid_kwargs_parent["N"] == 25
         assert cfg.domain.is_child is True
         assert cfg.domain.is_parent is False
-        assert cfg.forcing.boundary == []
+        assert cfg.forcing.boundary is None
         # open-boundary edge flags (obc_*) are untouched -- edges stay open, fed
         # by the parent's nesting.nc extraction instead of reanalysis forcing.
         assert cfg.domain.open_boundaries.model_dump() == {
@@ -2571,7 +2575,7 @@ class TestForgeBlueprintWizard:
         assert w2.parent_enable.value is True
         assert w2.parent_w["N"].value == 30
         assert w2.config.domain.is_child is True
-        assert w2.config.forcing.boundary == []
+        assert w2.config.forcing.boundary is None
 
     def test_roms_ref_gather_and_default_round_trip(self, tmp_path):
         w1 = self._wizard()

@@ -40,8 +40,7 @@ from cstar_forge.forge.forge_blueprint import (
     BgcInitialConditionsSource,
     BgcInterpMethod,
     BgcSurfaceSource,
-    BoundaryForcingItem,
-    BoundaryType,
+    BoundaryForcing,
     ClimatologyMode,
     CoarseGridMode,
     Composition,
@@ -1018,8 +1017,6 @@ class _SettingsEditor:
 
 
 # Dropdown option lists derived from the enums so the wizard and schema stay in sync.
-# (BoundaryType has no dropdown of its own anymore -- "boundary"/"boundary_bgc" each
-# have a fixed implied type now; see _make_row.)
 _SURFACE_TYPES = [e.value for e in SurfaceType]
 _COARSE_MODES = [e.value for e in CoarseGridMode]
 _BGC_INTERP_METHODS = [e.value for e in BgcInterpMethod]
@@ -1027,16 +1024,19 @@ _BGC_INTERP_METHODS = [e.value for e in BgcInterpMethod]
 _PREFILL_OPTS = [""] + [e.value for e in Prefill]
 _REGRID_OPTS = [""] + [e.value for e in RegridMethod]
 _EXTRAP_OPTS = [""] + [e.value for e in ExtrapMethod]
-_FORCING_CATEGORIES = ("surface", "boundary", "tidal", "river")
+# Per-bgc-source interp-method override: blank = inherit the section's own default
+# (BgcSourceItem.bgc_interpolation_method=None) -- same blank-sentinel convention as
+# _PREFILL_OPTS/_REGRID_OPTS/_EXTRAP_OPTS above.
+_BGC_INTERP_OPTS_WITH_DEFAULT = [""] + _BGC_INTERP_METHODS
+_FORCING_CATEGORIES = ("surface", "tidal", "river")
 # Row categories managed by _ForcingEditor's generic add/remove-row machinery
 # (_rows/_make_row/_add/_remove/_render). "ic_bgc" and "boundary_bgc" are pseudo-
-# categories: their rows feed `initial_conditions.bgc_sources` and (re-merged with
-# "boundary"'s physics-only rows) `forcing.boundary`, not their own `Forcing` list
-# field, so they're kept out of `_FORCING_CATEGORIES` (which drives the `forcing:`
-# dict in `gather()`) but still rendered/added/removed exactly like the others.
-# Mirroring "ic_bgc", "boundary_bgc" splits BoundaryForcing's physics/bgc items into
-# their own section (own pane, own add/remove) instead of one mixed list with a
-# per-row type dropdown -- "boundary" itself is physics-only now (see _make_row).
+# categories: their rows feed `initial_conditions.bgc_sources` and
+# `forcing.boundary.bgc_sources` respectively, not their own `Forcing` list field,
+# so they're kept out of `_FORCING_CATEGORIES` (which drives the `forcing:` dict in
+# `gather()`) but still rendered/added/removed exactly like the others. Boundary's
+# physics source is a required scalar (like IC's), not a row list -- see the
+# `boundary_*` widgets built alongside `ic_*` in `__init__`, mirroring `ic_box`.
 _ROW_CATEGORIES = ("ic_bgc", "boundary_bgc", *_FORCING_CATEGORIES)
 _GLORYS_LAYOUT_OPTS = ["", "regional", "global"]  # "" = not specified
 
@@ -1053,12 +1053,15 @@ _CATEGORY_TITLES: dict[str, str] = {
 }
 
 # Valid source names per (category, type).  Drives name dropdowns in the forcing editor.
+# "boundary"/"boundary_bgc" have no `type` dropdown of their own (physics is a
+# required scalar, bgc is its own row-list -- see BoundaryForcing), so both are keyed
+# by `None`, mirroring "ic_bgc" (also type-less: physics is IC's own scalar source).
 _SOURCE_OPTS: dict[Any, list[str]] = {
     ("surface", SurfaceType.PHYSICS.value): [e.value for e in PhysicsSurfaceSource],
     ("surface", SurfaceType.BGC.value): [e.value for e in BgcSurfaceSource],
     ("surface", SurfaceType.RESTORING.value): [e.value for e in RestoringSurfaceSource],
-    ("boundary", BoundaryType.PHYSICS.value): [e.value for e in PhysicsBoundarySource],
-    ("boundary", BoundaryType.BGC.value): [e.value for e in BgcBoundarySource],
+    ("boundary", None): [e.value for e in PhysicsBoundarySource],
+    ("boundary_bgc", None): [e.value for e in BgcBoundarySource],
     ("tidal", None): [e.value for e in TidalSource],
     ("river", None): [e.value for e in RiverSource],
     ("ic_bgc", None): [e.value for e in BgcInitialConditionsSource],
@@ -1357,36 +1360,144 @@ class _ForcingEditor:
         self.ic_name.observe(_sync_ic_layout_visibility, names="value")
         _sync_ic_layout_visibility()
 
+        # boundary forcing: a structural mirror of the IC widgets above --
+        # BoundaryForcing.source is a required scalar (like InitialConditions.source),
+        # not a row list, so it gets the same scalar-widget-group treatment as IC's
+        # physics source (only "boundary_bgc" below is a row-list, mirroring "ic_bgc").
+        boundary_block = forc.get("boundary") or {}
+        _boundary_source = boundary_block.get("source") or {}
+        _boundary_opts = _source_opts_for("boundary", None)
+        _boundary_name_val = str(_boundary_source.get("name", _boundary_opts[0]))
+        if _boundary_name_val not in _boundary_opts:
+            _boundary_name_val = _boundary_opts[0]
+        self.boundary_name = W.Dropdown(
+            options=_boundary_opts,
+            value=_boundary_name_val,
+            description="boundary source:",
+            style={"description_width": "110px"},
+            tooltip=_tip("boundary", "name"),
+        )
+        _boundary_layout_val = str(_boundary_source.get("glorys_layout") or "")
+        if _boundary_layout_val not in _GLORYS_LAYOUT_OPTS:
+            _boundary_layout_val = ""
+        self.boundary_layout = W.Dropdown(
+            options=_GLORYS_LAYOUT_OPTS,
+            value=_boundary_layout_val,
+            description="glorys_layout:",
+            style={"description_width": "110px"},
+            tooltip=_tip("boundary", "glorys_layout"),
+        )
+        self.boundary_path = W.Text(
+            value=str(_boundary_source.get("path") or ""),
+            description="boundary path:",
+            placeholder="(default)",
+            style={"description_width": "110px"},
+            layout=W.Layout(width="360px"),
+            tooltip=_tip("boundary", "path"),
+        )
+        # "boundary_bgc" (below) is a row-list of BgcSourceItem, each optionally
+        # overriding this default -- mirrors "ic_bgc"/self.ic_bgc_interp exactly.
+        _boundary_bgc_interp = str(
+            boundary_block.get("bgc_interpolation_method", BgcInterpMethod.DEPTH.value)
+        )
+        if _boundary_bgc_interp not in _BGC_INTERP_METHODS:
+            _boundary_bgc_interp = BgcInterpMethod.DEPTH.value
+        self.boundary_bgc_interp = W.Dropdown(
+            options=_BGC_INTERP_METHODS,
+            value=_boundary_bgc_interp,
+            description="bgc interp:",
+            style={"description_width": "110px"},
+            tooltip=_tip("boundary", "bgc_interpolation_method"),
+        )
+        _boundary_prefill_val = str(boundary_block.get("prefill") or "")
+        if _boundary_prefill_val not in _PREFILL_OPTS:
+            _boundary_prefill_val = ""
+        self.boundary_prefill = W.Dropdown(
+            options=_PREFILL_OPTS,
+            value=_boundary_prefill_val,
+            description="prefill:",
+            style={"description_width": "110px"},
+            tooltip=_tip("boundary", "prefill"),
+        )
+        _boundary_regrid_val = str(boundary_block.get("regrid_method") or "")
+        if _boundary_regrid_val not in _REGRID_OPTS:
+            _boundary_regrid_val = ""
+        self.boundary_regrid_method = W.Dropdown(
+            options=_REGRID_OPTS,
+            value=_boundary_regrid_val,
+            description="regrid:",
+            style={"description_width": "110px"},
+            tooltip=_tip("boundary", "regrid_method"),
+        )
+        _boundary_extrap_val = str(boundary_block.get("extrap_method") or "")
+        if _boundary_extrap_val not in _EXTRAP_OPTS:
+            _boundary_extrap_val = ""
+        self.boundary_extrap_method = W.Dropdown(
+            options=_EXTRAP_OPTS,
+            value=_boundary_extrap_val,
+            description="extrap:",
+            style={"description_width": "110px"},
+            tooltip=_tip("boundary", "extrap_method"),
+        )
+        self.boundary_options = _options_editor(W, boundary_block.get("options"))
+        for _w in (
+            self.boundary_name,
+            self.boundary_layout,
+            self.boundary_path,
+            self.boundary_bgc_interp,
+            self.boundary_prefill,
+            self.boundary_regrid_method,
+            self.boundary_extrap_method,
+            self.boundary_options,
+        ):
+            _w.observe(lambda _ch: on_change(), names="value")
+
+        def _sync_boundary_layout_visibility(_change=None):
+            self.boundary_layout.layout.display = (
+                "" if self.boundary_name.value == "GLORYS" else "none"
+            )
+
+        self.boundary_name.observe(_sync_boundary_layout_visibility, names="value")
+        _sync_boundary_layout_visibility()
+
         # per-category item rows: list of dicts of widgets. "ic_bgc"/"boundary_bgc"
         # are pseudo-categories (not their own `Forcing` list field) -- their rows
-        # feed `initial_conditions.bgc_sources` and (re-merged with "boundary"'s
-        # physics-only rows) `forcing["boundary"]` respectively, instead of
-        # `forcing[cat]` directly; handled specially here and in `gather()`.
+        # feed `initial_conditions.bgc_sources`/`forcing["boundary"]["bgc_sources"]`
+        # respectively, instead of `forcing[cat]` directly; handled specially here
+        # and in `gather()`.
         self._rows: dict[str, list] = {c: [] for c in _ROW_CATEGORIES}
         self._containers: dict[str, Any] = {}
-        _boundary_items = forc.get("boundary") or []
         for cat in _ROW_CATEGORIES:
             container = W.VBox([])
             self._containers[cat] = container
             if cat == "ic_bgc":
                 seed_items = ic.get("bgc_sources") or []
-            elif cat == "boundary":
-                seed_items = [
-                    it
-                    for it in _boundary_items
-                    if str(it.get("type", "physics")) != BoundaryType.BGC.value
-                ]
             elif cat == "boundary_bgc":
-                seed_items = [
-                    it
-                    for it in _boundary_items
-                    if str(it.get("type", "physics")) == BoundaryType.BGC.value
-                ]
+                seed_items = boundary_block.get("bgc_sources") or []
             else:
                 seed_items = forc.get(cat) or []
             for item in seed_items:
                 self._rows[cat].append(self._make_row(cat, item))
             self._render(cat)
+
+        # IC<->boundary bgc-source sync: the two panels are usually configured
+        # identically (same BGC datasets for initial conditions and boundaries), so
+        # a one-shot copy button beats re-entering every row by hand. Not a live
+        # link -- each click snapshots the source panel's current rows and replaces
+        # the target panel's rows with fresh copies.
+        sync_to_boundary = W.Button(
+            description="Copy IC bgc → Boundary",
+            layout=W.Layout(width="200px"),
+            tooltip="Replace the boundary bgc sources with a copy of the IC bgc sources",
+        )
+        sync_to_boundary.on_click(lambda _b: self._sync_bgc("ic_bgc", "boundary_bgc"))
+        sync_to_ic = W.Button(
+            description="Copy Boundary bgc → IC",
+            layout=W.Layout(width="200px"),
+            tooltip="Replace the IC bgc sources with a copy of the boundary bgc sources",
+        )
+        sync_to_ic.on_click(lambda _b: self._sync_bgc("boundary_bgc", "ic_bgc"))
+        self._bgc_sync_box = W.HBox([sync_to_boundary, sync_to_ic])
 
     # ---- one item row --------------------------------------------------------
     @staticmethod
@@ -1448,17 +1559,12 @@ class _ForcingEditor:
         small = {"description_width": "70px"}
 
         # Source name: Dropdown driven by category + type (for surface, which still
-        # mixes physics/bgc/restoring in one list) or fixed. "boundary" (physics-only)
-        # and "boundary_bgc" (bgc-only) each have a fixed implied type now -- they're
-        # split into separate categories/panes, mirroring "ic_bgc" -- so no per-row
-        # type dropdown/lookup needed for either; "boundary_bgc" reuses "boundary"'s
-        # existing BGC name-options table entry (_SOURCE_OPTS[("boundary", "bgc")]).
-        if cat == "boundary":
-            _cur_type = BoundaryType.PHYSICS.value
-            _name_opts = _source_opts_for("boundary", _cur_type)
-        elif cat == "boundary_bgc":
-            _cur_type = BoundaryType.BGC.value
-            _name_opts = _source_opts_for("boundary", _cur_type)
+        # mixes physics/bgc/restoring in one list) or fixed. "boundary_bgc" (bgc-only
+        # row-list, mirroring "ic_bgc") has a fixed implied type -- no per-row type
+        # dropdown needed (boundary's physics source is its own scalar, see __init__).
+        if cat == "boundary_bgc":
+            _cur_type = None
+            _name_opts = _source_opts_for("boundary_bgc", None)
         else:
             _cur_type = item.get("type", "physics")
             _name_opts = _source_opts_for(cat, _cur_type)
@@ -1511,7 +1617,7 @@ class _ForcingEditor:
 
             w["type"].observe(_on_type_change, names="value")
 
-        if cat in ("surface", "boundary", "boundary_bgc"):
+        if cat in ("surface", "boundary_bgc"):
             w["climatology"] = W.Checkbox(
                 value=bool(src.get("climatology", False)),
                 description="clim",
@@ -1523,16 +1629,17 @@ class _ForcingEditor:
             )
 
             # When the source name changes → constants/ESPER fields only apply to
-            # their matching source name (and, for surface/boundary, "layout:" only
-            # applies to GLORYS).
+            # their matching source name (and, for surface, "layout:" only applies
+            # to GLORYS).
             def _on_name_change(_change, ws=w):
                 self._apply_row_visibility(ws)
 
             w["name"].observe(_on_name_change, names="value")
 
-        if cat in ("surface", "boundary"):
+        if cat == "surface":
             # glorys_layout only ever applies to a GLORYS source -- never offered by
-            # BgcBoundarySource/BgcSurfaceSource, so omitted from boundary_bgc/bgc rows.
+            # BgcBoundarySource/BgcSurfaceSource, so omitted from boundary_bgc/bgc rows
+            # (boundary's own physics glorys_layout is a scalar widget, see __init__).
             _layout_val = str(src.get("glorys_layout") or "")
             if _layout_val not in _GLORYS_LAYOUT_OPTS:
                 _layout_val = ""
@@ -1581,6 +1688,24 @@ class _ForcingEditor:
                 self._apply_row_visibility(ws)
 
             w["name"].observe(_on_ic_bgc_name_change, names="value")
+        if cat in ("ic_bgc", "boundary_bgc"):
+            # Per-source interp-method override (BgcSourceItem.bgc_interpolation_method):
+            # blank = inherit the section's own default (self.ic_bgc_interp /
+            # self.boundary_bgc_interp). Identical widget for both panels.
+            _interp_val = str(item.get("bgc_interpolation_method") or "")
+            if _interp_val not in _BGC_INTERP_OPTS_WITH_DEFAULT:
+                _interp_val = ""
+            w["bgc_interpolation_method"] = W.Dropdown(
+                options=_BGC_INTERP_OPTS_WITH_DEFAULT,
+                value=_interp_val,
+                description="bgc interp:",
+                style=small,
+                layout=W.Layout(width="180px"),
+                tooltip=_tip(
+                    "ic" if cat == "ic_bgc" else "boundary", "bgc_interpolation_method"
+                )
+                or _tip("ic", "ic_bgc_interp"),
+            )
         if cat == "surface":
             w["correct_radiation"] = W.Checkbox(
                 value=bool(item.get("correct_radiation", False)),
@@ -1611,26 +1736,6 @@ class _ForcingEditor:
                 tooltip=_tip("surface", "restoring_forces"),
             )
             _add_regrid_widgets(W, w, "surface", item, small)
-        if cat in ("boundary", "boundary_bgc"):
-            # Regridding knobs apply to any dataset-backed boundary source (physics
-            # GLORYS or a real bgc dataset like UNIFIED/GLODAP) -- shared by both
-            # panes. bgc_interpolation_method (vertical interp for BGC tracers) is
-            # bgc-only, so it's built for "boundary_bgc" alone, below.
-            _add_regrid_widgets(W, w, "boundary", item, small)
-        if cat == "boundary_bgc":
-            _b_interp = str(
-                item.get("bgc_interpolation_method", BgcInterpMethod.DEPTH.value)
-            )
-            if _b_interp not in _BGC_INTERP_METHODS:
-                _b_interp = BgcInterpMethod.DEPTH.value
-            w["bgc_interpolation_method"] = W.Dropdown(
-                options=_BGC_INTERP_METHODS,
-                value=_b_interp,
-                description="bgc interp:",
-                style=small,
-                layout=W.Layout(width="180px"),
-                tooltip=_tip("boundary", "bgc_interpolation_method"),
-            )
         if cat == "tidal":
             w["ntides"] = W.IntText(
                 value=int(item.get("ntides") or 0),
@@ -1712,10 +1817,12 @@ class _ForcingEditor:
             w["include_bgc"].observe(_sync_river_bgc_visibility, names="value")
             _sync_river_bgc_visibility()
         # Advanced passthrough: raw roms-tools kwargs not (yet) typed above.
-        # IcBgcSourceItem has no `options` field (extra="forbid") -- it isn't its
-        # own roms-tools object, just a source+use_vars contributor to IC's single
-        # `options` passthrough (already on the IC-level widget), so no per-row editor.
-        if cat != "ic_bgc":
+        # BgcSourceItem (shared by "ic_bgc"/"boundary_bgc") has no `options` field
+        # (extra="forbid") -- it isn't its own roms-tools object, just a
+        # source+use_vars(+bgc_interpolation_method) contributor to its section's
+        # single `options` passthrough (already on the ic_*/boundary_* scalar
+        # widgets), so no per-row editor for either.
+        if cat not in ("ic_bgc", "boundary_bgc"):
             w["options"] = _options_editor(W, item.get("options"))
         remove = W.Button(
             description="✕", layout=W.Layout(width="36px"), tooltip="Remove this item"
@@ -1737,37 +1844,36 @@ class _ForcingEditor:
         keys = [k for k in w if k != "_remove_btn"]
         if "type" in keys:
             keys = ["type", *[k for k in keys if k != "type"]]
-        # "boundary" (physics-only) is required -- roms-tools' BoundaryForcing physics
-        # source is one mandatory GLORYS dataset, not an optional/combinable list like
-        # the bgc rows -- so removing it would leave an invalid (zero-item) blueprint.
-        # Its "name" dropdown already lets a user change/replace the source in place,
-        # so there is no legitimate use for removal here; hide the button rather than
-        # wire it to a no-op.
-        w["_remove_btn"].layout.display = "none" if cat == "boundary" else ""
+        w["_remove_btn"].layout.display = ""
         return self.W.HBox([w["_remove_btn"], *(w[k] for k in keys)])
 
     def _render(self, cat: str):
         W = self.W
         boxes = [self._row_box(w, cat) for w in self._rows[cat]]
-        # "boundary" (physics-only) only ever supports a single item -- roms-tools'
-        # BoundaryForcing physics source is one GLORYS dataset, not a combinable list
-        # like the bgc rows -- so once one exists, don't offer to add another. Its
-        # remove button is hidden too (see _row_box) since the field is required.
-        if cat == "boundary" and self._rows[cat]:
-            self._containers[cat].children = boxes
-            return
-        label = "add bgc source" if cat == "ic_bgc" else f"add {cat}"
+        label = "add bgc source" if cat in ("ic_bgc", "boundary_bgc") else f"add {cat}"
         add = W.Button(description=label, icon="plus", layout=W.Layout(width="150px"))
         add.on_click(lambda _b, c=cat: self._add(c))
         self._containers[cat].children = [*boxes, add]
 
     def clear_category(self, cat: str):
-        """Remove all rows for a forcing category (e.g. ``"boundary"`` for a
+        """Remove all rows for a row category (e.g. ``"boundary_bgc"`` for a
         child/nested grid, which receives boundaries from the parent's
         nesting.nc extraction instead of reanalysis boundary forcing).
         """
         self._rows[cat] = []
         self._render(cat)
+        self.on_change()
+
+    def _sync_bgc(self, from_cat: str, to_cat: str):
+        """One-shot copy of every bgc-source row from ``from_cat`` to ``to_cat``
+        (``"ic_bgc"``/``"boundary_bgc"``) -- snapshots the source panel's current
+        values and replaces the target panel's rows with fresh copies built from
+        them; not a live link, so later edits to either panel don't affect the
+        other until the button is pressed again.
+        """
+        items = [self._gather_item(from_cat, w) for w in self._rows[from_cat]]
+        self._rows[to_cat] = [self._make_row(to_cat, item) for item in items]
+        self._render(to_cat)
         self.on_change()
 
     def _add(self, cat: str):
@@ -1800,11 +1906,6 @@ class _ForcingEditor:
         item: dict[str, Any] = {"source": src}
         if "type" in w:
             item["type"] = w["type"].value
-        elif cat == "boundary_bgc":
-            # No per-row type widget (fixed) -- must still be stamped explicitly:
-            # BoundaryForcingItem.type defaults to physics, which would silently
-            # mis-tag this as a physics item if omitted.
-            item["type"] = BoundaryType.BGC.value
         if "use_vars" in w and w["use_vars"].value.strip():
             item["use_vars"] = [
                 p.strip() for p in w["use_vars"].value.split(",") if p.strip()
@@ -1819,12 +1920,10 @@ class _ForcingEditor:
             item["restoring_forces"] = [
                 p.strip() for p in w["restoring_forces"].value.split(",") if p.strip()
             ]
-        # Shared surface/boundary/tidal regrid/interp knobs: only emit non-default
-        # values to keep specs clean.
-        if (
-            "bgc_interpolation_method" in w
-            and w["bgc_interpolation_method"].value != BgcInterpMethod.DEPTH.value
-        ):
+        # Shared surface/tidal regrid knobs: only emit non-default values to keep
+        # specs clean. bgc_interpolation_method (ic_bgc/boundary_bgc rows) uses the
+        # blank-sentinel convention instead (blank = inherit the section default).
+        if "bgc_interpolation_method" in w and w["bgc_interpolation_method"].value:
             item["bgc_interpolation_method"] = w["bgc_interpolation_method"].value
         if "prefill" in w and w["prefill"].value:  # Dropdown: "" = leave unset
             item["prefill"] = w["prefill"].value
@@ -1883,16 +1982,41 @@ class _ForcingEditor:
         ic_opts = _parse_options(self.ic_options.value)
         if ic_opts:
             ic["options"] = ic_opts
+
+        # Boundary: a structural mirror of the IC dict above -- BoundaryForcing has
+        # the identical source/bgc_sources/bgc_interpolation_method/prefill/etc.
+        # shape as InitialConditions (see forge_blueprint.BoundaryForcing).
+        boundary_source = {"name": self.boundary_name.value}
+        if self.boundary_layout.value:
+            boundary_source["glorys_layout"] = self.boundary_layout.value
+        if self.boundary_path.value.strip():
+            boundary_source["path"] = self.boundary_path.value.strip()
+        boundary: dict[str, Any] = {"source": boundary_source}
+        boundary_bgc_sources = [
+            self._gather_item("boundary_bgc", w) for w in self._rows["boundary_bgc"]
+        ]
+        if boundary_bgc_sources:
+            boundary["bgc_sources"] = boundary_bgc_sources
+        if (
+            self.boundary_bgc_interp.value
+            and self.boundary_bgc_interp.value != BgcInterpMethod.DEPTH.value
+        ):
+            boundary["bgc_interpolation_method"] = self.boundary_bgc_interp.value
+        if self.boundary_prefill.value:
+            boundary["prefill"] = self.boundary_prefill.value
+        if self.boundary_regrid_method.value:
+            boundary["regrid_method"] = self.boundary_regrid_method.value
+        if self.boundary_extrap_method.value:
+            boundary["extrap_method"] = self.boundary_extrap_method.value
+        boundary_opts = _parse_options(self.boundary_options.value)
+        if boundary_opts:
+            boundary["options"] = boundary_opts
+
         forcing = {
             cat: [self._gather_item(cat, w) for w in self._rows[cat]]
             for cat in _FORCING_CATEGORIES
         }
-        # "boundary_bgc" is a pseudo-category (see _ROW_CATEGORIES) -- its rows
-        # re-merge into forcing["boundary"] alongside "boundary"'s physics-only rows,
-        # so the stored/resolved Forcing.boundary schema is unchanged (one flat list).
-        forcing["boundary"] = forcing["boundary"] + [
-            self._gather_item("boundary_bgc", w) for w in self._rows["boundary_bgc"]
-        ]
+        forcing["boundary"] = boundary
         return {
             "initial_conditions": ic,
             "forcing": forcing,
@@ -1911,6 +2035,24 @@ class _ForcingEditor:
                 self.ic_options,
             ]
         )
+        # Structural mirror of ic_box -- BoundaryForcing.source is a required
+        # scalar, just like InitialConditions.source (see gather()/__init__).
+        boundary_box = W.VBox(
+            [
+                W.HTML("<i>boundary forcing</i>"),
+                W.HBox([self.boundary_name, self.boundary_layout]),
+                self.boundary_path,
+                self.boundary_bgc_interp,
+                W.HBox(
+                    [
+                        self.boundary_prefill,
+                        self.boundary_regrid_method,
+                        self.boundary_extrap_method,
+                    ]
+                ),
+                self.boundary_options,
+            ]
+        )
         # "boundary_bgc" is inserted right after "boundary" for logical adjacency,
         # mirroring how "ic_bgc" sits right after the IC physics section.
         cat_order = [
@@ -1922,14 +2064,16 @@ class _ForcingEditor:
             "tidal",
             "river",
         ]
+        pane_boxes = {"initial_conditions": ic_box, "boundary": boundary_box}
         panes = [
-            ic_box if cat == "initial_conditions" else self._containers[cat]
-            for cat in cat_order
+            pane_boxes.get(cat, self._containers.get(cat)) for cat in cat_order
         ]
         acc = W.Accordion(children=panes, selected_index=None)
         for i, cat in enumerate(cat_order):
             acc.set_title(i, _CATEGORY_TITLES.get(cat, cat))
-        return acc
+        # The IC<->boundary bgc sync buttons sit above the accordion (not nested in
+        # either collapsible pane) so they're visible without expanding anything.
+        return W.VBox([self._bgc_sync_box, acc])
 
 
 # Preselected in the Model dropdown when present in the catalog (falls back to
@@ -2703,14 +2847,15 @@ class ForgeBlueprintWizard:
             self._clear_boundary_forcing()
 
     def _clear_boundary_forcing(self):
-        """Remove any boundary-forcing rows from the forcing editor (UX mirror of
-        the durable clear in ``_gather()``, which is the source of truth).
+        """Remove any boundary-bgc rows from the forcing editor (UX mirror of the
+        durable clear in ``_gather()``, which is the source of truth and forces
+        ``forcing.boundary`` to ``None`` outright regardless of this UI state).
+
+        Boundary's physics scalar widgets (``self.boundary_name``/etc., see
+        ``__init__``) are intentionally left as-is -- there's nothing meaningful to
+        reset them to, and ``_gather()`` ignores them entirely for a child grid.
         """
         if getattr(self, "_forcing_editor", None) is not None:
-            # "boundary_bgc" is a separate pane/row-list from "boundary" (see
-            # _ROW_CATEGORIES) but both feed the same underlying `forcing.boundary`
-            # list, so both must be cleared together.
-            self._forcing_editor.clear_category("boundary")
             self._forcing_editor.clear_category("boundary_bgc")
 
     # ---- forcing piece -------------------------------------------------------
@@ -2858,7 +3003,7 @@ class ForgeBlueprintWizard:
                     # Mirror the _gather() durable clear so re-verifying against a
                     # freshly-picked ForcingSpec doesn't spuriously show "modified"
                     # for a child grid whose boundary forcing is always stripped.
-                    fi.setdefault("forcing", {})["boundary"] = []
+                    fi.setdefault("forcing", {})["boundary"] = None
                 kw["forcing_inputs"] = fi
                 kw["cdr_forcing"] = cdr
             elif piece == "domain":
@@ -2959,16 +3104,26 @@ class ForgeBlueprintWizard:
                 d[name] = getattr(v, "value", v)
             return d
 
+        def bgc_section(spec) -> dict[str, Any]:
+            """Reconstruct an InitialConditions/BoundaryForcing-shaped seed dict --
+            shared by IC and boundary, which have this identical shape (see
+            forge_blueprint.BgcSourceItem).
+            """
+            d: dict[str, Any] = {"source": src(spec.source)}
+            bgc_sources = []
+            for bs in spec.bgc_sources:
+                bd: dict[str, Any] = {"source": src(bs.source)}
+                if bs.use_vars:
+                    bd["use_vars"] = list(bs.use_vars)
+                if bs.bgc_interpolation_method is not None:
+                    bd["bgc_interpolation_method"] = bs.bgc_interpolation_method.value
+                bgc_sources.append(bd)
+            if bgc_sources:
+                d["bgc_sources"] = bgc_sources
+            return d
+
         f = cfg.forcing
-        ic: dict[str, Any] = {"source": src(f.initial_conditions.source)}
-        bgc_sources = []
-        for bs in f.initial_conditions.bgc_sources:
-            bd: dict[str, Any] = {"source": src(bs.source)}
-            if bs.use_vars:
-                bd["use_vars"] = list(bs.use_vars)
-            bgc_sources.append(bd)
-        if bgc_sources:
-            ic["bgc_sources"] = bgc_sources
+        ic = bgc_section(f.initial_conditions)
         ic.update(
             plain(
                 f.initial_conditions, InitialConditions, skip=("source", "bgc_sources")
@@ -2976,9 +3131,14 @@ class ForgeBlueprintWizard:
         )
 
         forcing: dict[str, Any] = {}
+        if f.boundary is not None:
+            boundary = bgc_section(f.boundary)
+            boundary.update(
+                plain(f.boundary, BoundaryForcing, skip=("source", "bgc_sources"))
+            )
+            forcing["boundary"] = boundary
         for cat, items, cls in (
             ("surface", f.surface, SurfaceForcingItem),
-            ("boundary", f.boundary, BoundaryForcingItem),
             ("tidal", f.tidal, TidalForcingItem),
             ("river", f.river, RiverForcingItem),
         ):
@@ -3478,8 +3638,9 @@ class ForgeBlueprintWizard:
             # state): a child grid (has a parent) receives its boundary values
             # from the parent's nesting.nc extraction, not reanalysis boundary
             # forcing. Open-boundary edge flags are untouched -- the edges stay
-            # open, just fed differently.
-            kw["forcing_inputs"]["forcing"]["boundary"] = []
+            # open, just fed differently. `None` (not `[]`) is "no boundary
+            # section at all" under the new singular BoundaryForcing schema.
+            kw["forcing_inputs"]["forcing"]["boundary"] = None
         kw["output_settings"] = self._output_settings()
         kw["composition"] = self._composition()
         if self._cdr_forcing:

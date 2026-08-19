@@ -124,25 +124,18 @@ forcing:
     extrap_kwargs: null
     options: {}
   boundary:
-  - source:
+    source:
       name: GLORYS
       climatology: false
       glorys_layout: regional
       path: null
-    type: physics
-    bgc_interpolation_method: depth
-    prefill: null
-    prefill_kwargs: null
-    regrid_method: null
-    extrap_method: null
-    extrap_kwargs: null
-    options: {}
-  - source:
-      name: UNIFIED
-      climatology: true
-      glorys_layout: null
-      path: null
-    type: bgc
+    bgc_sources:
+    - source:
+        name: UNIFIED
+        climatology: true
+        glorys_layout: null
+        path: null
+      bgc_interpolation_method: null
     bgc_interpolation_method: depth
     prefill: null
     prefill_kwargs: null

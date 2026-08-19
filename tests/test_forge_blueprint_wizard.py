@@ -77,15 +77,15 @@ def test_surface_row_visibility_by_type(editor):
 
 
 def test_boundary_row_layout_visibility_by_source_name(editor):
-    """Item 7: glorys_layout only shows when the source name is GLORYS. "boundary"
-    is physics-only now (no per-row `type` dropdown -- see _make_row/_ROW_CATEGORIES);
-    BGC boundary sources (UNIFIED/CESM_REGRIDDED/GLODAP/constants/ESPER) live in their
-    own "boundary_bgc" row-list/pane instead, which never offers GLORYS and has no
+    """Item 7: glorys_layout only shows when the source name is GLORYS. Boundary's
+    physics source is a required scalar now (self.boundary_name/boundary_layout,
+    mirroring IC's), not a row -- see __init__/_ROW_CATEGORIES. BGC boundary
+    sources (UNIFIED/CESM_REGRIDDED/GLODAP/constants/ESPER) live in their own
+    "boundary_bgc" row-list/pane instead, which never offers GLORYS and has no
     glorys_layout widget at all (not just hidden -- absent).
     """
-    w = editor._make_row("boundary", {"source": {"name": "GLORYS"}})
-    assert w["name"].value == "GLORYS"
-    assert _display(w["glorys_layout"]) == ""
+    assert editor.boundary_name.value == "GLORYS"
+    assert _display(editor.boundary_layout) == ""
 
     bgc_w = editor._make_row("boundary_bgc", {"source": {"name": "UNIFIED"}})
     assert bgc_w["name"].value != "GLORYS"
@@ -131,39 +131,29 @@ def test_row_box_without_type_unaffected(editor):
     assert w["ntides"] in box.children
 
 
-def test_boundary_add_button_hidden_once_a_row_exists(editor):
-    """The "boundary" category (physics-only) supports only a single, required item --
-    roms-tools' BoundaryForcing physics source is one mandatory GLORYS dataset, not an
-    optional/combinable list -- so the "add" button must disappear once a row exists,
-    and the remove button is hidden too (removing it would leave an invalid, zero-item
-    blueprint; the "name" dropdown already lets a user change the source in place).
-    Other categories (e.g. "boundary_bgc") keep their add/remove buttons regardless of
-    row count.
+def test_boundary_bgc_add_and_remove_buttons_always_present(editor):
+    """"boundary_bgc" (the only boundary row-list now -- physics is a required
+    scalar, see __init__) keeps its add/remove buttons regardless of row count,
+    like every other bgc row-list ("ic_bgc").
     """
-    assert editor._rows["boundary"] == []
-    editor._render("boundary")
+    assert editor._rows["boundary_bgc"] == []
+    editor._render("boundary_bgc")
     assert any(
-        getattr(c, "description", "") == "add boundary"
-        for c in editor._containers["boundary"].children
+        getattr(c, "description", "") == "add bgc source"
+        for c in editor._containers["boundary_bgc"].children
     )
-
-    editor._add("boundary")
-    assert len(editor._rows["boundary"]) == 1
-    assert not any(
-        getattr(c, "description", "").startswith("add")
-        for c in editor._containers["boundary"].children
-    )
-    remove_btn = editor._rows["boundary"][0]["_remove_btn"]
-    assert remove_btn.layout.display == "none"
 
     editor._add("boundary_bgc")
+    assert len(editor._rows["boundary_bgc"]) == 1
+    remove_btn = editor._rows["boundary_bgc"][0]["_remove_btn"]
+    assert remove_btn.layout.display == ""
     assert any(
-        getattr(c, "description", "") == "add boundary_bgc"
+        getattr(c, "description", "") == "add bgc source"
         for c in editor._containers["boundary_bgc"].children
     )
 
 
-@pytest.mark.parametrize("cat", ["surface", "boundary", "tidal"])
+@pytest.mark.parametrize("cat", ["surface", "tidal"])
 def test_regrid_widgets_present_and_gathered(editor, cat):
     """prefill/regrid_method/extrap_method dropdowns (roms-tools >=4) are built for
     surface, boundary, and tidal rows alike, and a non-blank selection round-trips
@@ -227,6 +217,50 @@ def test_ic_regrid_widgets_seed_gather_and_layout():
     assert ed.ic_prefill in all_children
     assert ed.ic_regrid_method in all_children
     assert ed.ic_extrap_method in all_children
+
+
+def test_boundary_regrid_widgets_seed_gather_and_layout():
+    """Boundary's prefill/regrid_method/extrap_method dropdowns (a scalar group,
+    mirroring IC's -- see __init__/gather()) seed from a loaded config, gather
+    back into the authored dict, and are actually placed in the rendered widget.
+    """
+    import ipywidgets as W
+
+    ed = _ForcingEditor(
+        W,
+        {
+            "forcing": {
+                "boundary": {
+                    "source": {"name": "GLORYS"},
+                    "prefill": "nearest_neighbor",
+                    "regrid_method": "scipy",
+                }
+            }
+        },
+        on_change=lambda: None,
+    )
+    assert ed.boundary_prefill.value == "nearest_neighbor"
+    assert ed.boundary_regrid_method.value == "scipy"
+    assert ed.boundary_extrap_method.value == ""
+
+    ed.boundary_extrap_method.value = "nearest_s2d"
+    gathered = ed.gather()
+    boundary = gathered["forcing"]["boundary"]
+    assert boundary["prefill"] == "nearest_neighbor"
+    assert boundary["regrid_method"] == "scipy"
+    assert boundary["extrap_method"] == "nearest_s2d"
+
+    all_children = []
+
+    def _walk(node):
+        all_children.append(node)
+        for c in getattr(node, "children", []):
+            _walk(c)
+
+    _walk(ed.widget)
+    assert ed.boundary_prefill in all_children
+    assert ed.boundary_regrid_method in all_children
+    assert ed.boundary_extrap_method in all_children
 
 
 def test_river_bgc_widgets_visible_only_when_include_bgc_checked(editor):
@@ -441,10 +475,11 @@ def test_bgc_dd_none_forces_nhy_nox_forcing_off_in_the_wizard():
     wiz.end.value = date(2012, 1, 2)
 
     fe = wiz._forcing_editor
-    for cat in ("surface", "boundary"):
-        for ws in list(fe._rows[cat]):
-            if ws.get("type") is not None and ws["type"].value == "bgc":
-                fe._remove(cat, ws)
+    for ws in list(fe._rows["surface"]):
+        if ws.get("type") is not None and ws["type"].value == "bgc":
+            fe._remove("surface", ws)
+    for ws in list(fe._rows["boundary_bgc"]):
+        fe._remove("boundary_bgc", ws)
     for ws in list(fe._rows["river"]):
         if "include_bgc" in ws:
             ws["include_bgc"].value = False

@@ -518,8 +518,21 @@ class ForgeExecutor(BaseModel):
                     boundaries = self.open_boundaries.model_dump()
                     if not any(boundaries.values()):
                         continue
+                    # `boundary` is a single BoundaryForcing-shaped dict (a
+                    # required physics `source` + zero or more `bgc_sources`),
+                    # not a list -- one physics file + one file per bgc source
+                    # (never merged, unlike initial_conditions -- see
+                    # RomsMarblInputData._generate_boundary_forcing).
+                    _add_nc("boundary-physics")
+                    for bs in (entries.get("bgc_sources") or []):
+                        bs_source = bs.get("source") or {}
+                        suffix = input_data.RomsMarblInputData._bgc_output_suffix(
+                            bs_source.get("name"), bs.get("use_vars")
+                        )
+                        _add_nc(f"boundary-bgc-{suffix}")
+                    continue
 
-                if category in {"surface", "boundary"} and isinstance(entries, list):
+                if category == "surface" and isinstance(entries, list):
                     for entry in entries:
                         forcing_type = None
                         if isinstance(entry, dict):

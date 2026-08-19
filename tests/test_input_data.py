@@ -104,23 +104,26 @@ def sample_grid(sample_grid_kwargs):
     return rt.Grid(**sample_grid_kwargs)
 
 
-def _build_forcing_override(ic, surface=(), boundary=(), tidal=(), river=()):
+def _build_forcing_override(ic, surface=(), boundary=None, tidal=(), river=()):
     """Build the forcing_override dict shape RomsMarblInputData consumes
     (initial_conditions + flat forcing categories) directly from item objects.
 
     ModelSpec no longer carries embedded forcing data (that's a ForcingSpec's job),
     so this builds the dict straight from the roms-tools item models instead of
-    deriving it from a ModelSpec.inputs block.
+    deriving it from a ModelSpec.inputs block. ``boundary`` is a single
+    ``BoundaryForcing`` instance (or ``None``), not a list -- see
+    ``forge_blueprint.BoundaryForcing``.
     """
     forcing = {}
     for category, items in (
         ("surface", surface),
-        ("boundary", boundary),
         ("tidal", tidal),
         ("river", river),
     ):
         if items:
             forcing[category] = [it.model_dump() for it in items]
+    if boundary is not None:
+        forcing["boundary"] = boundary.model_dump()
     return {"forcing": forcing, "initial_conditions": ic.model_dump()}
 
 
@@ -130,7 +133,7 @@ def sample_forcing_override():
     ic = forge_models.InitialConditionsInput(
         source=forge_models.SourceSpec(name="GLORYS"),
         bgc_sources=[
-            forge_models.IcBgcSourceItem(
+            forge_models.BgcSourceItem(
                 source=forge_models.SourceSpec(name="UNIFIED", climatology=True)
             )
         ],
@@ -141,11 +144,13 @@ def sample_forcing_override():
     surface_bgc_item = forge_models.SurfaceForcingItem(
         source=forge_models.SourceSpec(name="UNIFIED", climatology=True), type="bgc"
     )
-    boundary_item = forge_models.BoundaryForcingItem(
-        source=forge_models.SourceSpec(name="GLORYS"), type="physics"
-    )
-    boundary_bgc_item = forge_models.BoundaryForcingItem(
-        source=forge_models.SourceSpec(name="UNIFIED", climatology=True), type="bgc"
+    boundary = forge_models.BoundaryForcing(
+        source=forge_models.SourceSpec(name="GLORYS"),
+        bgc_sources=[
+            forge_models.BgcSourceItem(
+                source=forge_models.SourceSpec(name="UNIFIED", climatology=True)
+            )
+        ],
     )
     tidal_item = forge_models.TidalForcingItem(
         source=forge_models.SourceSpec(name="TPXO")
@@ -156,7 +161,7 @@ def sample_forcing_override():
     return _build_forcing_override(
         ic,
         surface=[surface_item, surface_bgc_item],
-        boundary=[boundary_item, boundary_bgc_item],
+        boundary=boundary,
         tidal=[tidal_item],
         river=[river_item],
     )
@@ -574,11 +579,11 @@ class TestRomsMarblInputDataInitialization:
         surface_item = forge_models.SurfaceForcingItem(
             source=forge_models.SourceSpec(name="ERA5"), type="physics"
         )
-        boundary_item = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(name="GLORYS"), type="physics"
+        boundary = forge_models.BoundaryForcing(
+            source=forge_models.SourceSpec(name="GLORYS")
         )
         forcing_override = _build_forcing_override(
-            ic, surface=[surface_item], boundary=[boundary_item]
+            ic, surface=[surface_item], boundary=boundary
         )
 
         roms_marbl_blueprint_dir = tmp_path / "blueprints"
@@ -1030,7 +1035,7 @@ class TestPlannedOutputReuseDetection:
         self, sample_roms_marbl_input_data
     ):
         """Regression: ``_discover_saved_paths`` (used by
-        ``_flush_boundary_bgc_batch`` to hand PIO-mangled outputs to
+        ``_generate_boundary_forcing`` to hand PIO-mangled outputs to
         ``_pio_finalize``) must find roms-tools' grouped (e.g. monthly) ``_nc4``
         outputs -- not just an exact match.
 
@@ -1379,15 +1384,18 @@ class TestRomsMarblInputDataGeneration:
     def test_generate_boundary_forcing(
         self, mock_bf_class, sample_roms_marbl_input_data, tmp_path
     ):
-        """Test _generate_boundary_forcing method."""
+        """Test _generate_boundary_forcing method (physics-only, no bgc_sources)."""
         mock_bf = MagicMock()
+        mock_bf.bgc = []
         boundary_path = tmp_path / "boundary.nc"
         boundary_path.touch()  # Ensure file exists for Pydantic validation
-        mock_bf.save.return_value = boundary_path
+        # rt.BoundaryForcing.save() returns (physics_paths, bgc_paths) -- see
+        # _generate_boundary_forcing.
+        mock_bf.save.return_value = ([boundary_path], [])
         mock_bf_class.return_value = mock_bf
 
         sample_roms_marbl_input_data._generate_boundary_forcing(
-            key="forcing.boundary", source={"name": "GLORYS"}, type="physics"
+            key="forcing.boundary", source={"name": "GLORYS"}
         )
 
         mock_bf_class.assert_called_once()
@@ -1401,19 +1409,6 @@ class TestRomsMarblInputDataGeneration:
             )
             > 0
         )
-
-    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
-    def test_generate_boundary_forcing_missing_type(
-        self, mock_bf_class, sample_roms_marbl_input_data
-    ):
-        """Test _generate_boundary_forcing raises error when type is missing."""
-        with pytest.raises(ValueError) as exc_info:
-            sample_roms_marbl_input_data._generate_boundary_forcing(
-                key="forcing.boundary",
-                source={"name": "GLORYS"},
-                # Missing type
-            )
-        assert "type" in str(exc_info.value).lower()
 
     @patch("cstar_forge.forge.input_data.rt.TidalForcing")
     def test_generate_tidal_forcing(
@@ -1878,10 +1873,10 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path):
+        def boundary_save(path, bgc_paths=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return path
+            return [path], bgc_paths or []
 
         mock_boundary_instance.save.side_effect = boundary_save
         mock_boundary_instance.to_yaml = MagicMock()
@@ -1953,10 +1948,10 @@ class TestRomsMarblInputDataGenerateAll:
         # Mock BoundaryForcing to prevent file operations
         mock_boundary = MagicMock()
 
-        def boundary_save(path):
+        def boundary_save(path, bgc_paths=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return path
+            return [path], bgc_paths or []
 
         mock_boundary.save.side_effect = boundary_save
         mock_boundary.to_yaml = MagicMock()
@@ -2022,10 +2017,10 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path):
+        def boundary_save(path, bgc_paths=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return path
+            return [path], bgc_paths or []
 
         mock_boundary_instance.save.side_effect = boundary_save
         mock_boundary_instance.to_yaml = MagicMock()
@@ -2117,10 +2112,10 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path):
+        def boundary_save(path, bgc_paths=None):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return path
+            return [path], bgc_paths or []
 
         mock_boundary_instance.save.side_effect = boundary_save
         mock_boundary_instance.to_yaml = MagicMock()
@@ -2239,7 +2234,21 @@ class TestRomsMarblInputDataGenerateAll:
         mock_ic_class.return_value = mock_ic_instance
         mock_ic_class.merge.return_value = xr.Dataset()
         mock_surface_class.return_value = create_mock_forcing_class()
-        mock_boundary_class.return_value = create_mock_forcing_class()
+
+        # BoundaryForcing's .save() contract differs from the other rt classes'
+        # (see _generate_boundary_forcing): (physics_path, bgc_paths_or_none) in,
+        # (physics_paths, bgc_paths) out.
+        mock_boundary_instance = MagicMock()
+
+        def boundary_save(path, bgc_paths=None):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).touch()
+            return [path], bgc_paths or []
+
+        mock_boundary_instance.save.side_effect = boundary_save
+        mock_boundary_instance.to_yaml = MagicMock()
+        mock_boundary_class.return_value = mock_boundary_instance
+
         mock_tidal_class.return_value = create_mock_forcing_class()
         mock_river_class.return_value = create_mock_river_class()
 
@@ -2672,12 +2681,14 @@ def _make_input_data(
     )
 
 
-class TestBoundaryBgcBatching:
-    """Multiple ``type='bgc'`` boundary items batch through ``BGCMarbl`` before
-    saving (see ``RomsMarblInputData._generate_boundary_forcing``/
-    ``_flush_boundary_bgc_batch``): built (or reused) one at a time across
-    successive per-item handler calls, but completed + saved together once the
-    last expected bgc item for the run has been handled.
+class TestBoundaryBgcSources:
+    """``bgc_sources`` are resolved and forwarded straight through to the
+    roms-tools ``BoundaryForcing`` wrapper in ONE call -- physics+bgc
+    construction, ESPER/density ``physics_forcing`` wiring, MARBL completion, and
+    per-source saving all happen inside roms-tools/the wrapper's own ``.save()``
+    now (see ``_generate_boundary_forcing``). Forge's own remaining
+    responsibilities are: resolving each source through ``SourceData``, computing
+    distinct per-source output filenames, and the all-or-nothing reuse guard.
     """
 
     @pytest.fixture
@@ -2695,20 +2706,19 @@ class TestBoundaryBgcBatching:
         surface_item = forge_models.SurfaceForcingItem(
             source=forge_models.SourceSpec(name="ERA5"), type="physics"
         )
-        boundary_physics = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(name="GLORYS"), type="physics"
-        )
-        boundary_bgc_unified = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(name="UNIFIED", climatology=True),
-            type="bgc",
-        )
-        boundary_bgc_glodap = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(name="GLODAP"), type="bgc"
+        boundary = forge_models.BoundaryForcing(
+            source=forge_models.SourceSpec(name="GLORYS"),
+            bgc_sources=[
+                forge_models.BgcSourceItem(
+                    source=forge_models.SourceSpec(name="UNIFIED", climatology=True)
+                ),
+                forge_models.BgcSourceItem(
+                    source=forge_models.SourceSpec(name="GLODAP")
+                ),
+            ],
         )
         forcing_override = _build_forcing_override(
-            ic,
-            surface=[surface_item],
-            boundary=[boundary_physics, boundary_bgc_unified, boundary_bgc_glodap],
+            ic, surface=[surface_item], boundary=boundary
         )
         return _make_input_data(
             tmp_path,
@@ -2719,315 +2729,26 @@ class TestBoundaryBgcBatching:
             sample_partitioning,
         )
 
-    @patch("cstar_forge.forge.input_data.rt.BGCMarbl")
     @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
-    def test_distinct_bgc_sources_get_distinct_filenames_and_batched_marbl_call(
-        self, mock_bf_class, mock_bgc_marbl_class, multi_bgc_boundary_input_data
+    def test_bgc_sources_resolved_and_forwarded_in_one_call(
+        self, mock_bf_class, multi_bgc_boundary_input_data, tmp_path
     ):
-        """Two distinct-source bgc boundary items: (a) don't collide on the same
-        output filename, (b) both get queued and flushed through ONE
-        ``BGCMarbl().process_bgc_fields()`` call once the last one is handled, and
-        (c) both paths land in the (now-list) ``boundary_forcing_bgc_path``.
+        """One `rt.BoundaryForcing` call carries both bgc sources, each resolved
+        through SourceData; distinct, non-colliding per-source save paths.
         """
-        unified_instance = MagicMock()
-        glodap_instance = MagicMock()
-        mock_bf_class.side_effect = [unified_instance, glodap_instance]
-        mock_marbl_instance = MagicMock()
-        mock_bgc_marbl_class.return_value = mock_marbl_instance
-
-        data = multi_bgc_boundary_input_data
-
-        data._generate_boundary_forcing(
-            key="forcing.boundary",
-            source={"name": "UNIFIED", "climatology": True},
-            type="bgc",
-        )
-        # Only 1 of 2 expected bgc items handled so far -- not flushed yet.
-        mock_bgc_marbl_class.assert_not_called()
-        unified_instance.to_yaml.assert_called_once()
-
-        data._generate_boundary_forcing(
-            key="forcing.boundary", source={"name": "GLODAP"}, type="bgc"
-        )
-        glodap_instance.to_yaml.assert_called_once()
-
-        # Now both items handled -> flushed together, exactly once.
-        mock_bgc_marbl_class.assert_called_once()
-        mock_marbl_instance.process_bgc_fields.assert_called_once()
-        called_args, called_kwargs = mock_marbl_instance.process_bgc_fields.call_args
-        assert called_args[0] == [unified_instance, glodap_instance]
-        filepaths = called_kwargs["filepath"]
-        assert len(filepaths) == 2
-
-        # Distinct, non-colliding filenames disambiguated by source name.
-        stems = {Path(p).stem.lower() for p in filepaths}
-        assert len(stems) == 2
-        assert any("unified" in s for s in stems)
-        assert any("glodap" in s for s in stems)
-
-        # Both paths recorded into the (list) settings field, and both Resources
-        # appended -- not last-write-wins.
-        bgc_paths = data._settings_run_time["forcing"]["boundary_forcing_bgc_path"]
-        assert len(bgc_paths) == 2
-        assert set(bgc_paths) == set(filepaths)
-        assert len(data.roms_marbl_blueprint_elements.forcing.boundary.data) == 2
-
-    @patch("cstar_forge.forge.input_data.rt.BGCMarbl")
-    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
-    def test_marbl_not_invoked_before_last_bgc_item(
-        self, mock_bf_class, mock_bgc_marbl_class, multi_bgc_boundary_input_data
-    ):
-        """The batched flush only fires once every expected bgc item has been
-        reached -- not on every individual item.
-        """
-        mock_bf_class.side_effect = [MagicMock(), MagicMock()]
-        data = multi_bgc_boundary_input_data
-
-        data._generate_boundary_forcing(
-            key="forcing.boundary",
-            source={"name": "UNIFIED", "climatology": True},
-            type="bgc",
-        )
-        mock_bgc_marbl_class.return_value.process_bgc_fields.assert_not_called()
-
-    @patch("cstar_forge.forge.input_data.rt.BGCMarbl")
-    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
-    def test_mixed_reuse_and_fresh_bgc_items_raises_rather_than_silently_flushing(
-        self, mock_bf_class, mock_bgc_marbl_class, multi_bgc_boundary_input_data
-    ):
-        """If one bgc boundary item is reused from an existing NetCDF (already
-        carrying a complete MARBL tracer set from a prior run) while another is
-        fresh, flushing just the fresh subset through ``BGCMarbl.process_bgc_fields``
-        risks silently duplicating/conflicting tracers with the reused file(s) --
-        ROMS reads every listed file by variable name, so that's wrong data with no
-        error, not a crash. This must fail loudly instead of proceeding.
-        """
-        mock_bf_class.return_value = MagicMock()
-        data = multi_bgc_boundary_input_data
-
-        with patch.object(
-            data, "_existing_output_paths", side_effect=[["already_here.nc"], []]
-        ):
-            data._generate_boundary_forcing(
-                key="forcing.boundary",
-                source={"name": "UNIFIED", "climatology": True},
-                type="bgc",
-            )
-            with pytest.raises(RuntimeError, match="partial reuse|already exist"):
-                data._generate_boundary_forcing(
-                    key="forcing.boundary", source={"name": "GLODAP"}, type="bgc"
-                )
-        mock_bgc_marbl_class.return_value.process_bgc_fields.assert_not_called()
-
-    @patch("cstar_forge.forge.input_data.rt.BGCMarbl")
-    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
-    def test_same_source_split_across_items_by_use_vars_gets_distinct_filenames(
-        self,
-        mock_bf_class,
-        mock_bgc_marbl_class,
-        tmp_path,
-        sample_grid,
-        sample_open_boundaries,
-        sample_source_data,
-        sample_partitioning,
-    ):
-        """The documented pattern of splitting ONE bgc source's tracers across
-        multiple items (same ``source.name``, different ``use_vars``) must not
-        collide on output filename -- two items with identical name but disjoint
-        use_vars are a legitimate, intended configuration, not a duplicate.
-        """
-        ic = forge_models.InitialConditionsInput(
-            source=forge_models.SourceSpec(name="GLORYS")
-        )
-        surface_item = forge_models.SurfaceForcingItem(
-            source=forge_models.SourceSpec(name="ERA5"), type="physics"
-        )
-        boundary_bgc_a = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(name="UNIFIED", climatology=True),
-            type="bgc",
-            use_vars=["NO3", "PO4"],
-        )
-        boundary_bgc_b = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(name="UNIFIED", climatology=True),
-            type="bgc",
-            use_vars=["Fe", "SiO3"],
-        )
-        forcing_override = _build_forcing_override(
-            ic, surface=[surface_item], boundary=[boundary_bgc_a, boundary_bgc_b]
-        )
-        data = _make_input_data(
-            tmp_path,
-            forcing_override,
-            sample_grid,
-            sample_open_boundaries,
-            sample_source_data,
-            sample_partitioning,
-        )
-        mock_bf_class.side_effect = [MagicMock(), MagicMock()]
-        mock_marbl_instance = MagicMock()
-        mock_bgc_marbl_class.return_value = mock_marbl_instance
-
-        data._generate_boundary_forcing(
-            key="forcing.boundary",
-            source={"name": "UNIFIED", "climatology": True},
-            type="bgc",
-            use_vars=["NO3", "PO4"],
-        )
-        data._generate_boundary_forcing(
-            key="forcing.boundary",
-            source={"name": "UNIFIED", "climatology": True},
-            type="bgc",
-            use_vars=["Fe", "SiO3"],
-        )
-
-        mock_marbl_instance.process_bgc_fields.assert_called_once()
-        _, called_kwargs = mock_marbl_instance.process_bgc_fields.call_args
-        filepaths = called_kwargs["filepath"]
-        assert len(filepaths) == 2
-        assert len({Path(p).stem for p in filepaths}) == 2, (
-            f"expected distinct filenames, got {filepaths}"
-        )
-
-
-class TestBoundaryEsperPhysicsCompanion:
-    """An ESPER boundary bgc item needs a physics ``BoundaryForcing`` companion
-    unconditionally (regardless of ``bgc_interpolation_method``) -- see
-    ``_generate_boundary_forcing``/``_get_physics_boundary_companion``.
-    """
-
-    @pytest.fixture
-    def esper_boundary_input_data(
-        self,
-        tmp_path,
-        sample_grid,
-        sample_open_boundaries,
-        sample_source_data,
-        sample_partitioning,
-    ):
-        esper_dir = tmp_path / "pyesper"
-        esper_dir.mkdir()
-        ic = forge_models.InitialConditionsInput(
-            source=forge_models.SourceSpec(name="GLORYS")
-        )
-        surface_item = forge_models.SurfaceForcingItem(
-            source=forge_models.SourceSpec(name="ERA5"), type="physics"
-        )
-        boundary_physics = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(name="GLORYS"), type="physics"
-        )
-        boundary_esper = forge_models.BoundaryForcingItem(
-            source=forge_models.SourceSpec(
-                name="ESPER",
-                path=str(esper_dir),
-                esper_method="nn",
-                esper_equation=8,
-            ),
-            type="bgc",
-        )
-        forcing_override = _build_forcing_override(
-            ic, surface=[surface_item], boundary=[boundary_physics, boundary_esper]
-        )
-        return _make_input_data(
-            tmp_path,
-            forcing_override,
-            sample_grid,
-            sample_open_boundaries,
-            sample_source_data,
-            sample_partitioning,
-        )
-
-    @patch("cstar_forge.forge.input_data.rt.BGCMarbl")
-    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
-    def test_esper_boundary_item_gets_physics_forcing_companion(
-        self, mock_bf_class, mock_bgc_marbl_class, esper_boundary_input_data, tmp_path
-    ):
-        physics_instance = MagicMock()
-        physics_path = tmp_path / "boundary_physics.nc"
+        mock_bf = MagicMock()
+        mock_bf.bgc = [MagicMock(), MagicMock()]
+        physics_path = tmp_path / "boundary-physics.nc"
         physics_path.touch()
-        physics_instance.save.return_value = physics_path
-        companion_instance = MagicMock()
-        esper_instance = MagicMock()
-        mock_bf_class.side_effect = [
-            physics_instance,
-            companion_instance,
-            esper_instance,
-        ]
-
-        data = esper_boundary_input_data
-
-        # 1st call: the standalone physics item, built + saved as usual.
-        data._generate_boundary_forcing(
-            key="forcing.boundary", source={"name": "GLORYS"}, type="physics"
+        mock_bf.save.return_value = (
+            [physics_path],
+            ["boundary-bgc-unified.nc", "boundary-bgc-glodap.nc"],
         )
+        mock_bf_class.return_value = mock_bf
 
-        # 2nd call (physics companion) + 3rd call (the ESPER item itself).
+        data = multi_bgc_boundary_input_data
         data._generate_boundary_forcing(
             key="forcing.boundary",
-            source={
-                "name": "ESPER",
-                "path": "/fake/pyesper/dir",
-                "method": "nn",
-                "equation": 8,
-            },
-            type="bgc",
-        )
-
-        assert mock_bf_class.call_count == 3
-        esper_call_kwargs = mock_bf_class.call_args_list[2].kwargs
-        assert esper_call_kwargs["physics_forcing"] is companion_instance
-        assert esper_call_kwargs["source"]["name"] == "ESPER"
-        assert esper_call_kwargs["source"]["method"] == "nn"
-        assert esper_call_kwargs["source"]["equation"] == 8
-
-        # The companion is memoized -- a 2nd ESPER/density item wouldn't rebuild it.
-        assert data._boundary_physics_companion is companion_instance
-        assert data._boundary_physics_companion_built is True
-
-
-class TestInitialConditionsMultipleBgcSources:
-    """Multiple ``bgc_sources`` entries build separate ``InitialConditions``
-    objects, complete them together via ``BGCMarbl().process_bgc_fields()``, and
-    merge their datasets into ONE output (see ``_generate_initial_conditions``).
-    """
-
-    @patch("cstar_forge.forge.input_data.save_datasets")
-    @patch("cstar_forge.forge.input_data.rt.BGCMarbl")
-    @patch("cstar_forge.forge.input_data.rt.InitialConditions")
-    def test_merges_variables_from_all_sources_into_one_file(
-        self,
-        mock_ic_class,
-        mock_bgc_marbl_class,
-        mock_save_datasets,
-        sample_roms_marbl_input_data,
-        tmp_path,
-    ):
-        ic_physics = MagicMock()
-        ic_physics.ds = xr.Dataset({"temp": (("dim",), [10.0])})
-        ic_unified = MagicMock()
-        ic_unified.ds = xr.Dataset({"PO4": (("dim",), [1.0])})
-        ic_glodap = MagicMock()
-        ic_glodap.ds = xr.Dataset({"Fe": (("dim",), [2.0])})
-        mock_ic_class.side_effect = [ic_physics, ic_unified, ic_glodap]
-        # rt.InitialConditions.merge() is a real roms-tools classmethod (see
-        # test_roms_tools.test_esper for its own dedicated coverage); here it's
-        # mocked like the rest of the (fully patched) rt.InitialConditions class,
-        # so reproduce just enough of its behavior (the actual xr.merge) to
-        # exercise _generate_initial_conditions' handling of the result.
-        mock_ic_class.merge.return_value = xr.merge(
-            [ic_physics.ds, ic_unified.ds, ic_glodap.ds],
-            compat="override",
-            combine_attrs="override",
-        )
-
-        mock_marbl_instance = MagicMock()
-        mock_bgc_marbl_class.return_value = mock_marbl_instance
-
-        merged_path = tmp_path / "merged_initial_conditions.nc"
-        mock_save_datasets.return_value = [merged_path]
-
-        data = sample_roms_marbl_input_data
-        data._generate_initial_conditions(
-            key="initial_conditions",
             source={"name": "GLORYS"},
             bgc_sources=[
                 {"source": {"name": "UNIFIED", "climatology": True}},
@@ -3035,51 +2756,200 @@ class TestInitialConditionsMultipleBgcSources:
             ],
         )
 
-        # One physics-only InitialConditions object, plus one per bgc source.
-        assert mock_ic_class.call_count == 3
+        mock_bf_class.assert_called_once()
+        call_kwargs = mock_bf_class.call_args.kwargs
+        assert call_kwargs["source"]["name"] == "GLORYS"
+        assert call_kwargs["bgc_model"] is rt.BGCMarbl
+        resolved = call_kwargs["bgc_sources"]
+        assert [bs["source"]["name"] for bs in resolved] == ["UNIFIED", "GLODAP"]
 
-        # Each bgc-only call reuses the physics object via physics_forcing=, and
-        # carries no `source` of its own (mutually exclusive with physics_forcing).
-        for call in mock_ic_class.call_args_list[1:]:
-            assert call.kwargs["physics_forcing"] is ic_physics
-            assert "source" not in call.kwargs
+        mock_bf.to_yaml.assert_called_once()
+        assert mock_bf.bgc[0].to_yaml.call_count == 1
+        assert mock_bf.bgc[1].to_yaml.call_count == 1
 
-        # Completed together (in place, no save) via a single BGCMarbl call --
-        # the physics object is not part of this call (nothing to derive/fill on it).
-        mock_marbl_instance.process_bgc_fields.assert_called_once()
-        called_args, called_kwargs = mock_marbl_instance.process_bgc_fields.call_args
-        assert called_args[0] == [ic_unified, ic_glodap]
-        assert called_kwargs["filepath"] is None
+        # Distinct, non-colliding save paths disambiguated by source name.
+        mock_bf.save.assert_called_once()
+        _physics_arg, bgc_paths_arg = mock_bf.save.call_args.args
+        stems = {Path(p).stem.lower() for p in bgc_paths_arg}
+        assert len(stems) == 2
+        assert any("unified" in s for s in stems)
+        assert any("glodap" in s for s in stems)
 
-        # Assembled via rt.InitialConditions.merge() (physics object + both bgc
-        # objects), not a hand-rolled xr.merge in Forge itself.
-        mock_ic_class.merge.assert_called_once_with(ic_physics, [ic_unified, ic_glodap])
+        assert len(data.roms_marbl_blueprint_elements.forcing.boundary.data) == 3
 
-        # Written exactly ONCE, as a single merged dataset containing the physics
-        # object's variables plus both bgc sources' variables -- not one file per
-        # source.
-        mock_save_datasets.assert_called_once()
-        saved_datasets, _saved_filenames = mock_save_datasets.call_args.args
-        assert len(saved_datasets) == 1
-        merged = saved_datasets[0]
-        assert "temp" in merged.data_vars
-        assert "PO4" in merged.data_vars
-        assert "Fe" in merged.data_vars
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    def test_no_bgc_sources_builds_physics_only(
+        self, mock_bf_class, sample_roms_marbl_input_data, tmp_path
+    ):
+        """Absent/empty bgc_sources: bgc_model is None, no bgc save paths."""
+        mock_bf = MagicMock()
+        mock_bf.bgc = []
+        physics_path = tmp_path / "boundary-physics.nc"
+        physics_path.touch()
+        mock_bf.save.return_value = ([physics_path], [])
+        mock_bf_class.return_value = mock_bf
 
-        assert data._settings_run_time["initial"]["initial_file"] == str(merged_path)
+        sample_roms_marbl_input_data._generate_boundary_forcing(
+            key="forcing.boundary", source={"name": "GLORYS"}, bgc_sources=[]
+        )
+
+        call_kwargs = mock_bf_class.call_args.kwargs
+        assert call_kwargs["bgc_sources"] == []
+        assert call_kwargs["bgc_model"] is None
+        mock_bf.save.assert_called_once_with(mock_bf.save.call_args.args[0], None)
+
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    def test_mixed_reuse_raises_rather_than_silently_rebuilding_a_subset(
+        self, mock_bf_class, multi_bgc_boundary_input_data
+    ):
+        """Physics reused but one bgc source missing (or vice versa) must fail
+        loudly: the wrapper builds physics + every bgc source as one atomic unit
+        (each bgc source completed against that SAME physics object), so there is
+        no way to reuse/rebuild a subset without risking silently duplicated or
+        conflicting tracers -- ROMS reads every listed file by variable name.
+        """
+        data = multi_bgc_boundary_input_data
+        # physics reused, UNIFIED missing, GLODAP reused -> partial reuse.
+        with patch.object(
+            data,
+            "_existing_output_paths",
+            side_effect=[["boundary-physics.nc"], [], ["boundary-bgc-glodap.nc"]],
+        ):
+            with pytest.raises(RuntimeError, match="partial reuse|already exist"):
+                data._generate_boundary_forcing(
+                    key="forcing.boundary",
+                    source={"name": "GLORYS"},
+                    bgc_sources=[
+                        {"source": {"name": "UNIFIED", "climatology": True}},
+                        {"source": {"name": "GLODAP"}},
+                    ],
+                )
+        mock_bf_class.assert_not_called()
+
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    def test_full_reuse_skips_construction(
+        self, mock_bf_class, multi_bgc_boundary_input_data
+    ):
+        """Physics + every bgc source already on disk: no rt.BoundaryForcing call,
+        existing paths reported as-is (yaml sidecars also present, so no
+        yaml-sidecar-only rebuild fallback either).
+        """
+        data = multi_bgc_boundary_input_data
+        data._yaml_filename("forcing.boundary-physics").touch()
+        data._yaml_filename("forcing.boundary-bgc-unified").touch()
+        data._yaml_filename("forcing.boundary-bgc-glodap").touch()
+        with patch.object(
+            data,
+            "_existing_output_paths",
+            side_effect=[
+                ["boundary-physics.nc"],
+                ["boundary-bgc-unified.nc"],
+                ["boundary-bgc-glodap.nc"],
+            ],
+        ):
+            data._generate_boundary_forcing(
+                key="forcing.boundary",
+                source={"name": "GLORYS"},
+                bgc_sources=[
+                    {"source": {"name": "UNIFIED", "climatology": True}},
+                    {"source": {"name": "GLODAP"}},
+                ],
+            )
+        mock_bf_class.assert_not_called()
+        assert len(data.roms_marbl_blueprint_elements.forcing.boundary.data) == 3
+
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    def test_same_source_split_across_items_by_use_vars_gets_distinct_filenames(
+        self, mock_bf_class, sample_roms_marbl_input_data, tmp_path
+    ):
+        """The documented pattern of splitting ONE bgc source's tracers across
+        multiple bgc_sources entries (same ``source.name``, different
+        ``use_vars``) must not collide on output filename -- two entries with
+        identical name but disjoint use_vars are a legitimate, intended
+        configuration, not a duplicate.
+        """
+        mock_bf = MagicMock()
+        mock_bf.bgc = [MagicMock(), MagicMock()]
+        physics_path = tmp_path / "boundary-physics.nc"
+        physics_path.touch()
+        mock_bf.save.return_value = (
+            [physics_path],
+            ["boundary-bgc-unified-alkdic.nc", "boundary-bgc-unified-fesio3.nc"],
+        )
+        mock_bf_class.return_value = mock_bf
+
+        sample_roms_marbl_input_data._generate_boundary_forcing(
+            key="forcing.boundary",
+            source={"name": "GLORYS"},
+            bgc_sources=[
+                {
+                    "source": {"name": "UNIFIED", "climatology": True},
+                    "use_vars": ["NO3", "PO4"],
+                },
+                {
+                    "source": {"name": "UNIFIED", "climatology": True},
+                    "use_vars": ["Fe", "SiO3"],
+                },
+            ],
+        )
+
+        mock_bf.save.assert_called_once()
+        _physics_arg, bgc_paths_arg = mock_bf.save.call_args.args
+        assert len(bgc_paths_arg) == 2
+        assert len({Path(p).stem for p in bgc_paths_arg}) == 2, (
+            f"expected distinct filenames, got {bgc_paths_arg}"
+        )
+
+
+class TestInitialConditionsMultipleBgcSources:
+    """``bgc_sources`` are resolved and forwarded straight through to the
+    roms-tools ``InitialConditions`` wrapper in ONE call -- physics+bgc
+    construction, MARBL completion, and the final merge into one dataset all
+    happen inside roms-tools now (see ``_generate_initial_conditions``).
+    """
+
+    @patch("cstar_forge.forge.input_data.rt.InitialConditions")
+    def test_bgc_sources_resolved_and_forwarded_in_one_call(
+        self, mock_ic_class, sample_roms_marbl_input_data, tmp_path
+    ):
+        mock_ic = MagicMock()
+        ic_path = tmp_path / "merged_initial_conditions.nc"
+        ic_path.touch()
+        mock_ic.save.return_value = [ic_path]
+        mock_ic_class.return_value = mock_ic
+
+        data = sample_roms_marbl_input_data
+        data._generate_initial_conditions(
+            key="initial_conditions",
+            source={"name": "GLORYS"},
+            bgc_sources=[
+                {"source": {"name": "UNIFIED", "climatology": True}},
+                {"source": {"name": "GLODAP"}, "use_vars": ["ALK", "DIC"]},
+            ],
+        )
+
+        # Exactly one rt.InitialConditions call -- the wrapper builds physics +
+        # both bgc companions, completes, and merges internally.
+        mock_ic_class.assert_called_once()
+        call_kwargs = mock_ic_class.call_args.kwargs
+        assert call_kwargs["source"]["name"] == "GLORYS"
+        assert call_kwargs["bgc_model"] is rt.BGCMarbl
+        resolved = call_kwargs["bgc_sources"]
+        assert [bs["source"]["name"] for bs in resolved] == ["UNIFIED", "GLODAP"]
+        assert resolved[1]["use_vars"] == ["ALK", "DIC"]
+
+        mock_ic.to_yaml.assert_called_once()
+        mock_ic.save.assert_called_once()
+        assert data._settings_run_time["initial"]["initial_file"] == ic_path
         assert len(data.roms_marbl_blueprint_elements.initial_conditions.data) == 1
 
     def test_no_bgc_sources_is_unchanged_single_object_path(
         self, sample_roms_marbl_input_data
     ):
-        """An empty/absent ``bgc_sources`` keeps the original physics-only path
-        (no merge, no BGCMarbl call).
+        """An empty/absent ``bgc_sources`` still calls the wrapper once, but with
+        ``bgc_sources=[]``/``bgc_model=None`` -- the plain physics-only path.
         """
-        with (
-            patch("cstar_forge.forge.input_data.rt.InitialConditions") as mock_ic_class,
-            patch("cstar_forge.forge.input_data.rt.BGCMarbl") as mock_bgc_marbl_class,
-            patch("cstar_forge.forge.input_data.save_datasets") as mock_save_datasets,
-        ):
+        with patch("cstar_forge.forge.input_data.rt.InitialConditions") as mock_ic_class:
             mock_ic = MagicMock()
             ic_path = sample_roms_marbl_input_data.input_data_dir / "ic.nc"
             ic_path.touch()
@@ -3093,5 +2963,6 @@ class TestInitialConditionsMultipleBgcSources:
             )
 
             mock_ic_class.assert_called_once()
-            mock_bgc_marbl_class.assert_not_called()
-            mock_save_datasets.assert_not_called()
+            call_kwargs = mock_ic_class.call_args.kwargs
+            assert call_kwargs["bgc_sources"] == []
+            assert call_kwargs["bgc_model"] is None
