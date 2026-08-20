@@ -790,6 +790,11 @@ class InitialConditions(_Section):
     )
     extrap_kwargs: dict[str, Any] | None = None
     options: dict[str, Any] = Field(default_factory=dict, description=_OPTIONS_HELP)
+    bypass_validation: bool = False
+    """Skip roms-tools' post-construction validation (NaN-at-wet-point checks
+    across physics + every bgc source). Off (validation runs) by default;
+    the wizard exposes this as a checked "Validate" box, so checking it off
+    corresponds to setting this True."""
 
 
 class BoundaryForcing(_Section):
@@ -817,6 +822,11 @@ class BoundaryForcing(_Section):
     )
     extrap_kwargs: dict[str, Any] | None = None
     options: dict[str, Any] = Field(default_factory=dict, description=_OPTIONS_HELP)
+    bypass_validation: bool = False
+    """Skip roms-tools' post-construction validation (NaN-at-wet-point checks
+    across physics + every bgc source). Off (validation runs) by default;
+    the wizard exposes this as a checked "Validate" box, so checking it off
+    corresponds to setting this True."""
 
 
 class ResolvedDataset(_Section):

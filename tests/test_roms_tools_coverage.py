@@ -68,6 +68,10 @@ _FORGE_FIELDS = {
         # legacy single-bgc-source convenience (forge never emits this directly,
         # but rt.InitialConditions' own wrapper constructor still accepts it)
         "use_vars",
+        # wizard "validate" checkbox (checked = bypass_validation=False, the
+        # roms-tools default); promoted from the SKIP_LIST after a real
+        # production crash traced to _validate() running unprotected.
+        "bypass_validation",
     },
     "SurfaceForcing": {
         "type",
@@ -94,6 +98,10 @@ _FORGE_FIELDS = {
         "extrap_kwargs",
         "model_reference_date",
         "options",
+        # wizard "validate" checkbox (checked = bypass_validation=False, the
+        # roms-tools default); promoted from the SKIP_LIST after a real
+        # production crash traced to _validate() running unprotected.
+        "bypass_validation",
     },
     "TidalForcing": {
         "ntides",
@@ -141,12 +149,11 @@ _SKIP = {
     "InitialConditions": {
         "chunks",  # advanced Dask tuning; expose via options passthrough
         "initial_slice_bounds",  # advanced spatial Dask subsetting
-        "bypass_validation",  # dev/debug knob; expose via options passthrough
     },
     "SurfaceForcing": {
         "chunks",
         "initial_slice_bounds",
-        "bypass_validation",
+        "bypass_validation",  # dev/debug knob; expose via options passthrough
         # padding an extra time record before/after the run window; roms-tools
         # defaults (True/True) are correct for the normal case, not yet exposed
         # as a Forge option (same gap as BoundaryForcing's).
@@ -156,7 +163,6 @@ _SKIP = {
     "BoundaryForcing": {
         "chunks",
         "initial_slice_bounds",
-        "bypass_validation",
         "apply_2d_horizontal_fill",  # deprecated in rt>=4 in favor of `prefill`; Forge exposes prefill instead
         # padding an extra time record before/after the run window; roms-tools
         # defaults (True/True) are correct for the normal ROMS boundary-interp

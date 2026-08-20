@@ -240,6 +240,20 @@ HELP_TEXT: dict[str, str] = {
     "source dataset. Useful when the exact timestamp is absent.",
     (
         "ic",
+        "ic_validate",
+    ): "Run roms-tools' post-construction validation (NaN-at-wet-point checks across "
+    "physics and every bgc source). On by default; uncheck to skip validation "
+    "entirely (bypass_validation=True) -- a last-resort escape hatch, not a "
+    "recommended default.",
+    (
+        "boundary",
+        "boundary_validate",
+    ): "Run roms-tools' post-construction validation (NaN-at-wet-point checks across "
+    "physics and every bgc source). On by default; uncheck to skip validation "
+    "entirely (bypass_validation=True) -- a last-resort escape hatch, not a "
+    "recommended default.",
+    (
+        "ic",
         "prefill",
     ): "Fill NaN (land/void) source cells before regridding. Blank = no source prefill "
     "(NaN-aware regrid + extrapolation, recommended with xESMF). '2d_lateral_fill' = "
@@ -1307,6 +1321,12 @@ class _ForcingEditor:
             indent=False,
             tooltip=_tip("ic", "ic_flex_time"),
         )
+        self.ic_validate = W.Checkbox(
+            value=not bool(ic.get("bypass_validation", False)),
+            description="validate",
+            indent=False,
+            tooltip=_tip("ic", "ic_validate"),
+        )
         _ic_prefill_val = str(ic.get("prefill") or "")
         if _ic_prefill_val not in _PREFILL_OPTS:
             _ic_prefill_val = ""
@@ -1344,6 +1364,7 @@ class _ForcingEditor:
             self.ic_path,
             self.ic_bgc_interp,
             self.ic_flex_time,
+            self.ic_validate,
             self.ic_prefill,
             self.ic_regrid_method,
             self.ic_extrap_method,
@@ -1440,11 +1461,18 @@ class _ForcingEditor:
             tooltip=_tip("boundary", "extrap_method"),
         )
         self.boundary_options = _options_editor(W, boundary_block.get("options"))
+        self.boundary_validate = W.Checkbox(
+            value=not bool(boundary_block.get("bypass_validation", False)),
+            description="validate",
+            indent=False,
+            tooltip=_tip("boundary", "boundary_validate"),
+        )
         for _w in (
             self.boundary_name,
             self.boundary_layout,
             self.boundary_path,
             self.boundary_bgc_interp,
+            self.boundary_validate,
             self.boundary_prefill,
             self.boundary_regrid_method,
             self.boundary_extrap_method,
@@ -1465,6 +1493,33 @@ class _ForcingEditor:
         # feed `initial_conditions.bgc_sources`/`forcing["boundary"]["bgc_sources"]`
         # respectively, instead of `forcing[cat]` directly; handled specially here
         # and in `gather()`.
+        # IC<->boundary bgc-source sync: the two panels are usually configured
+        # identically (same BGC datasets for initial conditions and boundaries), so
+        # a one-shot copy button beats re-entering every row by hand. Not a live
+        # link -- each click snapshots the source panel's current rows and replaces
+        # the target panel's rows with fresh copies. Each button lives at the
+        # bottom of the panel it copies *from* (rendered into that panel's own
+        # container by `_render`, not a standalone box above the accordion), so
+        # the rows being copied are visible right above the button that copies
+        # them. Built before the seeding loop below, which calls `_render` (and
+        # so needs these to already exist) for every row category.
+        self._sync_to_boundary_btn = W.Button(
+            description="Copy IC bgc → Boundary",
+            layout=W.Layout(width="200px"),
+            tooltip="Replace the boundary bgc sources with a copy of the IC bgc sources",
+        )
+        self._sync_to_boundary_btn.on_click(
+            lambda _b: self._sync_bgc("ic_bgc", "boundary_bgc")
+        )
+        self._sync_to_ic_btn = W.Button(
+            description="Copy Boundary bgc → IC",
+            layout=W.Layout(width="200px"),
+            tooltip="Replace the IC bgc sources with a copy of the boundary bgc sources",
+        )
+        self._sync_to_ic_btn.on_click(
+            lambda _b: self._sync_bgc("boundary_bgc", "ic_bgc")
+        )
+
         self._rows: dict[str, list] = {c: [] for c in _ROW_CATEGORIES}
         self._containers: dict[str, Any] = {}
         for cat in _ROW_CATEGORIES:
@@ -1479,25 +1534,6 @@ class _ForcingEditor:
             for item in seed_items:
                 self._rows[cat].append(self._make_row(cat, item))
             self._render(cat)
-
-        # IC<->boundary bgc-source sync: the two panels are usually configured
-        # identically (same BGC datasets for initial conditions and boundaries), so
-        # a one-shot copy button beats re-entering every row by hand. Not a live
-        # link -- each click snapshots the source panel's current rows and replaces
-        # the target panel's rows with fresh copies.
-        sync_to_boundary = W.Button(
-            description="Copy IC bgc → Boundary",
-            layout=W.Layout(width="200px"),
-            tooltip="Replace the boundary bgc sources with a copy of the IC bgc sources",
-        )
-        sync_to_boundary.on_click(lambda _b: self._sync_bgc("ic_bgc", "boundary_bgc"))
-        sync_to_ic = W.Button(
-            description="Copy Boundary bgc → IC",
-            layout=W.Layout(width="200px"),
-            tooltip="Replace the IC bgc sources with a copy of the boundary bgc sources",
-        )
-        sync_to_ic.on_click(lambda _b: self._sync_bgc("boundary_bgc", "ic_bgc"))
-        self._bgc_sync_box = W.HBox([sync_to_boundary, sync_to_ic])
 
     # ---- one item row --------------------------------------------------------
     @staticmethod
@@ -1853,7 +1889,16 @@ class _ForcingEditor:
         label = "add bgc source" if cat in ("ic_bgc", "boundary_bgc") else f"add {cat}"
         add = W.Button(description=label, icon="plus", layout=W.Layout(width="150px"))
         add.on_click(lambda _b, c=cat: self._add(c))
-        self._containers[cat].children = [*boxes, add]
+        # The IC<->boundary sync button lives at the bottom of the panel it
+        # copies *from*, so the rows about to be copied are visible right above
+        # it -- rebuilt here (not set once) since `_render` fully replaces
+        # `.children` on every add/remove/sync.
+        extra = []
+        if cat == "ic_bgc":
+            extra = [self._sync_to_boundary_btn]
+        elif cat == "boundary_bgc":
+            extra = [self._sync_to_ic_btn]
+        self._containers[cat].children = [*boxes, add, *extra]
 
     def clear_category(self, cat: str):
         """Remove all rows for a row category (e.g. ``"boundary_bgc"`` for a
@@ -1973,6 +2018,8 @@ class _ForcingEditor:
             ic["bgc_interpolation_method"] = self.ic_bgc_interp.value
         if self.ic_flex_time.value:
             ic["allow_flex_time"] = True
+        if not self.ic_validate.value:  # checked ("validate") is the default
+            ic["bypass_validation"] = True
         if self.ic_prefill.value:  # Dropdown: "" = leave unset
             ic["prefill"] = self.ic_prefill.value
         if self.ic_regrid_method.value:
@@ -2002,6 +2049,8 @@ class _ForcingEditor:
             and self.boundary_bgc_interp.value != BgcInterpMethod.DEPTH.value
         ):
             boundary["bgc_interpolation_method"] = self.boundary_bgc_interp.value
+        if not self.boundary_validate.value:  # checked ("validate") is the default
+            boundary["bypass_validation"] = True
         if self.boundary_prefill.value:
             boundary["prefill"] = self.boundary_prefill.value
         if self.boundary_regrid_method.value:
@@ -2030,7 +2079,7 @@ class _ForcingEditor:
                 W.HTML("<i>initial conditions</i>"),
                 W.HBox([self.ic_name, self.ic_layout]),
                 self.ic_path,
-                W.HBox([self.ic_bgc_interp, self.ic_flex_time]),
+                W.HBox([self.ic_bgc_interp, self.ic_flex_time, self.ic_validate]),
                 W.HBox([self.ic_prefill, self.ic_regrid_method, self.ic_extrap_method]),
                 self.ic_options,
             ]
@@ -2042,7 +2091,7 @@ class _ForcingEditor:
                 W.HTML("<i>boundary forcing</i>"),
                 W.HBox([self.boundary_name, self.boundary_layout]),
                 self.boundary_path,
-                self.boundary_bgc_interp,
+                W.HBox([self.boundary_bgc_interp, self.boundary_validate]),
                 W.HBox(
                     [
                         self.boundary_prefill,
@@ -2071,9 +2120,9 @@ class _ForcingEditor:
         acc = W.Accordion(children=panes, selected_index=None)
         for i, cat in enumerate(cat_order):
             acc.set_title(i, _CATEGORY_TITLES.get(cat, cat))
-        # The IC<->boundary bgc sync buttons sit above the accordion (not nested in
-        # either collapsible pane) so they're visible without expanding anything.
-        return W.VBox([self._bgc_sync_box, acc])
+        # The IC<->boundary bgc sync buttons now live at the bottom of the
+        # "ic_bgc"/"boundary_bgc" panes themselves (see `_render`), not here.
+        return acc
 
 
 # Preselected in the Model dropdown when present in the catalog (falls back to
