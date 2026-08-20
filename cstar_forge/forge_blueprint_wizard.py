@@ -1311,8 +1311,9 @@ class _ForcingEditor:
         self.ic_bgc_interp = W.Dropdown(
             options=_BGC_INTERP_METHODS,
             value=_ic_bgc_interp,
-            description="bgc interp:",
-            style={"description_width": "110px"},
+            description="Default BGC interpolation:",
+            style={"description_width": "180px"},
+            layout=W.Layout(width="320px"),
             tooltip=_tip("ic", "ic_bgc_interp"),
         )
         self.ic_flex_time = W.Checkbox(
@@ -1426,8 +1427,9 @@ class _ForcingEditor:
         self.boundary_bgc_interp = W.Dropdown(
             options=_BGC_INTERP_METHODS,
             value=_boundary_bgc_interp,
-            description="bgc interp:",
-            style={"description_width": "110px"},
+            description="Default BGC interpolation:",
+            style={"description_width": "180px"},
+            layout=W.Layout(width="320px"),
             tooltip=_tip("boundary", "bgc_interpolation_method"),
         )
         _boundary_prefill_val = str(boundary_block.get("prefill") or "")
