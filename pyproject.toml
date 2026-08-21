@@ -47,7 +47,7 @@ dependencies = [
     "ujson",
     "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.10.0",
+    "cstar-ocean>=0.11.0",
     # >=4.1.0: first release with unified BGC v2.1 dataset support, which forge
     # requires (cstar-ocean's own pin is looser because it doesn't).
     "roms_tools>=4.1.0,<5",
