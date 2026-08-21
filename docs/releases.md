@@ -17,6 +17,7 @@
 * Fixed "ValueError: Separator is not found, and chunk exceed the limit" error in wizard run box ([#121](https://github.com/CWorthy-ocean/cstar-forge/pull/121))
 * The executor will no longer error out if boundary conditions are not generated (a legitimate use case for child domains) ([#126](https://github.com/CWorthy-ocean/cstar-forge/pull/126))
 * Remove river forcing params that have no effect from Advanced Settings (these get dynamically determined by the river forcing setup) ([#132](https://github.com/CWorthy-ocean/cstar-forge/pull/132))
+* fix _deep_merge in the resolver to deep-copy override values, so resolved blueprints never alias the shared OutputSpec section dicts. ([#134](https://github.com/CWorthy-ocean/cstar-forge/pull/134))
 
 ### Improvements
 
@@ -25,6 +26,7 @@
 * The "register kernel" procedure is now available through the CLI for conda installations ([#127](https://github.com/CWorthy-ocean/cstar-forge/pull/127))
 * Downloaded source data (previous and new downloads) will receive group read permissions if possible ([#128](https://github.com/CWorthy-ocean/cstar-forge/pull/128))
 * Make initial conditions optional for child grids ([#133](https://github.com/CWorthy-ocean/cstar-forge/pull/133))
+* Improve UI/UX for selecting monthly/periodic average/instantaneous optionality for restarts and cdr_output ([#134](https://github.com/CWorthy-ocean/cstar-forge/pull/134))
 
 ### Miscellaneous
 
