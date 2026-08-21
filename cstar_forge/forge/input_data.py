@@ -626,7 +626,13 @@ class RomsMarblInputData(InputData):
         # is exactly the case that pin was first written for. Only meaningful when
         # dask is actually driving the computation; the eager (use_dask=False) path
         # has nothing to oversubscribe.
-        cpu_count = os.cpu_count()
+        # sched_getaffinity respects cgroup/cpuset/taskset restrictions (Slurm
+        # allocations, containers); os.cpu_count() reports the whole node and
+        # would oversubscribe a restricted allocation.
+        try:
+            cpu_count = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):  # non-Linux fallback
+            cpu_count = os.cpu_count() or 1
         inner_threads = max(1, cpu_count // self.dask_num_workers) if cpu_count >= 16 else 1
         dask_cm = (
             dask.config.set(num_workers=self.dask_num_workers)
