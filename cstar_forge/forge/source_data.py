@@ -79,6 +79,10 @@ from cstar_forge.forge.source_registry import (  # noqa: E402,F401  (re-export)
     UNIFIED_BGC_URL,
     UNIFIED_BGC_VERSION,
     UNSTAGED_DATASETS,
+    WOA23_BASE_URL,
+    WOA23_BGC_VARIABLES,
+    WOA23_GRID,
+    WOA23_PERIODS,
     WOA_DOWNLOAD_URL,
     map_source_to_dataset_key,
 )
@@ -86,7 +90,9 @@ from cstar_forge.forge.source_registry import (  # noqa: E402,F401  (re-export)
 # Back-compat alias (handlers reference the lowercase name).
 glorys_dataset_id: str = GLORYS_DATASET_ID
 
-WOA_FILENAMES: list[str] = [f"woa*_decav_s{month:02d}_*.nc" for month in range(1, 13)]
+# Quarter-degree ("_04") only: the 1-degree salinity files staged by the WOA_BGC
+# handler live in the same directory and must not match this pattern.
+WOA_FILENAMES: list[str] = [f"woa*_decav_s{month:02d}_04.nc" for month in range(1, 13)]
 
 
 # -----------------------------------------
@@ -729,8 +735,11 @@ def _prepare_woa(self: SourceData) -> Path:
     """
     woa_path = self.source_data_dir / "WOA"
 
+    # The "_04" suffix pins the quarter-degree grid. Without it this glob would also
+    # match the 1-degree salinity files that the WOA_BGC handler stages into the same
+    # directory, and matches[0] could silently pick the wrong resolution.
     woa_dict = {
-        f"s{m:02d}": woa_path / f"woa*_decav_s{m:02d}_*.nc" for m in range(1, 13)
+        f"s{m:02d}": woa_path / f"woa*_decav_s{m:02d}_04.nc" for m in range(1, 13)
     }
 
     # Check that the base directory exists
@@ -763,7 +772,88 @@ def _prepare_woa(self: SourceData) -> Path:
 
     print(f"✔️  WOA dataset verified at: {woa_path}")
     self.paths["WOA"] = woa_path
-    return woa_path / "woa*_decav_s*.nc"
+    return woa_path / "woa*_decav_s*_04.nc"
+
+
+# ---------------------------
+# WOA_BGC handler (WOA23 1-degree gridded BGC source)
+# ---------------------------
+
+
+@register_dataset("WOA_BGC")
+def _prepare_woa_bgc(self: SourceData) -> Path:
+    """
+    Ensure the WOA23 1-degree BGC climatology exists locally.
+
+    Downloads the twelve monthly files for each of nitrate, phosphate, silicate,
+    oxygen, temperature and salinity, plus the full-depth annual (period 00) file for
+    each. roms-tools' ``WOABGCDataset`` reads the monthly fields and splices the annual
+    ones underneath them, because monthly WOA stops at 800 m for the nutrients and
+    1500 m for oxygen and T/S.
+
+    Temperature and salinity are staged alongside the tracers because roms-tools needs
+    them twice: to convert umol/kg to mmol/m3, and as the source density coordinate for
+    ``density`` / ``density_mld`` BGC interpolation. Without them that interpolation
+    silently falls back to depth space.
+
+    Files are stored flat in ``self.source_data_dir / "WOA"`` -- the same directory the
+    SSS-restoring WOA handler uses. The two sets do not collide: the BGC files carry the
+    ``_01`` (1-degree) suffix and the restoring files ``_04`` (quarter-degree).
+
+    Individual files already present are skipped unless ``self.clobber`` is set, so an
+    interrupted staging run resumes where it left off.
+
+    Returns
+    -------
+    Path
+        The directory holding the files, which is what roms-tools expects as the
+        source ``path`` for a ``{"name": "WOA"}`` BGC source.
+    """
+    woa_path = self.source_data_dir / "WOA"
+    woa_path.mkdir(parents=True, exist_ok=True)
+
+    targets: list[tuple[str, str]] = []
+    for subdir, decade, code in WOA23_BGC_VARIABLES.values():
+        for period in WOA23_PERIODS:
+            filename = f"woa23_{decade}_{code}{period:02d}_{WOA23_GRID}.nc"
+            url = f"{WOA23_BASE_URL}/{subdir}/netcdf/{decade}/1.00/{filename}"
+            targets.append((filename, url))
+
+    pending = [
+        (fn, url) for fn, url in targets if self.clobber or not (woa_path / fn).exists()
+    ]
+
+    if not pending:
+        print(f"✔️  Using existing WOA23 BGC dataset ({len(targets)} files): {woa_path}")
+        self.paths["WOA_BGC"] = woa_path
+        return woa_path
+
+    print(
+        f"⬇️  Downloading WOA23 1° BGC climatology → {woa_path} "
+        f"({len(pending)} of {len(targets)} files, ~3 GB total)"
+    )
+
+    for index, (filename, url) in enumerate(pending, start=1):
+        path = woa_path / filename
+        if path.exists():
+            print(f"⚠️  Clobber=True: removing existing WOA23 file {filename}")
+            path.unlink()
+
+        print(f"    [{index}/{len(pending)}] {filename}")
+        # Stream to a temporary file in the destination directory and move it into
+        # place, so an interrupted download never leaves a truncated file that a later
+        # run would mistake for a complete one.
+        with tempfile.NamedTemporaryFile(
+            delete=False, dir=str(woa_path), suffix=".part"
+        ) as tmpfile:
+            with urlopen(url) as r:
+                shutil.copyfileobj(r, tmpfile)
+            tmp_path = Path(tmpfile.name)
+        tmp_path.replace(path)
+
+    print(f"✔️  WOA23 BGC download complete: {woa_path}")
+    self.paths["WOA_BGC"] = woa_path
+    return woa_path
 
 
 # ---------------------------

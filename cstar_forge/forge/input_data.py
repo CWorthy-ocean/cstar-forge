@@ -32,6 +32,7 @@ from threadpoolctl import threadpool_limits
 
 from cstar_forge.forge import source_data
 from cstar_forge.forge.forge_blueprint import OpenBoundaries
+from cstar_forge.forge.source_registry import ROMS_TOOLS_SOURCE_NAME
 from cstar_forge.utils import mem_log
 
 log = logging.getLogger(__name__)
@@ -70,6 +71,22 @@ def _numba_num_threads(n: int):
 # Deliberately does NOT match arbitrary suffixes like ``_child`` -- see
 # ``RomsMarblInputData._matches_planned_output``.
 _PLANNED_OUTPUT_TAIL_RE = re.compile(r"^(_\d+|_clim|\.\d+)?$")
+
+
+def _rename_for_roms_tools(out: dict[str, Any], name: str) -> dict[str, Any]:
+    """Swap a Forge logical source name for the name roms-tools registers it under.
+
+    The two agree for almost every source. They differ where Forge needs a finer
+    distinction than roms-tools does -- ``WOA_BGC`` vs the SSS-restoring ``WOA``,
+    which stage different file sets into the same directory but are one and the same
+    ``"WOA"`` BGC source to roms-tools. See ``ROMS_TOOLS_SOURCE_NAME``.
+
+    Returns ``out`` unchanged (not a copy) when no rename applies.
+    """
+    renamed = ROMS_TOOLS_SOURCE_NAME.get(name)
+    if renamed is not None:
+        out["name"] = renamed
+    return out
 
 
 def filter_paths_by_time_window(
@@ -1018,7 +1035,7 @@ class RomsMarblInputData(InputData):
         # streamable_for_source prefers the pinned ForgeBlueprint resolved_datasets
         # snapshot over a live source_registry check (see SourceData.streamable_for_source).
         if self.source_data.streamable_for_source(name, glorys_layout=glorys_layout):
-            return out
+            return _rename_for_roms_tools(out, name)
 
         # A derived/computed pseudo-source (ESPER/constants) is never staged by Forge
         # at all -- there is no self.paths entry for it, so path_for_source would raise
@@ -1026,9 +1043,14 @@ class RomsMarblInputData(InputData):
         # for constants, and for ESPER when PyESPER is installed in the environment)
         # must be used as-is, same as a streamable source's path above.
         if self.source_data.derived_for_source(name):
-            return out
+            return _rename_for_roms_tools(out, name)
 
         path = self.source_data.path_for_source(name, glorys_layout=glorys_layout)
+        # Hand roms-tools the name IT registers the source under, which for a few
+        # sources differs from Forge's logical name (see ROMS_TOOLS_SOURCE_NAME).
+        # Done after every path/streamable lookup above, all of which key off the
+        # Forge name.
+        out = _rename_for_roms_tools(out, name)
         if path is not None:
             if time_window is not None and isinstance(path, list) and len(path) >= 2:
                 trimmed = filter_paths_by_time_window(path, *time_window)

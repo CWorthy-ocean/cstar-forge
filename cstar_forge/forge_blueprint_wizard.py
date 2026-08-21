@@ -208,8 +208,9 @@ HELP_TEXT: dict[str, str] = {
         "ic_bgc",
         "name",
     ): "Logical BGC source name for this initial-conditions contributor, e.g. "
-    "'UNIFIED', 'GLODAP', 'constants', or 'ESPER'. Add multiple rows to combine "
-    "sources (down-select each via use_vars).",
+    "'UNIFIED', 'GLODAP', 'WOA_BGC', 'constants', or 'ESPER'. Add multiple rows to "
+    "combine sources (down-select each via use_vars). 'WOA_BGC' supplies only "
+    "NO3/PO4/SiO3/O2, so pair it with a source for DIC/ALK/Fe.",
     (
         "ic_bgc",
         "climatology",
@@ -333,7 +334,7 @@ HELP_TEXT: dict[str, str] = {
         "boundary",
         "name",
     ): "Logical source name for boundary conditions, e.g. 'GLORYS' (physics) or "
-    "'UNIFIED' (BGC). Resolved via the catalog alias map.",
+    "'UNIFIED' / 'WOA_BGC' (BGC). Resolved via the catalog alias map.",
     (
         "boundary",
         "type",

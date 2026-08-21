@@ -246,6 +246,11 @@ class BgcBoundarySource(str, Enum):
     UNIFIED = "UNIFIED"
     CESM_REGRIDDED = "CESM_REGRIDDED"
     GLODAP = "GLODAP"
+    # WOA23 1-deg gridded BGC: NO3/PO4/SiO3/O2 only, so pair it with a DIC/ALK/Fe
+    # source. Named WOA_BGC rather than WOA because the restoring SSS source already
+    # owns the bare "WOA" name and stages a different file set; ROMS_TOOLS_SOURCE_NAME
+    # renames this back to "WOA" for roms-tools, which has only the one WOA BGC source.
+    WOA_BGC = "WOA_BGC"
     CONSTANTS = (
         "constants"  # depth-invariant constant value(s); see SourceSpec.constants
     )
@@ -264,6 +269,11 @@ class BgcInitialConditionsSource(str, Enum):
     UNIFIED = "UNIFIED"
     CESM_REGRIDDED = "CESM_REGRIDDED"
     GLODAP = "GLODAP"
+    # WOA23 1-deg gridded BGC: NO3/PO4/SiO3/O2 only, so pair it with a DIC/ALK/Fe
+    # source. Named WOA_BGC rather than WOA because the restoring SSS source already
+    # owns the bare "WOA" name and stages a different file set; ROMS_TOOLS_SOURCE_NAME
+    # renames this back to "WOA" for roms-tools, which has only the one WOA BGC source.
+    WOA_BGC = "WOA_BGC"
     CONSTANTS = (
         "constants"  # depth-invariant constant value(s); see SourceSpec.constants
     )
