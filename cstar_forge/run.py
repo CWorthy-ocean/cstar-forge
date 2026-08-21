@@ -186,13 +186,11 @@ def main(argv: list | None = None, *, prog: str = "python -m cstar_forge.run") -
         action=argparse.BooleanOptionalAction,
         default=None,
         help="force every IC/boundary NetCDF write onto dask's synchronous "
-        "scheduler, one task at a time with BLAS/numba boosted to every core "
-        "(bounded peak memory, safe for an ML-backed source like ESPER) with "
-        "--serialize-dask-write, or force it fully concurrent instead (faster, "
-        "safe only for ordinary regrid-only sources) with "
-        "--no-serialize-dask-write. Default: neither flag given, each source "
-        "decides for itself based on its own HIGH_MEMORY_METHOD. Ignored with "
-        "--no-dask.",
+        "scheduler, one task at a time with BLAS/numba boosted to every core, "
+        "with --serialize-dask-write: a manual low-memory/troubleshooting tool "
+        "that bounds peak memory to one task's footprint at a wall-time cost "
+        "(default and --no-serialize-dask-write are the ordinary concurrent "
+        "write; PyESPER protects its own chunks). Ignored with --no-dask.",
     )
     parser.add_argument(
         "--subchunk",

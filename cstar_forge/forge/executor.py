@@ -1400,10 +1400,10 @@ class ForgeExecutor(BaseModel):
             ``use_dask`` is True. Default 8.
         serialize_dask_write : bool, optional
             Forwarded to every IC/boundary ``.save()`` call as ``serialize_dask=``
-            (see :func:`roms_tools.utils.save_datasets`). Default ``None``: each
-            source's own ``HIGH_MEMORY_METHOD`` decides automatically (serialized
-            for an ML-backed source like ESPER, concurrent otherwise). Pass
-            ``True``/``False`` to force the same choice everywhere instead. Only
+            (see :func:`roms_tools.utils.save_datasets`). Default ``None`` resolves
+            to the ordinary concurrent write for every source (PyESPER protects
+            itself). Pass ``True`` to force the serialized, one-task-at-a-time
+            write everywhere -- a manual low-memory / troubleshooting tool. Only
             applied when ``use_dask`` is True.
         subchunk : bool, optional
             Just-in-time build a kerchunk-subchunked reference for multi-file

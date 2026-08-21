@@ -353,20 +353,17 @@ class RomsMarblInputData(InputData):
     ``--dask-num-workers``."""
     serialize_dask_write: bool | None = None
     """Passed through as ``serialize_dask=`` to every roms-tools ``.save()`` call
-    (see :func:`roms_tools.utils.save_datasets`). Default ``None``: each
-    ``InitialConditionsSource``/``BoundaryForcingSource``'s own
-    ``HIGH_MEMORY_METHOD`` decides automatically -- serialized (dask's
-    synchronous scheduler, one task at a time, with BLAS/numba boosted to every
-    visible core for that one call) for a high-memory, ML-backed source like
-    ``ESPER``, left fully concurrent (dask's normal several-worker scheduler) for
-    an ordinary regrid-only source. This matters because an ML-backed source's
-    per-chunk memory cost (PyESPER's ``run_nets``: ~10 KB/point, tens of GB for
-    one chunk at production scale) multiplies by however many dask workers run
-    concurrently -- confirmed via a kernel OOM-kill log to exhaust all memory on
-    a 251 GB machine when left fully concurrent, whereas an ordinary source's
-    per-chunk cost never approaches that regardless of worker count. Pass
-    ``True``/``False`` to force the same choice onto every save instead of
-    auto-detecting. Only applied when ``use_dask`` is True."""
+    (see :func:`roms_tools.utils.save_datasets`). Default ``None`` resolves to
+    the ordinary concurrent write (dask's normal several-worker scheduler) for
+    every source, ESPER included -- PyESPER serialises its own kernels and
+    budgets its own chunk memory, so no source needs the serialized regime any
+    more. Pass ``True`` to force every write onto dask's synchronous scheduler
+    (one task at a time, BLAS/numba boosted to every visible core): a manual
+    tool for low-memory machines -- it bounds peak memory to a single task's
+    footprint, which the threaded scheduler cannot guarantee -- and for
+    troubleshooting scheduler-dependent failures. Costs wall time (measured
+    1.57x slower on a production IC save). Only applied when ``use_dask`` is
+    True."""
     use_pio: bool = False
     """Whether ROMS is built against ParallelIO. Every roms-tools save is left at
     its default format (NETCDF4/HDF5 -- fast); when ``use_pio`` is True, each
