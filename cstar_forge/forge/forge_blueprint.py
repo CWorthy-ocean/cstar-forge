@@ -613,8 +613,11 @@ class SourceSpec(_Section):
     """Explicit dataset path override. ``None`` (the default) means the path is
     derived from :class:`SourceData` at processing time (the standard staged/streamed
     location). Set this only to point at a non-default local file. For an ``ESPER``
-    source, this is the (required) path to the PyESPER package directory (containing
-    ``Mat_fullgrid/`` and ``NeuralNetworks/``), not a dataset file."""
+    source, this is the path to a PyESPER repository checkout (containing
+    ``Mat_fullgrid/`` and ``NeuralNetworks/``), not a dataset file -- optional: when
+    omitted, PyESPER must be installed in the Python environment (e.g.
+    ``pip install -e <checkout>``), in which case it locates its own data
+    directories automatically."""
     constants: dict[str, float] | None = None
     """Depth-invariant constant value(s) (e.g. ``{"Fe": 3.0e-3}``), mmol/m^3. Required
     (and only valid) when ``name == "constants"``."""
@@ -654,10 +657,10 @@ class SourceSpec(_Section):
             raise ValueError(
                 "esper_method/esper_equation are only valid when name is 'ESPER'"
             )
-        if is_esper and not self.path:
-            raise ValueError(
-                "an 'ESPER' source requires 'path' (the PyESPER package directory)"
-            )
+        # No path requirement for ESPER: without one, roms-tools imports PyESPER
+        # from the environment and PyESPER resolves its own data directories
+        # (PyESPER.paths.data_root). An explicit path remains an override for
+        # running a specific checkout.
         return self
 
 

@@ -1022,8 +1022,9 @@ class RomsMarblInputData(InputData):
 
         # A derived/computed pseudo-source (ESPER/constants) is never staged by Forge
         # at all -- there is no self.paths entry for it, so path_for_source would raise
-        # a KeyError. Its own explicit path (ESPER's required PyESPER directory; absent
-        # for constants) must be used as-is, same as a streamable source's path above.
+        # a KeyError. Its own explicit path (ESPER's optional PyESPER checkout; absent
+        # for constants, and for ESPER when PyESPER is installed in the environment)
+        # must be used as-is, same as a streamable source's path above.
         if self.source_data.derived_for_source(name):
             return out
 
