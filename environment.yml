@@ -70,4 +70,4 @@ dependencies:
   - ujson
   - fastparquet
   - cstar-ocean>=0.11.0
-  - roms-tools>=4.1.0, <5
+  - roms-tools>=4.1.1, <5

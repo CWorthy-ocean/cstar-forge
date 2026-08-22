@@ -50,7 +50,7 @@ dependencies = [
     "cstar-ocean>=0.11.0",
     # >=4.1.0: first release with unified BGC v2.1 dataset support, which forge
     # requires (cstar-ocean's own pin is looser because it doesn't).
-    "roms_tools>=4.1.0,<5",
+    "roms_tools>=4.1.1,<5",
 ]
 
 # Registers the `cstar forge ...` subcommand group with C-Star's CLI
