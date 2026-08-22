@@ -47,10 +47,10 @@ dependencies = [
     "ujson",
     "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.10.0",
+    "cstar-ocean>=0.11.0",
     # >=4.1.0: first release with unified BGC v2.1 dataset support, which forge
     # requires (cstar-ocean's own pin is looser because it doesn't).
-    "roms_tools>=4.1.0,<5",
+    "roms_tools>=4.1.1,<5",
 ]
 
 # Registers the `cstar forge ...` subcommand group with C-Star's CLI
@@ -113,8 +113,8 @@ cstar-forge = { path = ".", editable = true }
 # stack it and forge depend on) go here so xesmf/esmf and friends come
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
-roms-tools = ">=4.1.0,<5"
-cstar-ocean = ">=0.10.0"
+roms-tools = ">=4.1.1,<5"
+cstar-ocean = ">=0.11.0"
 dask = "*"
 distributed = "*"
 numpy = "*"
@@ -135,7 +135,7 @@ ujson = "*"
 # complete environment with NO companion pip step — the blessed HPC replay
 # artifact for non-developers.
 [tool.pixi.feature.user.dependencies]
-cstar-forge = ">=0.3.0"
+cstar-forge = ">=0.4.0"
 
 # Laptop/workstation build toolchain — the pixi analog of dev-setup.sh's
 # --with-compilers, mirroring conda-forge cstar-ocean-standalone's list.
