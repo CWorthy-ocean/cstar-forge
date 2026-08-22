@@ -26,6 +26,13 @@ from cstar_forge.forge_blueprint_resolve import build_forge_blueprint
 _MODEL_DIR = (
     Path(cstar_forge.__file__).parent / "catalog" / "ModelSpec" / "cson_roms-marbl_v0.1"
 )
+# ucla-roms >= 0.5.0 ModelSpec -- used by the versioned-namelist golden test below.
+_MODEL_DIR_ROMS050 = (
+    Path(cstar_forge.__file__).parent
+    / "catalog"
+    / "ModelSpec"
+    / "roms-marbl-0.5-default"
+)
 _GRID_KWARGS = dict(
     nx=6,
     ny=2,
@@ -61,6 +68,25 @@ def _build(**over):
     )
     kw.update(over)
     return build_forge_blueprint(**kw)
+
+
+def test_resolver_does_not_alias_output_settings():
+    """_deep_merge must deep-copy override values: a section the ModelSpec
+    doesn't define (e.g. ocean_vars) used to be assigned into model_settings by
+    reference, so mutating one resolved blueprint in place cross-contaminated
+    the shared OutputSpec dict and every other blueprint resolved from it.
+    """
+    output_settings = _CATALOG.output_data("standard")
+    cfg_a = _build(output_settings=output_settings)
+    cfg_b = _build(output_settings=output_settings)
+
+    assert cfg_a.model_settings["ocean_vars"] is not output_settings["ocean_vars"]
+    assert cfg_a.model_settings["ocean_vars"] is not cfg_b.model_settings["ocean_vars"]
+
+    original = output_settings["ocean_vars"]["output_period_rst"]
+    cfg_a.model_settings["ocean_vars"]["output_period_rst"] = original * 2
+    assert output_settings["ocean_vars"]["output_period_rst"] == original
+    assert cfg_b.model_settings["ocean_vars"]["output_period_rst"] == original
 
 
 def test_naming_is_derived_not_stored():
@@ -215,7 +241,7 @@ def test_migrate_v4_cdr_output_do_cdr_renamed(tmp_path, legacy_value):
     back = ForgeBlueprint.from_yaml(p)
     assert back.model_settings["cdr_output"]["do_cdr_output"] is legacy_value
     assert "do_cdr" not in back.model_settings["cdr_output"]
-    assert back.forge_blueprint_version == 6
+    assert back.forge_blueprint_version == 7
 
 
 def test_migrate_v4_cdr_output_migration_is_idempotent(tmp_path):
@@ -241,11 +267,11 @@ def test_migrate_tolerates_missing_cdr_output_section():
     from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
 
     migrated = migrate_forge_blueprint_data({"forge_blueprint_version": 4})
-    assert migrated["forge_blueprint_version"] == 6
+    assert migrated["forge_blueprint_version"] == 7
 
 
 def test_migrate_v5_ic_bgc_source_becomes_bgc_sources_list():
-    """v5 -> v6: a v5-shaped singular ``initial_conditions.bgc_source`` is
+    """v6 -> v7: a pre-v7 singular ``initial_conditions.bgc_source`` is
     rewrapped as a one-item ``bgc_sources`` list; the old key is gone.
     """
     from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
@@ -263,11 +289,11 @@ def test_migrate_v5_ic_bgc_source_becomes_bgc_sources_list():
     ic = migrated["forcing"]["initial_conditions"]
     assert "bgc_source" not in ic
     assert ic["bgc_sources"] == [{"source": {"name": "UNIFIED", "climatology": True}}]
-    assert migrated["forge_blueprint_version"] == 6
+    assert migrated["forge_blueprint_version"] == 7
 
 
 def test_migrate_v5_ic_bgc_source_none_becomes_empty_list():
-    """v5 -> v6: an absent/``None`` ``bgc_source`` becomes an empty list, not
+    """v6 -> v7: an absent/``None`` ``bgc_source`` becomes an empty list, not
     a list containing ``None``.
     """
     from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
@@ -287,7 +313,7 @@ def test_migrate_v5_ic_bgc_source_migration_is_idempotent():
     from cstar_forge.forge.forge_blueprint import migrate_forge_blueprint_data
 
     data = {
-        "forge_blueprint_version": 6,
+        "forge_blueprint_version": 7,
         "forcing": {
             "initial_conditions": {
                 "source": {"name": "GLORYS"},
@@ -302,7 +328,7 @@ def test_migrate_v5_ic_bgc_source_migration_is_idempotent():
 
 
 def test_migrate_v5_ic_bgc_source_and_bgc_sources_both_present_raises():
-    """Both the pre-v6 singular key and the v6+ list key in the same dict is an
+    """Both the pre-v7 singular key and the v7+ list key in the same dict is an
     inconsistent (likely hand-edited) shape -- must raise, not silently discard
     `bgc_source`.
     """
@@ -321,6 +347,630 @@ def test_migrate_v5_ic_bgc_source_and_bgc_sources_both_present_raises():
     with pytest.raises(ValueError, match="bgc_source.*bgc_sources"):
         migrate_forge_blueprint_data(data)
 
+def test_migrate_v5_shaped_dict_loads_with_null_user_file_fields(tmp_path):
+    """A v5 file (predating user-provided files) loads, migrates its version to 6,
+    and the new fields default to ``None`` -- purely additive, no data rewrite.
+    """
+    cfg = _build()
+    p = cfg.to_yaml(tmp_path / "forge_blueprint.yaml")
+    data = yaml.safe_load(p.read_text())
+    data["forge_blueprint_version"] = 5
+
+    back = ForgeBlueprint.from_yaml_data(data)
+    assert back.forge_blueprint_version == 7
+    assert back.domain.grid_file is None
+    assert back.forcing.cdr_forcing_file is None
+    assert all(river.custom_file is None for river in back.forcing.river)
+
+
+_USER_FILE_KWARGS = dict(location="/data/staged/grid.nc", content_hash="a" * 64)
+
+
+def test_domain_grid_file_round_trips_through_yaml(tmp_path):
+    from cstar_forge.forge.forge_blueprint import UserProvidedFile
+
+    cfg = _build()
+    vertical_only = {
+        k: v
+        for k, v in cfg.domain.grid_kwargs.items()
+        if k in {"theta_s", "theta_b", "hc", "N"}
+    }
+    cfg = cfg.model_copy(
+        update={
+            "domain": cfg.domain.model_copy(
+                update={
+                    "grid_kwargs": vertical_only,
+                    "grid_file": UserProvidedFile(**_USER_FILE_KWARGS),
+                }
+            )
+        }
+    )
+    p = cfg.to_yaml(tmp_path / "forge_blueprint.yaml")
+    back = ForgeBlueprint.from_yaml(p)
+    assert back.domain.grid_file == cfg.domain.grid_file
+
+
+def test_domain_grid_file_rejects_generation_geometry_keys():
+    # ``model_copy`` (used elsewhere in this file for hash-only comparisons) does
+    # NOT re-run validators, so this constructs ``Domain`` directly through its
+    # constructor to actually exercise ``_grid_file_excludes_generation_geometry``.
+    from cstar_forge.forge.forge_blueprint import (
+        Domain,
+        OpenBoundaries,
+        Partitioning,
+        UserProvidedFile,
+    )
+
+    with pytest.raises(ValueError, match="generation-only keys"):
+        Domain(
+            grid_name="custom",
+            grid_kwargs={"nx": 6, "ny": 2, "theta_s": 5.0},
+            open_boundaries=OpenBoundaries(),
+            partitioning=Partitioning(n_procs_x=1, n_procs_y=1),
+            grid_file=UserProvidedFile(**_USER_FILE_KWARGS),
+        )
+
+
+def test_domain_grid_file_allows_vertical_coord_kwargs():
+    """theta_s/theta_b/hc/N remain allowed alongside a supplied grid file --
+    roms-tools accepts them alongside ``filename``.
+    """
+    from cstar_forge.forge.forge_blueprint import (
+        Domain,
+        OpenBoundaries,
+        Partitioning,
+        UserProvidedFile,
+    )
+
+    domain = Domain(
+        grid_name="custom",
+        grid_kwargs={"theta_s": 5.0, "theta_b": 2.0, "hc": 250.0, "N": 3},
+        open_boundaries=OpenBoundaries(),
+        partitioning=Partitioning(n_procs_x=1, n_procs_y=1),
+        grid_file=UserProvidedFile(**_USER_FILE_KWARGS),
+    )
+    assert domain.grid_file is not None
+
+
+def test_domain_grid_file_rejects_nesting():
+    from cstar_forge.forge.forge_blueprint import (
+        Domain,
+        OpenBoundaries,
+        Partitioning,
+        UserProvidedFile,
+    )
+
+    with pytest.raises(ValueError, match="nesting"):
+        Domain(
+            grid_name="custom",
+            grid_kwargs={},
+            open_boundaries=OpenBoundaries(),
+            partitioning=Partitioning(n_procs_x=1, n_procs_y=1),
+            grid_file=UserProvidedFile(**_USER_FILE_KWARGS),
+            grid_kwargs_parent={"nx": 10, "ny": 10},
+        )
+
+
+def test_river_custom_file_required_when_source_is_custom_file():
+    from cstar_forge.forge.forge_blueprint import RiverForcingItem, SourceSpec
+
+    with pytest.raises(ValueError, match="custom_file is not set"):
+        RiverForcingItem(source=SourceSpec(name="CUSTOM_FILE"))
+
+
+def test_river_custom_file_forbidden_when_source_is_not_custom_file():
+    from cstar_forge.forge.forge_blueprint import (
+        RiverForcingItem,
+        SourceSpec,
+        UserProvidedFile,
+    )
+
+    with pytest.raises(ValueError, match="only valid with a CUSTOM_FILE source"):
+        RiverForcingItem(
+            source=SourceSpec(name="DAI"),
+            custom_file=UserProvidedFile(**_USER_FILE_KWARGS),
+        )
+
+
+def test_river_custom_file_round_trips_and_is_valid():
+    from cstar_forge.forge.forge_blueprint import (
+        RiverForcingItem,
+        SourceSpec,
+        UserProvidedFile,
+    )
+
+    river = RiverForcingItem(
+        source=SourceSpec(name="CUSTOM_FILE"),
+        custom_file=UserProvidedFile(**_USER_FILE_KWARGS),
+    )
+    assert river.custom_file is not None
+
+
+def test_river_custom_file_excludes_bgc_source():
+    from cstar_forge.forge.forge_blueprint import (
+        RiverForcingItem,
+        SourceSpec,
+        UserProvidedFile,
+    )
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        RiverForcingItem(
+            source=SourceSpec(name="CUSTOM_FILE"),
+            custom_file=UserProvidedFile(**_USER_FILE_KWARGS),
+            include_bgc=True,
+            bgc_source={"name": "RIVR2O"},
+        )
+
+
+def test_forcing_cdr_forcing_file_mutually_exclusive_with_cdr_forcing():
+    # Constructs ``Forcing`` directly (see the comment on the sibling grid_file
+    # test above for why ``model_copy`` won't do here).
+    from cstar_forge.forge.forge_blueprint import (
+        Forcing,
+        InitialConditions,
+        SourceSpec,
+        UserProvidedFile,
+    )
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        Forcing(
+            initial_conditions=InitialConditions(source=SourceSpec(name="GLORYS")),
+            cdr_forcing={"some": "config"},
+            cdr_forcing_file=UserProvidedFile(**_USER_FILE_KWARGS),
+        )
+
+
+def test_content_hash_ignores_user_file_location_but_not_content_hash():
+    """Same rationale as ``code.<repo>.location``: a user file's ``location`` is
+    host/transport and must not perturb the content hash, but its ``content_hash``
+    leaf (the pin on the file's actual data) is results-affecting.
+    """
+    from cstar_forge.forge.forge_blueprint import UserProvidedFile
+
+    cfg = _build()
+    vertical_only = {
+        k: v
+        for k, v in cfg.domain.grid_kwargs.items()
+        if k in {"theta_s", "theta_b", "hc", "N"}
+    }
+    base = cfg.model_copy(
+        update={
+            "domain": cfg.domain.model_copy(
+                update={
+                    "grid_kwargs": vertical_only,
+                    "grid_file": UserProvidedFile(
+                        location="/data/staged/a.nc", content_hash="a" * 64
+                    ),
+                }
+            )
+        }
+    )
+    same_content_other_location = base.model_copy(
+        update={
+            "domain": base.domain.model_copy(
+                update={
+                    "grid_file": UserProvidedFile(
+                        location="/somewhere/else/b.nc", content_hash="a" * 64
+                    )
+                }
+            )
+        }
+    )
+    assert same_content_other_location.content_hash() == base.content_hash()
+
+    different_content = base.model_copy(
+        update={
+            "domain": base.domain.model_copy(
+                update={
+                    "grid_file": UserProvidedFile(
+                        location="/data/staged/a.nc", content_hash="b" * 64
+                    )
+                }
+            )
+        }
+    )
+    assert different_content.content_hash() != base.content_hash()
+
+
+# ---------------------------------------------------------------------------
+# Resolver: grid pathway (build_forge_blueprint(grid_file=...))
+#
+# roms_tools.Grid is stubbed here (not called for real): a real ``rt.Grid(...)``
+# build is broken in this dev env (PROJ/geopandas ``proj.db`` version mismatch --
+# see CLAUDE.md), and stubbing also keeps these tests fast/offline. The stub
+# stands in for the ONE grid load the resolver performs
+# (``rt.Grid(filename=..., **vert)``) when ``grid_file`` is set.
+# ---------------------------------------------------------------------------
+class _FakeLoadedGrid:
+    """Stand-in for a roms_tools.Grid loaded from a user-supplied filename."""
+
+    def __init__(
+        self,
+        *,
+        nx,
+        ny,
+        N,
+        theta_s=5.0,
+        theta_b=2.0,
+        hc=250.0,
+        size_x=None,
+        size_y=None,
+    ):
+        self.nx = nx
+        self.ny = ny
+        self.N = N
+        self.theta_s = theta_s
+        self.theta_b = theta_b
+        self.hc = hc
+        self.size_x = size_x
+        self.size_y = size_y
+        self.ds = None  # unused: CFL derivation defaults to baroclinic mode
+
+
+def _write_tiny_netcdf(tmp_path, name="grid.nc"):
+    """A minimal real netCDF file for ``hash_netcdf_contents`` to hash -- content
+    is irrelevant (the loaded *grid* comes from the stubbed ``roms_tools.Grid``,
+    not from parsing this file), only that it exists and is a valid netCDF.
+    """
+    import numpy as np
+    import xarray as xr
+
+    ds = xr.Dataset(
+        {"mask_rho": (("eta_rho", "xi_rho"), np.ones((4, 5)))},
+        attrs={"title": "tiny user-supplied grid"},
+    )
+    path = tmp_path / name
+    ds.to_netcdf(path)
+    return path
+
+
+def test_build_forge_blueprint_grid_file_derives_dims_dt_v_sponge(
+    monkeypatch, tmp_path
+):
+    from cstar_forge.forge.user_files import hash_netcdf_contents
+
+    grid_path = _write_tiny_netcdf(tmp_path)
+    captured = {}
+    fake_grid = _FakeLoadedGrid(nx=7, ny=9, N=4, size_x=300.0, size_y=400.0)
+
+    def _stub(**kwargs):
+        captured.update(kwargs)
+        return fake_grid
+
+    monkeypatch.setattr("roms_tools.Grid", _stub)
+
+    cfg = _build(grid_file=str(grid_path), grid_kwargs={}, dt=None, v_sponge=None)
+
+    assert captured == {"filename": str(grid_path)}
+    assert cfg.domain.grid_file is not None
+    assert cfg.domain.grid_file.location == str(grid_path)
+    assert cfg.domain.grid_file.content_hash == hash_netcdf_contents(grid_path)
+    assert cfg.model_settings["param"]["llm"] == 7
+    assert cfg.model_settings["param"]["mmm"] == 9
+    assert cfg.model_settings["param"]["n"] == 4
+    assert cfg.domain.dt is not None
+    assert cfg.domain.v_sponge is not None
+
+
+def test_build_forge_blueprint_grid_file_skips_topography_dataset(
+    monkeypatch, tmp_path
+):
+    # Topography is baked into a user-supplied grid file: the configured source
+    # must not be noted into resolved_datasets/datasets (a user-staged source
+    # like EMOD would otherwise hard-fail ensure_source_data over an unused file).
+    grid_path = _write_tiny_netcdf(tmp_path)
+    monkeypatch.setattr(
+        "roms_tools.Grid",
+        lambda **kw: _FakeLoadedGrid(nx=7, ny=9, N=4, size_x=300.0, size_y=400.0),
+    )
+
+    cfg = _build(
+        grid_file=str(grid_path),
+        grid_kwargs={},
+        topography_source="EMOD",
+        dt=7200,
+        v_sponge=1.0,
+    )
+    assert "EMOD" not in cfg.forcing.resolved_datasets
+    assert "EMOD" not in cfg.datasets
+
+    control = _build(topography_source="EMOD")
+    assert "EMOD" in control.forcing.resolved_datasets
+
+
+def test_build_forge_blueprint_grid_file_passes_vert_kwargs(monkeypatch, tmp_path):
+    grid_path = _write_tiny_netcdf(tmp_path)
+    captured = {}
+    fake_grid = _FakeLoadedGrid(nx=5, ny=5, N=3, size_x=100.0, size_y=100.0)
+
+    def _stub(**kwargs):
+        captured.update(kwargs)
+        return fake_grid
+
+    monkeypatch.setattr("roms_tools.Grid", _stub)
+
+    _build(
+        grid_file=str(grid_path),
+        grid_kwargs={"theta_s": 5.0, "theta_b": 2.0, "hc": 250.0, "N": 3},
+        dt=7200,
+        v_sponge=1.0,
+    )
+    assert captured == {
+        "filename": str(grid_path),
+        "theta_s": 5.0,
+        "theta_b": 2.0,
+        "hc": 250.0,
+        "N": 3,
+    }
+
+
+def test_build_forge_blueprint_grid_file_partial_vert_kwargs_raises(tmp_path):
+    grid_path = _write_tiny_netcdf(tmp_path)
+    with pytest.raises(ValueError, match="theta_s"):
+        _build(
+            grid_file=str(grid_path),
+            grid_kwargs={"theta_s": 5.0},
+            dt=7200,
+            v_sponge=1.0,
+        )
+
+
+def test_build_forge_blueprint_grid_file_missing_raises(tmp_path):
+    missing = tmp_path / "does-not-exist.nc"
+    with pytest.raises(FileNotFoundError):
+        _build(grid_file=str(missing), grid_kwargs={}, dt=7200, v_sponge=1.0)
+
+
+def test_build_forge_blueprint_grid_file_no_size_x_requires_explicit_dt(
+    monkeypatch, tmp_path
+):
+    grid_path = _write_tiny_netcdf(tmp_path)
+    fake_grid = _FakeLoadedGrid(nx=5, ny=5, N=3, size_x=None, size_y=None)
+    monkeypatch.setattr("roms_tools.Grid", lambda **kw: fake_grid)
+
+    with pytest.raises(ValueError, match="dt"):
+        _build(grid_file=str(grid_path), grid_kwargs={}, dt=None, v_sponge=1.0)
+
+
+def test_build_forge_blueprint_grid_file_no_size_x_requires_explicit_v_sponge(
+    monkeypatch, tmp_path
+):
+    grid_path = _write_tiny_netcdf(tmp_path)
+    fake_grid = _FakeLoadedGrid(nx=5, ny=5, N=3, size_x=None, size_y=None)
+    monkeypatch.setattr("roms_tools.Grid", lambda **kw: fake_grid)
+
+    with pytest.raises(ValueError, match="v_sponge"):
+        _build(grid_file=str(grid_path), grid_kwargs={}, dt=7200, v_sponge=None)
+
+
+def test_build_forge_blueprint_grid_file_trusted_dict_skips_rehash(
+    monkeypatch, tmp_path
+):
+    """A dict carrying both ``location``/``content_hash`` (the wizard's rebuild
+    path) is trusted as-is -- the resolver still loads the grid (for nx/ny/N),
+    but does not recompute the hash.
+    """
+    grid_path = _write_tiny_netcdf(tmp_path)
+    fake_grid = _FakeLoadedGrid(nx=5, ny=5, N=3, size_x=100.0, size_y=100.0)
+    monkeypatch.setattr("roms_tools.Grid", lambda **kw: fake_grid)
+
+    trusted = {"location": str(grid_path), "content_hash": "not-the-real-hash"}
+    cfg = _build(grid_file=trusted, grid_kwargs={}, dt=7200, v_sponge=1.0)
+    assert cfg.domain.grid_file.content_hash == "not-the-real-hash"
+
+
+def test_build_forge_blueprint_grid_file_accepts_user_provided_file_instance(
+    monkeypatch, tmp_path
+):
+    from cstar_forge.forge.forge_blueprint import UserProvidedFile
+
+    grid_path = _write_tiny_netcdf(tmp_path)
+    fake_grid = _FakeLoadedGrid(nx=5, ny=5, N=3, size_x=100.0, size_y=100.0)
+    monkeypatch.setattr("roms_tools.Grid", lambda **kw: fake_grid)
+
+    gf = UserProvidedFile(location=str(grid_path), content_hash="pinned-hash")
+    cfg = _build(grid_file=gf, grid_kwargs={}, dt=7200, v_sponge=1.0)
+    assert cfg.domain.grid_file == gf
+
+
+def test_cpus_needed_falls_back_to_param_dims_for_grid_file(monkeypatch, tmp_path):
+    from cstar_forge.forge.forge_blueprint import estimate_forge_cpus
+
+    grid_path = _write_tiny_netcdf(tmp_path)
+    fake_grid = _FakeLoadedGrid(nx=50, ny=60, N=10, size_x=500.0, size_y=600.0)
+    monkeypatch.setattr("roms_tools.Grid", lambda **kw: fake_grid)
+
+    cfg = _build(grid_file=str(grid_path), grid_kwargs={}, dt=7200, v_sponge=1.0)
+    assert "nx" not in cfg.domain.grid_kwargs
+    assert cfg.cpus_needed == estimate_forge_cpus(50, 60, 10)
+
+
+# ---------------------------------------------------------------------------
+# Resolver: river custom_file pathway (build_forge_blueprint(forcing_inputs=...))
+# ---------------------------------------------------------------------------
+def test_build_forge_blueprint_river_custom_file_carries_hash(tmp_path):
+    import copy
+
+    from cstar_forge.forge.user_files import hash_netcdf_contents
+
+    river_path = _write_tiny_netcdf(tmp_path, name="river.nc")
+    fdata = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["river"] = [
+        {
+            "source": {"name": "CUSTOM_FILE"},
+            "custom_file": str(river_path),
+        }
+    ]
+
+    cfg = _build(forcing_inputs=fdata)
+
+    river = cfg.forcing.river[0]
+    assert river.source.name == "CUSTOM_FILE"
+    assert river.custom_file is not None
+    assert river.custom_file.location == str(river_path)
+    assert river.custom_file.content_hash == hash_netcdf_contents(river_path)
+    # No registry entry for CUSTOM_FILE -- staging it would either raise "Unknown
+    # dataset" downstream or bogus-stage a source that is never used.
+    assert "CUSTOM_FILE" not in cfg.forcing.resolved_datasets
+    assert "CUSTOM_FILE" not in cfg.datasets
+
+
+def test_build_forge_blueprint_river_custom_file_trusted_dict_skips_rehash(tmp_path):
+    import copy
+
+    river_path = _write_tiny_netcdf(tmp_path, name="river.nc")
+    fdata = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["river"] = [
+        {
+            "source": {"name": "CUSTOM_FILE"},
+            "custom_file": {
+                "location": str(river_path),
+                "content_hash": "not-the-real-hash",
+            },
+        }
+    ]
+
+    cfg = _build(forcing_inputs=fdata)
+    assert cfg.forcing.river[0].custom_file.content_hash == "not-the-real-hash"
+
+
+def test_build_forge_blueprint_river_custom_file_missing_raises(tmp_path):
+    import copy
+
+    missing = tmp_path / "does-not-exist.nc"
+    fdata = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["river"] = [
+        {"source": {"name": "CUSTOM_FILE"}, "custom_file": str(missing)}
+    ]
+
+    with pytest.raises(FileNotFoundError):
+        _build(forcing_inputs=fdata)
+
+
+# ---------------------------------------------------------------------------
+# Resolver: CDR-forcing custom-file pathway (build_forge_blueprint(cdr_forcing_file=...))
+# ---------------------------------------------------------------------------
+def test_build_forge_blueprint_cdr_forcing_file_carries_hash_and_forces_output(
+    tmp_path,
+):
+    from cstar_forge.forge.user_files import hash_netcdf_contents
+
+    cdr_path = _write_tiny_netcdf(tmp_path, name="cdr.nc")
+
+    cfg = _build(cdr_forcing_file=str(cdr_path))
+
+    assert cfg.forcing.cdr_forcing_file is not None
+    assert cfg.forcing.cdr_forcing_file.location == str(cdr_path)
+    assert cfg.forcing.cdr_forcing_file.content_hash == hash_netcdf_contents(cdr_path)
+    assert cfg.forcing.cdr_forcing is None
+
+    settings = cfg.model_settings
+    assert settings["cdr_output"]["do_cdr_output"] is True
+    assert settings["cppdefs"]["cdr_forcing"] is True
+    diags = settings["marbl_bgc"]["marbl_diagnostics_to_write"]
+    for name in _CDR_OUTPUT_REQUIRED_DIAGNOSTICS:
+        assert name in diags
+
+
+def test_build_forge_blueprint_cdr_forcing_file_trusted_dict_skips_rehash(tmp_path):
+    cdr_path = _write_tiny_netcdf(tmp_path, name="cdr.nc")
+
+    cfg = _build(
+        cdr_forcing_file={
+            "location": str(cdr_path),
+            "content_hash": "not-the-real-hash",
+        }
+    )
+    assert cfg.forcing.cdr_forcing_file.content_hash == "not-the-real-hash"
+
+
+def test_build_forge_blueprint_cdr_forcing_file_missing_raises(tmp_path):
+    missing = tmp_path / "does-not-exist.nc"
+    with pytest.raises(FileNotFoundError):
+        _build(cdr_forcing_file=str(missing))
+
+
+def test_build_forge_blueprint_cdr_forcing_file_requires_marbl(tmp_path):
+    """Mirrors test_cdr_output_requires_marbl: a user-supplied cdr_forcing_file
+    implies do_cdr_output just like a generated cdr_forcing, so it must raise
+    the same way when bgc_mode="none".
+    """
+    cdr_path = _write_tiny_netcdf(tmp_path, name="cdr.nc")
+    with pytest.raises(ValueError, match="do_cdr_output"):
+        _build(
+            cdr_forcing_file=str(cdr_path),
+            bgc_mode="none",
+            forcing_inputs=_PHYSICS_ONLY_FORCING,
+        )
+
+
+def test_build_forge_blueprint_cdr_forcing_file_conflicts_with_cdr_forcing(tmp_path):
+    """A resolver-level error (not the bare pydantic ValidationError from
+    Forcing's own validator) when both are passed to the resolver.
+    """
+    cdr_path = _write_tiny_netcdf(tmp_path, name="cdr.nc")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _build(cdr_forcing_file=str(cdr_path), cdr_forcing={"releases": []})
+
+
+def test_build_forge_blueprint_cdr_forcing_file_conflicts_with_cdr_forcing_yaml(
+    tmp_path,
+):
+    cdr_path = _write_tiny_netcdf(tmp_path, name="cdr.nc")
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        _build(cdr_forcing_file=str(cdr_path), cdr_forcing_yaml=_CDR_SAMPLE_YAML)
+
+
+# ---------------------------------------------------------------------------
+# SourceSpec.path: the legacy "explicit dataset path override" -- previously
+# collected by the wizard but silently dropped by the resolver (never threaded
+# into SourceSpec, so it never survived to the executor). Deliberately no
+# hashing for this override (out of scope; unlike grid_file/custom_file this is
+# a legacy escape hatch, not a new user-provided-file contract).
+# ---------------------------------------------------------------------------
+def test_build_forge_blueprint_source_path_round_trips_to_blueprint():
+    import copy
+
+    fdata = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["surface"][0]["source"]["path"] = "/custom/era5.nc"
+
+    cfg = _build(forcing_inputs=fdata)
+    assert cfg.forcing.surface[0].source.path == "/custom/era5.nc"
+
+
+def test_build_forge_blueprint_source_path_skips_dataset_noting():
+    """An item whose source carries an explicit path bypasses staging entirely
+    (mirrors topography_path semantics) -- it must not be noted into
+    resolved_datasets/datasets, since input_data._resolve_source_block returns
+    the explicit path verbatim without ever staging/verifying via SourceData.
+    """
+    import copy
+
+    fdata = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["surface"][0]["source"]["path"] = "/custom/era5.nc"
+
+    cfg = _build(forcing_inputs=fdata)
+    assert "ERA5" not in cfg.forcing.resolved_datasets
+    assert "ERA5" not in cfg.datasets
+
+    # Control: without the explicit path, ERA5 is noted as usual.
+    control = _build(forcing_inputs=_CATALOG.forcing_data("glorys-era5-unified"))
+    assert "ERA5" in control.forcing.resolved_datasets
+    assert "ERA5" in control.datasets
+
+
+def test_sources_to_forcing_override_carries_source_path():
+    import copy
+
+    from cstar_forge.forge.forge_blueprint_engine import sources_to_forcing_override
+
+    fdata = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["surface"][0]["source"]["path"] = "/custom/era5.nc"
+
+    cfg = _build(forcing_inputs=fdata)
+    ov = sources_to_forcing_override(cfg)
+    assert ov["forcing"]["surface"][0]["source"]["path"] == "/custom/era5.nc"
+
 
 def test_schema_round_trip_identity(tmp_path):
     cfg = _build()
@@ -333,7 +983,7 @@ def test_schema_round_trip_identity(tmp_path):
 
 
 def test_content_hash_ignores_excluded_sections():
-    from cstar_forge.forge.forge_blueprint import _HASH_EXCLUDE, PieceRef
+    from cstar_forge.forge.forge_blueprint import _HASH_EXCLUDE, SpecRef
 
     cfg = _build()
     h = cfg.content_hash()
@@ -343,7 +993,7 @@ def test_content_hash_ignores_excluded_sections():
             "name": "totally-different-name",
             "description": "totally different",
             "composition": cfg.composition.model_copy(
-                update={"forcing": PieceRef(name="x", origin="custom")}
+                update={"forcing": SpecRef(name="x", origin="custom")}
             ),
             "provenance": cfg.provenance.model_copy(update={"notes": "edited"}),
         }
@@ -522,6 +1172,41 @@ def test_golden_model_settings_test_tiny():
     )
 
 
+def test_golden_model_settings_test_tiny_roms050():
+    """Behavior-preservation snapshot for the ``roms-marbl-0.5-default`` ModelSpec
+    (ucla-roms >= 0.5.0), resolved from the same test-tiny domain/forcing/output
+    setup as ``test_golden_model_settings_test_tiny``.
+
+    ``model_settings`` itself is schema-version-agnostic (the resolver doesn't
+    validate it against ``RunTimeSettings``/``RunTimeSettingsV0_5_0`` -- that
+    happens downstream, at ``write_roms_namelist`` time), so this is a plain
+    resolver-drift snapshot for the new ModelSpec, not a versioned-namelist
+    assertion (see ``TestGoldenNamelist.test_golden_namelist_test_tiny_roms050``
+    in ``tests/test_core.py`` for that). It intentionally differs from
+    ``golden_model_settings_test-tiny.json`` because that fixture is resolved
+    from the unrelated ``cson_roms-marbl_v0.1`` ModelSpec, with its own physics/
+    numerics defaults.
+    """
+    import json
+
+    golden_path = (
+        Path(cstar_forge.__file__).parents[1]
+        / "tests"
+        / "fixtures"
+        / "golden_model_settings_test-tiny-roms050.json"
+    )
+    golden = json.loads(golden_path.read_text())
+    cfg = _build(model_dir=_MODEL_DIR_ROMS050)  # test-tiny, dt=7200
+    got = json.loads(json.dumps(cfg.model_settings, sort_keys=True, default=str))
+    assert got == golden, (
+        "Resolved model_settings for test-tiny (roms-marbl-0.5-default) drifted "
+        "from the golden fixture. If this is an intentional schema/default "
+        "change, regenerate tests/fixtures/golden_model_settings_test-tiny-"
+        "roms050.json; otherwise the change is a regression in the settings the "
+        "executor feeds to namelist.nml / cppdefs.opt."
+    )
+
+
 def test_resolver_nesting_enables_extract_data():
     cfg = _build(
         grid_kwargs_child=dict(
@@ -643,6 +1328,40 @@ def test_resolver_child_grid_is_parent_and_keeps_boundary_forcing():
     assert cfg.domain.is_child is False
     # a parent-only grid keeps its own boundary forcing
     assert cfg.forcing.boundary is not None
+
+
+def test_resolver_parent_grid_skips_initial_conditions():
+    # A child grid (has a parent) receives its state from the parent's
+    # nesting.nc extraction, so IC is optional -- omitting it must not leak
+    # any IC source into resolved_datasets/datasets, mirroring the boundary
+    # skip above.
+    import copy
+
+    fi = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    assert fi["initial_conditions"]["source"]  # sanity: fixture has an IC
+    del fi["initial_conditions"]
+    cfg = _build(grid_kwargs_parent=_PARENT_GRID_KWARGS, forcing_inputs=fi)
+    assert cfg.forcing.initial_conditions is None
+    # GLORYS_REGIONAL is the resolved dataset key for the IC's glorys_layout;
+    # it must not leak into datasets/resolved_datasets when IC is skipped.
+    assert "GLORYS_REGIONAL" not in cfg.datasets
+    assert "GLORYS" not in cfg.forcing.resolved_datasets
+
+
+def test_resolver_non_child_requires_initial_conditions():
+    import copy
+
+    fi = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    del fi["initial_conditions"]
+    with pytest.raises(ValueError, match="initial_conditions"):
+        _build(forcing_inputs=fi)
+
+
+def test_resolver_child_with_explicit_ic_keeps_it():
+    cfg = _build(grid_kwargs_parent=_PARENT_GRID_KWARGS)
+    assert cfg.forcing.initial_conditions is not None
+    assert cfg.forcing.initial_conditions.source.name == "GLORYS"
+    assert "GLORYS" in cfg.forcing.resolved_datasets
 
 
 def test_resolver_restoring_sets_sal_restore():
@@ -788,6 +1507,81 @@ def test_sources_to_forcing_override_carries_river_bgc_source():
     assert kwargs["topography_source"] == "EMOD"
     assert "RIVR2O" in kwargs["source_dataset_keys"]
     assert "EMOD" in kwargs["source_dataset_keys"]
+
+
+def test_sources_to_forcing_override_carries_river_custom_file():
+    """The third propagation path (resolver / sources_to_forcing_override / wizard
+    load-back -- this WP covers the first two): custom_file must survive the
+    round trip through sources_to_forcing_override the same as bgc_source does
+    above. Guards against a future ``exclude=`` edit to ``_item()``'s
+    ``model_dump`` silently dropping it (today it propagates "for free" because
+    nothing excludes it).
+    """
+    import copy
+
+    from cstar_forge.forge.forge_blueprint_engine import sources_to_forcing_override
+
+    fdata = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["river"] = [
+        {
+            "source": {"name": "CUSTOM_FILE"},
+            "custom_file": {
+                "location": "/data/staged/river.nc",
+                "content_hash": "a" * 64,
+            },
+        }
+    ]
+
+    cfg = _build(forcing_inputs=fdata)
+    ov = sources_to_forcing_override(cfg)
+    river_ov = ov["forcing"]["river"][0]
+    assert river_ov["source"]["name"] == "CUSTOM_FILE"
+    assert river_ov["custom_file"] == {
+        "location": "/data/staged/river.nc",
+        "content_hash": "a" * 64,
+    }
+
+
+def test_sources_to_forcing_override_omits_initial_conditions_for_child_no_ic():
+    """A child domain with no explicit IC resolves cfg.forcing.initial_conditions
+    to None -- sources_to_forcing_override must omit the key entirely rather
+    than crash on `_ic(None)` or emit a None/placeholder value.
+    """
+    import copy
+
+    from cstar_forge.forge.forge_blueprint_engine import sources_to_forcing_override
+
+    fi = copy.deepcopy(_CATALOG.forcing_data("glorys-era5-unified"))
+    del fi["initial_conditions"]
+    cfg = _build(grid_kwargs_parent=_PARENT_GRID_KWARGS, forcing_inputs=fi)
+    assert cfg.forcing.initial_conditions is None
+
+    ov = sources_to_forcing_override(cfg)
+    assert "initial_conditions" not in ov
+    assert "forcing" in ov
+
+
+def test_forge_blueprint_to_builder_kwargs_carries_cdr_forcing_file(tmp_path):
+    """cdr_forcing_file reaches the executor the same way as cdr_forcing/grid_file:
+    a top-level ``forge_blueprint_to_builder_kwargs`` kwarg, NOT routed through
+    ``sources_to_forcing_override`` (which only ever carries initial_conditions/
+    surface/boundary/tidal/river -- cdr_forcing itself is never in there either).
+    """
+    from cstar_forge.forge.forge_blueprint_engine import (
+        forge_blueprint_to_builder_kwargs,
+        sources_to_forcing_override,
+    )
+
+    cdr_path = _write_tiny_netcdf(tmp_path, name="cdr.nc")
+    cfg = _build(cdr_forcing_file=str(cdr_path))
+
+    kwargs = forge_blueprint_to_builder_kwargs(cfg)
+    assert kwargs["cdr_forcing_file"] == cfg.forcing.cdr_forcing_file
+    assert kwargs["cdr_forcing"] is None
+
+    ov = sources_to_forcing_override(cfg)
+    assert "cdr_forcing_file" not in ov
+    assert "cdr_forcing" not in ov
 
 
 def test_catalog_scans_forcingspec():
@@ -1010,6 +1804,138 @@ def test_catalog_scans_outputspec():
         "marbl_tracers_to_write",
         "marbl_diagnostics_to_write",
     }
+
+
+# Every (period, nrpf) stream pair ucla-roms >= 0.5.0's check_output_divides_rst
+# covers within OutputSpec-owned sections. The precheck requires, per ENABLED
+# stream, that nrpf * output_period evenly divide output_period_rst (skipped
+# when restarts are monthly / the periodic frequency is 0), so spec defaults
+# must satisfy it for every stream a user might enable.
+_OUTPUT_SPEC_STREAMS = (
+    ("ocean_vars", "output_period_his", "nrpf_his"),
+    ("ocean_vars", "output_period_avg", "nrpf_avg"),
+    ("surf_flux", "output_period", "nrpf"),
+    ("diagnostics", "output_period", "nrpf"),
+    ("frc_output", "output_period", "nrpf"),
+    ("cdr_output", "output_period", "nrpf"),
+    ("upscale_output", "output_period_uscl", "nrpf_uscl"),
+    ("zslice", "output_period", "nrpf"),
+    ("random_output", "output_period", "nrpf"),
+    ("bgc", "output_period_his", "nrpf_his"),
+    ("bgc", "output_period_avg", "nrpf_avg"),
+    ("bgc", "output_period_his_dia", "nrpf_his_dia"),
+    ("bgc", "output_period_avg_dia", "nrpf_avg_dia"),
+)
+
+# ModelSpec-owned stream pairs the same precheck covers (extract_data is
+# nesting-derived at resolve time, so it can't be checked from static specs).
+_MODEL_SPEC_STREAMS = (
+    ("sponge_tune", "output_period", "nrpf"),
+    ("particles", "output_period", "nrpf"),
+)
+
+
+def _assert_streams_divide_rst(sections: dict, streams, rst: float, origin: str):
+    for section, period_key, nrpf_key in streams:
+        newfile_freq = sections[section][nrpf_key] * sections[section][period_key]
+        assert newfile_freq > 0 and rst % newfile_freq == 0, (
+            f"{origin}: {section}.{nrpf_key} * {section}.{period_key} "
+            f"= {newfile_freq} s does not evenly divide output_period_rst "
+            f"= {rst} s -- ucla-roms >= 0.5.0's check_output_divides_rst "
+            f"aborts if this stream is enabled."
+        )
+
+
+@pytest.mark.parametrize(
+    "spec_name", ["daily-restarts", "weekly-restarts", "monthly-restarts"]
+)
+def test_bundled_output_specs_satisfy_roms_divides_rst_precheck(spec_name):
+    """The precheck-safe OutputSpecs must stay self-consistent: every stream a
+    user might enable divides the restart period ('standard' is exempt -- it is
+    kept unchanged for blueprints that reference it).
+    """
+    data = _CATALOG.output_data(spec_name)
+    ov = data["ocean_vars"]
+    if ov["monthly_restarts"] or ov["output_period_rst"] == 0:
+        return  # the precheck is vacuous (mod 0) -- nothing to assert
+    _assert_streams_divide_rst(
+        data, _OUTPUT_SPEC_STREAMS, ov["output_period_rst"], spec_name
+    )
+
+
+@pytest.mark.parametrize("spec_name", ["daily-restarts", "weekly-restarts"])
+def test_roms050_model_spec_streams_satisfy_roms_divides_rst_precheck(spec_name):
+    """roms-marbl-0.5-default's own streams (sponge, particles) must divide the
+    restart period of every periodic-restart precheck-safe OutputSpec, since a
+    resolved blueprint combines the two.
+    """
+    model_settings = yaml.safe_load(
+        (
+            Path(cstar_forge.__file__).parent
+            / "catalog"
+            / "ModelSpec"
+            / "roms-marbl-0.5-default"
+            / "model.yaml"
+        ).read_text()
+    )["model_settings"]
+    rst = _CATALOG.output_data(spec_name)["ocean_vars"]["output_period_rst"]
+    _assert_streams_divide_rst(
+        model_settings,
+        _MODEL_SPEC_STREAMS,
+        rst,
+        f"roms-marbl-0.5-default + {spec_name}",
+    )
+
+
+# Child grid used by the resolver-layer extract-divides-rst tests below
+# (same shape as test_resolver_nesting_enables_extract_data's).
+_CHILD_GRID = dict(
+    nx=30,
+    ny=30,
+    size_x=300,
+    size_y=300,
+    center_lon=0,
+    center_lat=55,
+    rot=0,
+    N=20,
+    theta_s=6.0,
+    theta_b=3.0,
+    hc=250.0,
+)
+
+
+def test_resolver_rejects_extract_period_not_dividing_rst_for_roms050():
+    """Nesting with a child period whose files don't roll on restart boundaries
+    fails at authoring time for a >= 0.5.0 model (ucla-roms's own
+    check_output_divides_rst would abort the run at startup).
+    """
+    # seeded nrpf=24; 24 * 5000 = 120000 s does not divide rst 86400 s
+    with pytest.raises(ValueError, match="evenly divide"):
+        _build(
+            model_dir=_MODEL_DIR_ROMS050,
+            grid_kwargs_child=_CHILD_GRID,
+            metadata_child={"period": 5000.0},
+        )
+
+
+def test_resolver_accepts_conforming_extract_period_for_roms050():
+    cfg = _build(
+        model_dir=_MODEL_DIR_ROMS050,
+        grid_kwargs_child=_CHILD_GRID,
+        metadata_child={"period": 1800.0},  # 24 * 1800 = 43200 | 86400
+    )
+    assert cfg.model_settings["extract_data"]["do_extract"] is True
+
+
+def test_resolver_extract_check_gated_off_for_legacy_roms():
+    """The same nonconforming period resolves fine for a pre-0.5.0 model --
+    older ucla-roms has no such precheck, so authoring isn't blocked.
+    """
+    cfg = _build(  # default _MODEL_DIR pins roms 0.2.0 (legacy schema)
+        grid_kwargs_child=_CHILD_GRID,
+        metadata_child={"period": 5000.0},
+    )
+    assert cfg.model_settings["extract_data"]["extract_period"] == 5000.0
 
 
 def test_resolver_output_settings_override():
@@ -1242,6 +2168,56 @@ def test_cdr_output_requires_marbl():
         )
 
 
+def test_rst_period_not_divisible_by_dt_raises():
+    """output_period_rst must be an integer multiple of dt when restarts are
+    written on a fixed period (the default: wrt_file_rst=True,
+    monthly_restarts=False) -- 150s / 100s = 1.5, not a whole number of steps.
+    """
+    with pytest.raises(ValueError, match="output_period_rst"):
+        _build(
+            run_time_overrides={
+                "time_stepping": {"dt": 100.0},
+                "ocean_vars": {"output_period_rst": 150.0},
+            }
+        )
+
+
+def test_rst_period_divisible_by_dt_accepted():
+    cfg = _build(
+        run_time_overrides={
+            "time_stepping": {"dt": 100.0},
+            "ocean_vars": {"output_period_rst": 200.0},
+        }
+    )
+    assert cfg.model_settings["ocean_vars"]["output_period_rst"] == 200.0
+
+
+def test_rst_period_not_divisible_accepted_with_monthly_restarts():
+    """monthly_restarts=True means output_period_rst is unused -- any value must
+    be accepted.
+    """
+    cfg = _build(
+        run_time_overrides={
+            "time_stepping": {"dt": 100.0},
+            "ocean_vars": {"output_period_rst": 150.0, "monthly_restarts": True},
+        }
+    )
+    assert cfg.model_settings["ocean_vars"]["output_period_rst"] == 150.0
+
+
+def test_rst_period_not_divisible_accepted_with_rst_writing_off():
+    """wrt_file_rst=False means output_period_rst is unused -- any value must be
+    accepted.
+    """
+    cfg = _build(
+        run_time_overrides={
+            "time_stepping": {"dt": 100.0},
+            "ocean_vars": {"output_period_rst": 150.0, "wrt_file_rst": False},
+        }
+    )
+    assert cfg.model_settings["ocean_vars"]["output_period_rst"] == 150.0
+
+
 class TestEnsureCdrOutputMarblDiagnostics:
     def test_none_input_returns_all_required(self):
         from cstar_forge.forge.namelist_model import (
@@ -1356,8 +2332,8 @@ def test_resolver_bgc_mode_default_marbl():
     cfg = _build()
     assert cfg.model_settings["cppdefs"]["marbl"] is True
     assert cfg.code.marbl is not None
-    assert cfg.code.marbl.location == "https://github.com/marbl-ecosys/MARBL.git"
-    assert cfg.code.marbl.commit == "marbl0.45.0"
+    assert cfg.code.marbl.location == "https://github.com/CWorthy-ocean/MARBL.git"
+    assert cfg.code.marbl.commit == "marbl0.45.0-max-it-10"
 
 
 def test_resolver_bgc_mode_none_raises_with_bgc_forcing():
@@ -1523,6 +2499,44 @@ def test_roms_ref_round_trips_through_yaml(tmp_path):
     assert back.code.roms.branch is None
 
 
+def test_resolver_marbl_ref_overrides_commit_and_clears_branch():
+    cfg = _build(marbl_ref="marbl0.99.0")
+    assert cfg.code.marbl.commit == "marbl0.99.0"
+    assert cfg.code.marbl.branch is None
+    # location is untouched -- only the checkout target changes
+    assert cfg.code.marbl.location == "https://github.com/CWorthy-ocean/MARBL.git"
+
+
+def test_resolver_marbl_ref_default_uses_model_yml_pin():
+    cfg = _build()
+    assert cfg.code.marbl.commit == "marbl0.45.0-max-it-10"
+
+
+def test_resolver_marbl_ref_ignored_when_bgc_none():
+    # bgc_mode="none" never populates code.marbl, so a stray marbl_ref is inert.
+    cfg = _build(
+        bgc_mode="none",
+        marbl_ref="marbl0.99.0",
+        forcing_inputs=_PHYSICS_ONLY_FORCING,
+    )
+    assert cfg.code.marbl is None
+
+
+def test_content_hash_changes_with_marbl_ref():
+    cfg = _build()
+    h = cfg.content_hash()
+    cfg_override = _build(marbl_ref="marbl0.99.0")
+    assert cfg_override.content_hash() != h
+
+
+def test_marbl_ref_round_trips_through_yaml(tmp_path):
+    cfg = _build(marbl_ref="marbl0.99.0")
+    p = cfg.to_yaml(tmp_path / "forge_blueprint.yaml")
+    back = ForgeBlueprint.from_yaml(p)
+    assert back.code.marbl.commit == "marbl0.99.0"
+    assert back.code.marbl.branch is None
+
+
 def test_settings_is_flat_and_omits_processing_filled_sections():
     cfg = _build()
     ms = cfg.model_settings
@@ -1584,7 +2598,7 @@ def test_overrides_take_precedence():
     assert cfg.model_settings["time_stepping"]["ndtfast"] == 30
 
 
-def test_composition_records_piece_provenance():
+def test_composition_records_spec_provenance():
     cfg = _build()
     assert cfg.composition.model.origin == "catalog"
     assert cfg.composition.model.name == "cson_roms-marbl_v0.1"
@@ -1840,7 +2854,7 @@ class TestForgeBlueprintWizard:
 
     def test_selecting_catalog_domain_prefills_and_resolves(self):
         wiz = self._wizard()
-        if "gulf-guinea-toy" not in wiz.domain_dd.options:
+        if "gulf-guinea-toy" not in wiz._dd_values(wiz.domain_dd):
             pytest.skip("gulf-guinea-toy domain not in catalog")
         wiz.domain_dd.value = "gulf-guinea-toy"  # triggers prefill + rebuild
         cfg = wiz.config
@@ -2000,7 +3014,7 @@ class TestForgeBlueprintWizard:
         resolved config round-trip (the #7 load affordance).
         """
         w1 = self._wizard()
-        if "gulf-guinea-toy" in w1.domain_dd.options:
+        if "gulf-guinea-toy" in w1._dd_values(w1.domain_dd):
             w1.domain_dd.value = "gulf-guinea-toy"
         w1.name.value = "my-custom-run"
         p = tmp_path / "forge_blueprint.yaml"
@@ -2133,6 +3147,195 @@ class TestForgeBlueprintWizard:
         wid.value = not wid.value
         assert w.config.model_settings["ocean_vars"]["wrt_z"] == wid.value
 
+    # -- ocean_vars/cdr_output bool<->dropdown + cross-field rules -------------
+    def test_cdr_do_avg_dropdown_maps_to_bool(self):
+        w = self._wizard()
+        dd = w.editor._widgets[("cdr_output", "do_avg")][0]
+        dd.value = "instantaneous"
+        assert w.config.model_settings["cdr_output"]["do_avg"] is False
+        dd.value = "averaged"
+        assert w.config.model_settings["cdr_output"]["do_avg"] is True
+
+    def test_bool_dropdown_load_back(self):
+        """sync() maps a real bool from the composed/effective settings back onto
+        the dropdown's string value (do_avg/monthly_averages). Guarded by the
+        wizard's own ``_syncing`` flag, exactly as ``_rebuild`` does, so the
+        generic on_edit observers don't mistake the programmatic push for a
+        user edit and record a (stale, mid-sync) override.
+        """
+        w = self._wizard()
+        w._syncing = True
+        try:
+            w.editor.sync({"cdr_output": {"do_avg": False, "monthly_averages": True}})
+        finally:
+            w._syncing = False
+        assert w.editor._widgets[("cdr_output", "do_avg")][0].value == "instantaneous"
+        assert (
+            w.editor._widgets[("cdr_output", "monthly_averages")][0].value == "monthly"
+        )
+
+    def test_do_avg_persists_through_load(self, tmp_path):
+        """The real user-facing round trip: set the dropdown -> save (which
+        reconstructs a real-bool override via _diff_overrides) -> YAML -> reload
+        -> sync back onto a fresh wizard's dropdown. Exercises the override/YAML
+        layer, not just sync()'s in-memory mapping (see test_bool_dropdown_load_back).
+        """
+        w1 = self._wizard()
+        w1.editor._widgets[("cdr_output", "do_avg")][0].value = "instantaneous"
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        assert w2.config.model_settings["cdr_output"]["do_avg"] is False
+        assert w2.editor._widgets[("cdr_output", "do_avg")][0].value == "instantaneous"
+
+    def test_ocean_vars_rst_dependents_visibility_follows_wrt_file_rst(self):
+        w = self._wizard()
+        # nrpf_rst exists only pre ucla-roms 0.5.0; pin a legacy ref so the
+        # editor generates the widget (the default model pins "main" -> latest).
+        w.roms_ref.value = "0.2.0"
+        w._rebuild()
+        wrt = w.editor._widgets[("ocean_vars", "wrt_file_rst")][0]
+        monthly = w.editor._widgets[("ocean_vars", "monthly_restarts")][0]
+        nrpf = w.editor._widgets[("ocean_vars", "nrpf_rst")][0]
+        period = w.editor._widgets[("ocean_vars", "output_period_rst")][0]
+        wrt.value = False
+        assert monthly.layout.display == "none"
+        assert nrpf.layout.display == "none"
+        assert period.layout.display == "none"
+        wrt.value = True
+        assert monthly.layout.display == ""
+        assert nrpf.layout.display == ""
+        assert period.layout.display == ""
+
+    def test_ocean_vars_output_period_rst_disabled_when_monthly(self):
+        w = self._wizard()
+        wrt = w.editor._widgets[("ocean_vars", "wrt_file_rst")][0]
+        monthly = w.editor._widgets[("ocean_vars", "monthly_restarts")][0]
+        period = w.editor._widgets[("ocean_vars", "output_period_rst")][0]
+        wrt.value = True
+        monthly.value = True
+        assert period.disabled is True
+        monthly.value = False
+        assert period.disabled is False
+
+    def test_monthly_restarts_forces_wrt_file_rst_on(self):
+        """A real user edit that checks monthly_restarts while wrt_file_rst is off
+        pulls wrt_file_rst on -- the one value-mutating rule (forcing, not display).
+        """
+        w = self._wizard()
+        wrt = w.editor._widgets[("ocean_vars", "wrt_file_rst")][0]
+        monthly = w.editor._widgets[("ocean_vars", "monthly_restarts")][0]
+        wrt.value = False
+        monthly.value = True
+        assert wrt.value is True
+        assert w.config.model_settings["ocean_vars"]["wrt_file_rst"] is True
+
+    def test_monthly_restarts_forcing_rule_persists_through_load(self, tmp_path):
+        """The wrt_file_rst override recorded by the forcing rule is a cascaded
+        widget mutation, not a direct user edit -- make sure it still survives
+        _diff_overrides/YAML/reload (not just the in-memory check in
+        test_monthly_restarts_forces_wrt_file_rst_on), so a future refactor of
+        the overrides layer can't silently drop it.
+        """
+        w1 = self._wizard()
+        wrt1 = w1.editor._widgets[("ocean_vars", "wrt_file_rst")][0]
+        monthly1 = w1.editor._widgets[("ocean_vars", "monthly_restarts")][0]
+        wrt1.value = False  # user edit
+        monthly1.value = True  # user edit -> forcing rule flips wrt_file_rst back on
+        assert wrt1.value is True
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        assert w2.config.model_settings["ocean_vars"]["wrt_file_rst"] is True
+        assert w2.config.model_settings["ocean_vars"]["monthly_restarts"] is True
+        assert w2.editor._widgets[("ocean_vars", "wrt_file_rst")][0].value is True
+        assert w2.editor._widgets[("ocean_vars", "monthly_restarts")][0].value is True
+
+    def test_cdr_output_dependents_visibility_follows_master_switch(self):
+        w = self._wizard()
+        cdr_on = w.editor._widgets[("cdr_output", "do_cdr_output")][0]
+        do_avg = w.editor._widgets[("cdr_output", "do_avg")][0]
+        monthly_avg = w.editor._widgets[("cdr_output", "monthly_averages")][0]
+        period = w.editor._widgets[("cdr_output", "output_period")][0]
+        nrpf = w.editor._widgets[("cdr_output", "nrpf")][0]
+        cdr_on.value = False
+        for widget in (do_avg, monthly_avg, period, nrpf):
+            assert widget.layout.display == "none"
+        cdr_on.value = True
+        do_avg.value = "averaged"  # show the cadence dropdown too
+        for widget in (do_avg, monthly_avg, period, nrpf):
+            assert widget.layout.display == ""
+
+    def test_cdr_output_period_disabled_when_averaged_monthly(self):
+        w = self._wizard()
+        cdr_on = w.editor._widgets[("cdr_output", "do_cdr_output")][0]
+        do_avg = w.editor._widgets[("cdr_output", "do_avg")][0]
+        monthly_avg = w.editor._widgets[("cdr_output", "monthly_averages")][0]
+        period = w.editor._widgets[("cdr_output", "output_period")][0]
+        cdr_on.value = True
+        do_avg.value = "averaged"
+        monthly_avg.value = "monthly"
+        assert period.disabled is True
+        monthly_avg.value = "periodic"
+        assert period.disabled is False
+        do_avg.value = "instantaneous"
+        assert monthly_avg.layout.display == "none"
+        assert period.disabled is False
+
+    def test_field_rules_apply_after_sync(self):
+        """sync() (the load path) must leave visibility/disabled consistent with
+        the synced values, not just widgets driven by a live user edit.
+        """
+        w = self._wizard()
+        # nrpf_rst exists only pre ucla-roms 0.5.0; pin a legacy ref so the
+        # editor generates the widget (the default model pins "main" -> latest).
+        w.roms_ref.value = "0.2.0"
+        w._rebuild()
+        w._syncing = True
+        try:
+            w.editor.sync(
+                {
+                    "ocean_vars": {
+                        "wrt_file_rst": False,
+                        "monthly_restarts": True,
+                        "nrpf_rst": 2,
+                        "output_period_rst": 100.0,
+                    },
+                    "cdr_output": {
+                        "do_cdr_output": True,
+                        "do_avg": False,
+                        "monthly_averages": True,
+                        "output_period": 50.0,
+                        "nrpf": 3,
+                    },
+                }
+            )
+        finally:
+            w._syncing = False
+        monthly = w.editor._widgets[("ocean_vars", "monthly_restarts")][0]
+        nrpf = w.editor._widgets[("ocean_vars", "nrpf_rst")][0]
+        period = w.editor._widgets[("ocean_vars", "output_period_rst")][0]
+        # wrt_file_rst off hides its dependents even though monthly_restarts is True.
+        assert monthly.layout.display == "none"
+        assert nrpf.layout.display == "none"
+        assert period.layout.display == "none"
+
+        do_avg = w.editor._widgets[("cdr_output", "do_avg")][0]
+        monthly_avg = w.editor._widgets[("cdr_output", "monthly_averages")][0]
+        period_cdr = w.editor._widgets[("cdr_output", "output_period")][0]
+        assert do_avg.value == "instantaneous"
+        assert monthly_avg.layout.display == "none"
+        assert period_cdr.disabled is False
+
     def test_advanced_edit_persists_across_atomic_change(self):
         w = self._wizard()
         w.editor._widgets[("lateral_visc", "visc2")][0].value = 12.5
@@ -2187,7 +3390,10 @@ class TestForgeBlueprintWizard:
         in _populate_from. Lock that in explicitly.
         """
         w1 = self._wizard()
-        w1.dt.value = 1234.0
+        # Must stay an integer multiple of the default output_period_rst (86400)
+        # -- see check_rst_period_divisible -- so this exercises round-tripping
+        # a non-default dt without tripping the restart-period validator.
+        w1.dt.value = 1200.0
         p = tmp_path / "forge_blueprint.yaml"
         w1.save_path.value = str(p)
         w1._boundaries_touched = True  # not exercising boundary derivation here
@@ -2195,8 +3401,8 @@ class TestForgeBlueprintWizard:
         w2 = self._wizard()
         w2.load_path.value = str(p)
         w2._on_load_path(None)
-        assert w2.dt.value == 1234.0
-        assert w2.config.model_settings["time_stepping"]["dt"] == 1234.0
+        assert w2.dt.value == 1200.0
+        assert w2.config.model_settings["time_stepping"]["dt"] == 1200.0
         assert "time_stepping" not in w2.config.composition.overrides
 
     def test_model_ref_date_persists_through_load(self, tmp_path):
@@ -2249,7 +3455,7 @@ class TestForgeBlueprintWizard:
         # ForcingSpec must always be an explicit catalog selection now -- no more
         # "<model default>" fallback -- so the default-selected entry is already
         # origin="catalog" from construction.
-        if "glorys-era5-unified" not in w.forcing_dd.options:
+        if "glorys-era5-unified" not in w._dd_values(w.forcing_dd):
             pytest.skip("example ForcingSpec not in catalog")
         assert w.forcing_dd.value == "glorys-era5-unified"
         assert w.config.composition.forcing.origin == "catalog"
@@ -2277,9 +3483,11 @@ class TestForgeBlueprintWizard:
         w = self._wizard()
         # OutputSpec must always be an explicit catalog selection now -- no more
         # "<model default>" fallback.
-        if "standard" not in w.output_dd.options:
+        if "standard" not in w._dd_values(w.output_dd):
             pytest.skip("example OutputSpec not in catalog")
-        assert w.output_dd.value == "standard"
+        # 'daily-restarts' is the preselected default (_DEFAULT_OUTPUT_SPEC);
+        # 'standard' remains selectable for back-compat.
+        assert w.output_dd.value == "daily-restarts"
         assert w.config.composition.output.origin == "catalog"
         assert (
             "marbl_config_file" in w.config.model_settings["marbl_bgc"]
@@ -2287,14 +3495,14 @@ class TestForgeBlueprintWizard:
         # edit an output section in Advanced -> override recorded; selection unchanged
         w.editor._widgets[("ts_output", "wrt_temp")][0].value = True
         assert w.config.composition.overrides["ts_output"]["wrt_temp"] is True
-        # re-selecting the output piece clears output-section overrides (the handler
+        # re-selecting the output spec clears output-section overrides (the handler
         # doesn't key off which value it changed to, only that a selection happened)
         w._on_output_spec(None)
         assert "ts_output" not in w.config.composition.overrides
 
     def test_output_spec_round_trips_through_load(self, tmp_path):
         w1 = self._wizard()
-        if "standard" not in w1.output_dd.options:
+        if "standard" not in w1._dd_values(w1.output_dd):
             pytest.skip("example OutputSpec not in catalog")
         w1.output_dd.value = "standard"
         p = tmp_path / "forge_blueprint.yaml"
@@ -2482,7 +3690,7 @@ class TestForgeBlueprintWizard:
 
     def test_nest_from_domain_dropdown_prefills_child(self):
         w = self._wizard()
-        if "gulf-guinea-toy" not in w.nest_domain_dd.options:
+        if "gulf-guinea-toy" not in w._dd_values(w.nest_domain_dd):
             pytest.skip("gulf-guinea-toy domain not in catalog")
         w.nest_domain_dd.value = "gulf-guinea-toy"  # prefills child + enables nesting
         assert w.nest_enable.value is True
@@ -2536,7 +3744,7 @@ class TestForgeBlueprintWizard:
 
     def test_parent_from_domain_dropdown_prefills_parent(self):
         w = self._wizard()
-        if "gulf-guinea-toy" not in w.parent_domain_dd.options:
+        if "gulf-guinea-toy" not in w._dd_values(w.parent_domain_dd):
             pytest.skip("gulf-guinea-toy domain not in catalog")
         w.parent_domain_dd.value = "gulf-guinea-toy"  # prefills parent + enables it
         assert w.parent_enable.value is True
@@ -2576,6 +3784,72 @@ class TestForgeBlueprintWizard:
         assert w2.parent_w["N"].value == 30
         assert w2.config.domain.is_child is True
         assert w2.config.forcing.boundary is None
+
+    def test_parent_toggle_clears_ic_and_reselecting_source_restores_it(self):
+        """Enabling a parent defaults IC to "(none)" (mirrors boundary), but
+        unlike boundary this is only a default -- re-selecting GLORYS on the
+        dropdown must restore an explicit IC in the built blueprint.
+        """
+        w = self._wizard()
+        assert w.config.forcing.initial_conditions is not None  # sanity
+        w.parent_enable.value = True
+        cfg = w.config
+        assert cfg.domain.is_child is True
+        assert cfg.forcing.initial_conditions is None
+        assert w._forcing_editor.ic_name.value == "(none)"
+
+        w._forcing_editor.ic_name.value = "GLORYS"
+        cfg2 = w.config
+        assert cfg2.forcing.initial_conditions is not None
+        assert cfg2.forcing.initial_conditions.source.name == "GLORYS"
+
+    def test_parent_toggle_off_restores_ic_default(self):
+        """Enabling then disabling the parent checkbox must not strand the user
+        on the resolver's non-child hard error: disabling restores IC to the
+        default source when it's still at the "(none)" default the enable-
+        toggle applied.
+        """
+        w = self._wizard()
+        w.parent_enable.value = True
+        assert w._forcing_editor.ic_name.value == "(none)"
+        assert w.config.forcing.initial_conditions is None
+
+        w.parent_enable.value = False
+        assert w._forcing_editor.ic_name.value == "GLORYS"
+        cfg = w.config
+        assert cfg.domain.is_child is False
+        assert cfg.forcing.initial_conditions is not None
+
+    def test_reselecting_forcing_spec_keeps_ic_cleared_for_child(self):
+        """Reseeding the forcing editor from a newly-selected ForcingSpec (which
+        always carries a real IC block) must not silently undo the "(none)"
+        default a parent toggle already applied -- mirrors the boundary-forcing
+        strip that already happens in ``_on_forcing_spec``.
+        """
+        w = self._wizard()
+        if "simple-bgc-demo" not in w._dd_values(w.forcing_dd):
+            pytest.skip("simple-bgc-demo ForcingSpec not in catalog")
+        w.parent_enable.value = True
+        assert w.config.forcing.initial_conditions is None
+        other = next(v for v in w._dd_values(w.forcing_dd) if v != w.forcing_dd.value)
+        w.forcing_dd.value = other
+        assert w._forcing_editor.ic_name.value == "(none)"
+        assert w.config.forcing.initial_conditions is None
+
+    def test_load_preserves_child_no_ic(self, tmp_path):
+        w1 = self._wizard()
+        w1.parent_enable.value = True
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+        assert w1.config.forcing.initial_conditions is None
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        assert w2.parent_enable.value is True
+        assert w2.config.forcing.initial_conditions is None
+        assert w2._forcing_editor.ic_name.value == "(none)"
 
     def test_roms_ref_gather_and_default_round_trip(self, tmp_path):
         w1 = self._wizard()
@@ -2619,6 +3893,48 @@ class TestForgeBlueprintWizard:
         w3.load_path.value = str(p)
         w3._on_load_path(None)
         assert w3.roms_ref.value == "my-custom-branch"
+
+    def test_marbl_ref_gather_and_default_round_trip(self, tmp_path):
+        w1 = self._wizard()
+        w1.marbl_ref.value = "marbl0.99.0"
+        assert w1.config.code.marbl.commit == "marbl0.99.0"
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+        w2 = self._wizard()
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        assert w2.marbl_ref.value == "marbl0.99.0"
+        assert w2.config.code.marbl.commit == "marbl0.99.0"
+
+    def test_marbl_ref_prefilled_with_model_default_and_editable(self, tmp_path):
+        """Mirror of the roms_ref test above: the MARBL ref is prefilled from the
+        selected Model's pinned default, an unmodified default reloads showing that
+        same default (not blank), and an override round-trips through save/reload.
+        """
+        w1 = self._wizard()
+        default_ref = w1._model_default_marbl_ref()
+        assert default_ref  # this model.yaml pins a MARBL tag
+        assert w1.marbl_ref.value == default_ref
+
+        p = tmp_path / "forge_blueprint.yaml"
+        w1.save_path.value = str(p)
+        w1._boundaries_touched = True  # not exercising boundary derivation here
+        w1._on_save(None)
+        w2 = self._wizard()
+        w2.marbl_ref.value = "stale-value-from-a-prior-load"
+        w2.load_path.value = str(p)
+        w2._on_load_path(None)
+        assert w2.marbl_ref.value == default_ref
+
+        # An actual override round-trips through save/reload unchanged.
+        w1.marbl_ref.value = "my-custom-marbl-branch"
+        w1._on_save(None)
+        w3 = self._wizard()
+        w3.load_path.value = str(p)
+        w3._on_load_path(None)
+        assert w3.marbl_ref.value == "my-custom-marbl-branch"
 
     def test_loading_file_with_bad_settings_is_flagged(self, tmp_path):
         import yaml
@@ -2719,22 +4035,65 @@ class TestForgeBlueprintWizardApp:
 
         return ForgeBlueprintWizardApp(**kwargs)
 
-    def test_default_auto_loads_bundled_catalog(self):
-        from cstar_forge.domain_catalog import _DEFAULT_CATALOG_ROOT
+    def test_default_auto_loads_layered_catalog(self):
+        from cstar_forge.domain_catalog import (
+            _DEFAULT_CATALOG_ROOT,
+            LayeredCatalog,
+            user_catalog_root,
+        )
         from cstar_forge.forge_blueprint_wizard import ForgeBlueprintWizard
 
         app = self._app()
         assert isinstance(app.inner, ForgeBlueprintWizard)
-        assert app.inner.catalog.catalog_root == _DEFAULT_CATALOG_ROOT
+        cat = app.inner.catalog
+        # Blank App load yields a LayeredCatalog: writable user layer (top,
+        # .catalog_root) over the read-only bundled packaged layer (bottom).
+        assert isinstance(cat, LayeredCatalog)
+        assert cat.catalog_root == user_catalog_root()
+        assert cat.stores[-1].catalog_root == _DEFAULT_CATALOG_ROOT
         assert "color:#2a2" in app._cat_status.value
 
-    def test_reload_with_bad_path_keeps_previous_wizard(self):
+    def test_reload_with_bad_value_keeps_previous_wizard(self):
+        # A nonexistent local path is no longer an error (it becomes an empty
+        # writable layer over bundled, matching CSTAR_FORGE_CATALOG semantics),
+        # so a malformed GitHub URL is the failure case now.
         app = self._app()
         original_inner = app.inner
-        app._cat_input.value = "/nonexistent/catalog/path"
+        app._cat_input.value = "https://github.com/org-but-no-repo"
         app._reload(None)
         assert app.inner is original_inner
         assert "color:#b00" in app._cat_status.value
+
+    def test_single_local_path_builds_stack_with_bundled(self, tmp_path):
+        from cstar_forge.domain_catalog import _DEFAULT_CATALOG_ROOT, LayeredCatalog
+
+        app = self._app()
+        app._cat_input.value = str(tmp_path / "my-catalog")
+        app._reload(None)
+        cat = app.inner.catalog
+        # One local path routes through build_catalog_stack: writable top over
+        # the read-only bundled layer, same as the env var would produce.
+        assert isinstance(cat, LayeredCatalog)
+        assert cat.catalog_root == (tmp_path / "my-catalog").resolve()
+        assert cat.stores[-1].catalog_root == _DEFAULT_CATALOG_ROOT
+        assert cat.model_names  # bundled models visible through the stack
+        assert "color:#2a2" in app._cat_status.value
+
+    def test_single_local_literal_loads_readonly_store_with_warning(self):
+        from cstar_forge.domain_catalog import DomainCatalog, LayeredCatalog
+
+        app = self._app()
+        app._cat_input.value = "local"
+        app._reload(None)
+        cat = app.inner.catalog
+        # "local" (the bundled catalog) can never be a writable top layer:
+        # exactly one read-only store, and the status line warns that saves
+        # fall back to CWD-relative filenames.
+        assert isinstance(cat, DomainCatalog)
+        assert not isinstance(cat, LayeredCatalog)
+        assert cat.read_only is True
+        assert "read-only catalog" in app._cat_status.value
+        assert app.inner._default_blueprint_path("x") == "x.forge_blueprint.yaml"
 
 
 # ---------------------------------------------------------------------------
@@ -2806,7 +4165,6 @@ class TestForgeBlueprintEngine:
             working_dir=tmp_path / "wd",
             source_data_cache=tmp_path / "cache",
             system="test",
-            machine_config=None,
         )
         ex = ForgeExecutor.from_forge_blueprint(cfg, host=host)
         assert ex.resolved_datasets["GLORYS"]["dataset_key"] == "GLORYS_REGIONAL"
@@ -3056,7 +4414,6 @@ class TestResolverBuilderParity:
             working_dir=tmp_path / "wd",
             source_data_cache=tmp_path / "cache",
             system="test",
-            machine_config=None,
         )
         ex = ForgeExecutor.from_forge_blueprint(cfg, host=host)
         b_rt = ex._settings_run_time
@@ -3077,12 +4434,12 @@ class TestResolverBuilderParity:
 
 
 # ---------------------------------------------------------------------------
-# "Save modified pieces to catalog" (wizard panel + DomainCatalog register_*)
+# "Save modified specs to catalog" (wizard panel + DomainCatalog register_*)
 # ---------------------------------------------------------------------------
-class TestSaveModifiedPiecesToCatalog:
-    """Each save handler: extract the piece from current state, write it to an
+class TestSaveModifiedSpecsToCatalog:
+    """Each save handler: extract the spec from current state, write it to an
     isolated catalog, side-effect-free round-trip verify via content_hash, and
-    only on a match repoint the dropdown / clear that piece's overrides-or-seed.
+    only on a match repoint the dropdown / clear that spec's overrides-or-seed.
     A mismatch must still write the file but leave everything else untouched.
     """
 
@@ -3090,10 +4447,12 @@ class TestSaveModifiedPiecesToCatalog:
     def isolated_catalog(self, tmp_path):
         import shutil
 
-        from cstar_forge.domain_catalog import DomainCatalog
+        from cstar_forge.domain_catalog import _DEFAULT_CATALOG_ROOT, DomainCatalog
 
         root = tmp_path / "catalog"
-        shutil.copytree(_CATALOG.catalog_root, root)
+        # Copy the BUNDLED catalog (not _CATALOG.catalog_root, which is now the
+        # writable *user* layer -- empty/nonexistent in tests, see conftest.py).
+        shutil.copytree(_DEFAULT_CATALOG_ROOT, root)
         return DomainCatalog(catalog_root=root)
 
     def _wizard(self, catalog):
@@ -3102,7 +4461,7 @@ class TestSaveModifiedPiecesToCatalog:
 
         return ForgeBlueprintWizard(catalog=catalog)
 
-    def test_save_output_piece_marks_unmodified_and_clears_overrides(
+    def test_save_output_spec_marks_unmodified_and_clears_overrides(
         self, isolated_catalog
     ):
         wiz = self._wizard(isolated_catalog)
@@ -3119,7 +4478,7 @@ class TestSaveModifiedPiecesToCatalog:
         assert wiz._overrides == {}
         assert "✓" in wiz.save_output_status.value
 
-    def test_save_model_piece_marks_unmodified(self, isolated_catalog):
+    def test_save_model_spec_marks_unmodified(self, isolated_catalog):
         wiz = self._wizard(isolated_catalog)
         wiz._overrides[("lateral_visc", "visc2")] = 999.0
         wiz._rebuild()
@@ -3132,7 +4491,7 @@ class TestSaveModifiedPiecesToCatalog:
         assert wiz.model_dd.value == "my-model"
         assert wiz.config.composition.model.modified is False
 
-    def test_save_model_piece_marks_unmodified_with_blank_roms_ref(
+    def test_save_model_spec_marks_unmodified_with_blank_roms_ref(
         self, isolated_catalog
     ):
         # A blank roms_ref means "clone the base pin" -- must not itself count
@@ -3145,7 +4504,7 @@ class TestSaveModifiedPiecesToCatalog:
 
         assert wiz.config.composition.model.modified is False
 
-    def test_save_model_piece_persists_use_pio_and_roms_ref(self, isolated_catalog):
+    def test_save_model_spec_persists_use_pio_and_roms_ref(self, isolated_catalog):
         # Name deliberately distinct from the bundled "pio-dev" ModelSpec
         # (cstar_forge/catalog/ModelSpec/pio-dev) -- register_model_from_settings
         # refuses to overwrite an existing entry, and isolated_catalog copies the
@@ -3197,7 +4556,7 @@ class TestSaveModifiedPiecesToCatalog:
             use_pio=False,
             roms_ref=wiz.roms_ref.value.strip() or None,
         )
-        assert wiz._verify_piece_roundtrip("model", "no-pio") is False
+        assert wiz._verify_spec_roundtrip("model", "no-pio") is False
 
     def test_verify_model_roundtrip_false_when_spec_loses_roms_ref(
         self, isolated_catalog
@@ -3218,12 +4577,12 @@ class TestSaveModifiedPiecesToCatalog:
             use_pio=wiz.use_pio_chk.value,
             roms_ref=None,
         )
-        assert wiz._verify_piece_roundtrip("model", "stale-ref") is False
+        assert wiz._verify_spec_roundtrip("model", "stale-ref") is False
 
     def test_model_modified_reflects_use_pio_and_roms_ref_toggles(
         self, isolated_catalog
     ):
-        # Toggling PIO/roms_ref must flag the Model piece as modified even
+        # Toggling PIO/roms_ref must flag the Model spec as modified even
         # without ever touching "Save as new spec" -- these live outside
         # model_settings, so composition.model.modified must not silently
         # stay False while resolving with a different code/use_pio than the
@@ -3246,7 +4605,60 @@ class TestSaveModifiedPiecesToCatalog:
         wiz.roms_ref.value = ""  # blank => clone the base pin, not a deviation
         assert wiz.config.composition.model.modified is False
 
-    def test_save_forcing_piece_marks_unmodified(self, isolated_catalog):
+        wiz.marbl_ref.value = "some-marbl-branch"
+        assert wiz.config.composition.model.modified is True
+
+        wiz.marbl_ref.value = ""  # blank => clone the base pin, not a deviation
+        assert wiz.config.composition.model.modified is False
+
+    def test_save_model_spec_persists_marbl_ref(self, isolated_catalog):
+        spec_name = "marbl-ref-test"
+        wiz = self._wizard(isolated_catalog)
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
+        wiz.marbl_ref.value = "my-marbl-tag"
+        assert wiz.config.composition.model.modified is True  # spec deviation
+
+        wiz.save_model_name.value = spec_name
+        wiz._on_save_model(None)
+
+        data = isolated_catalog.model_data(spec_name)
+        assert data["code"]["marbl"]["commit"] == "my-marbl-tag"
+        assert "branch" not in data["code"]["marbl"]
+        assert (
+            data["code"]["marbl"]["location"]
+            == "https://github.com/CWorthy-ocean/MARBL.git"
+        )
+
+        assert wiz.model_dd.value == spec_name
+        assert wiz.config.composition.model.modified is False
+        assert "✓" in wiz.save_model_status.value
+
+        # A fresh wizard picking this ModelSpec must reload the same ref.
+        wiz2 = self._wizard(isolated_catalog)
+        wiz2.model_dd.value = spec_name
+        assert wiz2.marbl_ref.value == "my-marbl-tag"
+        assert wiz2.config.code.marbl.commit == "my-marbl-tag"
+
+    def test_verify_model_roundtrip_false_when_spec_loses_marbl_ref(
+        self, isolated_catalog
+    ):
+        from cstar_forge.forge_blueprint_wizard import _model_owned_settings
+
+        wiz = self._wizard(isolated_catalog)
+        wiz.model_dd.value = "cson_roms-marbl_v0.1"
+        wiz.marbl_ref.value = "some-other-marbl-tag"
+        # Simulate a pre-fix writer: a spec saved without the live marbl_ref.
+        isolated_catalog.register_model_from_settings(
+            "stale-marbl-ref",
+            _model_owned_settings(wiz.config.model_settings),
+            isolated_catalog.model_dir(wiz.model_dd.value),
+            use_pio=wiz.use_pio_chk.value,
+            roms_ref=wiz.roms_ref.value.strip() or None,
+            marbl_ref=None,
+        )
+        assert wiz._verify_spec_roundtrip("model", "stale-marbl-ref") is False
+
+    def test_save_forcing_spec_marks_unmodified(self, isolated_catalog):
         wiz = self._wizard(isolated_catalog)
         # Toggle the climatology checkbox on the first IC-BGC row (the bundled
         # "glorys-era5-unified" ForcingSpec seeds one -- UNIFIED, climatology=true).
@@ -3262,7 +4674,29 @@ class TestSaveModifiedPiecesToCatalog:
         assert wiz.forcing_dd.value == "my-forcing"
         assert wiz.config.composition.forcing.modified is False
 
-    def test_save_forcing_piece_embeds_and_reloads_cdr(self, isolated_catalog):
+    def test_save_forcing_spec_for_child_with_no_ic_marks_unmodified(
+        self, isolated_catalog
+    ):
+        """A child domain's forcing (IC defaulted to "(none)") saved to the
+        catalog omits the initial_conditions key from the written YAML.
+        ``_verify_spec_roundtrip`` rebuilds via the resolver (not the wizard's
+        sentinel-aware ``_ForcingEditor``), so re-resolving the freshly-written
+        file must still reproduce content_hash-equal to the live config.
+        """
+        wiz = self._wizard(isolated_catalog)
+        wiz.parent_enable.value = True
+        assert wiz.config.forcing.initial_conditions is None
+
+        wiz.save_forcing_name.value = "child-no-ic-forcing"
+        wiz._on_save_forcing(None)
+
+        assert "child-no-ic-forcing" in isolated_catalog.forcing_names
+        assert wiz.forcing_dd.value == "child-no-ic-forcing"
+        assert wiz.config.composition.forcing.modified is False
+        saved = isolated_catalog.forcing_data("child-no-ic-forcing")
+        assert "initial_conditions" not in saved
+
+    def test_save_forcing_spec_embeds_and_reloads_cdr(self, isolated_catalog):
         wiz = self._wizard(isolated_catalog)
         fake_cdr = {"releases": [{"lon": 1.0, "lat": 2.0}]}
         wiz._cdr_forcing = fake_cdr
@@ -3281,11 +4715,11 @@ class TestSaveModifiedPiecesToCatalog:
         wiz2.forcing_dd.value = "my-cdr-forcing"
         assert wiz2._cdr_forcing == fake_cdr
 
-    def test_save_domain_piece_marks_unmodified_and_preserves_other_pieces(
+    def test_save_domain_spec_marks_unmodified_and_preserves_other_specs(
         self, isolated_catalog
     ):
         wiz = self._wizard(isolated_catalog)
-        if "gulf-guinea-toy" in wiz.domain_dd.options:
+        if "gulf-guinea-toy" in wiz._dd_values(wiz.domain_dd):
             wiz.domain_dd.value = "gulf-guinea-toy"
         wiz.npx.value = wiz.npx.value + 1
         assert wiz.config.composition.domain.modified is True
@@ -3301,13 +4735,13 @@ class TestSaveModifiedPiecesToCatalog:
         assert "my-domain" in isolated_catalog.domain_names
         assert wiz.domain_dd.value == "my-domain"
         assert wiz.config.composition.domain.modified is False
-        # no-clobber: every OTHER piece's state is untouched by the domain save.
+        # no-clobber: every OTHER spec's state is untouched by the domain save.
         assert wiz._overrides == before_overrides
         assert wiz._forcing_seed == before_forcing_seed
         assert wiz.model_dd.value == before_model_dd
         assert wiz.output_dd.value == before_output_dd
 
-    def test_save_domain_piece_persists_v_sponge_when_touched(self, isolated_catalog):
+    def test_save_domain_spec_persists_v_sponge_when_touched(self, isolated_catalog):
         """v_sponge is a first-class domain property (Domain-derived
         properties): touching it and saving the domain must persist it into
         Domain.yaml, and a fresh wizard selecting that saved domain must
@@ -3331,7 +4765,7 @@ class TestSaveModifiedPiecesToCatalog:
         assert wiz2._v_sponge_touched is True
         assert wiz2.config.domain.v_sponge == 4242.0
 
-    def test_save_domain_piece_omits_v_sponge_when_untouched(self, isolated_catalog):
+    def test_save_domain_spec_omits_v_sponge_when_untouched(self, isolated_catalog):
         """An untouched v_sponge is deliberately omitted from a saved
         DomainSpec so it re-derives fresh from the grid on next load, instead
         of freezing a resolver default that was never a real user choice.
@@ -3352,7 +4786,7 @@ class TestSaveModifiedPiecesToCatalog:
         # at by fresh derivation, not a frozen saved number.
         assert wiz2.v_sponge.value == wiz.v_sponge.value
 
-    def test_save_domain_piece_persists_dt(self, isolated_catalog):
+    def test_save_domain_spec_persists_dt(self, isolated_catalog):
         """``dt`` is a first-class domain property (Domain-derived properties),
         alongside v_sponge -- but unlike v_sponge/open_boundaries it has no
         touched flag: the widget is always authoritative (default, CFL-computed,
@@ -3360,19 +4794,21 @@ class TestSaveModifiedPiecesToCatalog:
         whether or not the user ever edited it.
         """
         wiz = self._wizard(isolated_catalog)
-        wiz.dt.value = 3333.0
+        # Must stay an integer multiple of the default output_period_rst (86400)
+        # -- see check_rst_period_divisible.
+        wiz.dt.value = 3600.0
 
         wiz.save_domain_name.value = "my-domain-dt"
         wiz._on_save_domain(None)
 
         assert "my-domain-dt" in isolated_catalog.domain_names
         saved = isolated_catalog.domain_data("my-domain-dt")
-        assert saved.get("dt") == 3333.0
+        assert saved.get("dt") == 3600.0
 
         wiz2 = self._wizard(isolated_catalog)
         wiz2.domain_dd.value = "my-domain-dt"
-        assert wiz2.dt.value == 3333.0
-        assert wiz2.config.domain.dt == 3333.0
+        assert wiz2.dt.value == 3600.0
+        assert wiz2.config.domain.dt == 3600.0
         # domain.dt and the model_settings leaf must never diverge.
         assert (
             wiz2.config.domain.dt == wiz2.config.model_settings["time_stepping"]["dt"]
@@ -3388,7 +4824,11 @@ class TestSaveModifiedPiecesToCatalog:
         wiz.domain_dd.value = "my-domain-dt-seed"
         assert wiz.config.composition.domain.modified is False
 
-        wiz.dt.value = wiz.dt.value + 100.0
+        # +100 would land on 7300, no longer an integer multiple of the default
+        # output_period_rst (86400) -- see check_rst_period_divisible -- so
+        # double instead (7200 -> 14400, still divisible) to isolate the
+        # "editing dt flags domain modified" behavior under test.
+        wiz.dt.value = wiz.dt.value * 2
         assert wiz.config.composition.domain.modified is True
 
     def test_invalid_name_refuses_without_writing(self, isolated_catalog):
@@ -3414,7 +4854,7 @@ class TestSaveModifiedPiecesToCatalog:
         wiz._on_save_output(None)
         assert "nothing to save" in wiz.save_output_status.value
 
-    def test_mismatch_keeps_piece_modified_and_state_untouched(
+    def test_mismatch_keeps_spec_modified_and_state_untouched(
         self, isolated_catalog, monkeypatch
     ):
         """A writer bug (or any post-write drift) must not silently claim

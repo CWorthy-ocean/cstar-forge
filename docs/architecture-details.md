@@ -11,7 +11,7 @@ repo (`cstar-forge/DESIGN-RATIONALE.md`).
 Forge is split into two layers along a hard boundary, in preparation for moving
 the execution half into C-Star as an "application":
 
-- **Authoring** (stays in this repo): the catalog of reusable pieces (Model/Domain/
+- **Authoring** (stays in this repo): the catalog of reusable specs (Model/Domain/
   Forcing/Output specs), a **resolver** that assembles them into a single
   reviewable file, and a **wizard** UI.
 - **Execution** (`cstar_forge/forge/`, target: relocates into C-Star wholesale):
@@ -26,7 +26,7 @@ output artifact*. "Building a blueprint" means producing that downstream artifac
 not forge's own input.
 
 ```
- catalog pieces ─┐
+ catalog specs  ─┐
  (Model/Domain/  ├─► build_forge_blueprint() ─► ForgeBlueprint ─► process_forge_blueprint(cfg, host)
   Forcing/Output)│         (resolver)         (.yaml,               (engine → executor)
                  │                             portable)           │
@@ -43,13 +43,22 @@ cstar-forge/
 │   ├── forge_blueprint_resolve.py  # resolver: build_forge_blueprint(...)
 │   ├── forge_blueprint_wizard.py   # ForgeBlueprintWizard (ipywidgets UI) +
 │   │                               # ForgeBlueprintWizardApp (adds catalog-location bar)
-│   ├── forge-blueprint-wizard.ipynb     # wizard notebook (run in Jupyter)
-│   ├── forge-blueprint-wizard-app.ipynb # wizard app notebook (served by Voilà)
+│   ├── forge-blueprint-wizard.ipynb     # user-facing wizard notebook (run in Jupyter)
 │   ├── models.py               # Spec classes (ModelSpec, etc.)
-│   ├── domain_catalog.py       # DomainCatalog: scans the catalog, exposes accessors
+│   ├── domain_catalog.py       # DomainCatalog: scans the catalog, exposes accessors;
+│   │                           # LayeredCatalog stacks a writable user layer
+│   │                           # (default_catalog_stack(): ~/cstar-forge-data/catalog,
+│   │                           # or CSTAR_FORGE_CATALOG) over the read-only bundled
+│   │                           # catalog — this stack is the module's default_catalog
 │   ├── config.py               # Path management and system detection
 │   ├── run.py                  # CLI entry point: python -m cstar_forge.run forge_blueprint.yaml
-│   ├── cli.py                  # 'cstar forge run'/'cstar forge wizard' typer sub-app (cstar.cli entry point)
+│   ├── cli.py                  # 'cstar forge run'/'wizard'/'register-kernel' typer sub-app (cstar.cli entry point)
+│   ├── register_kernel.py      # Jupyter kernelspec + activation wrapper (backs 'cstar forge register-kernel')
+│   ├── ui/                     # Wizard presentation layer (Voilà app front-end)
+│   │   ├── _voila_app.ipynb    # Voilà app notebook — internal; served via
+│   │   │                       # run-wizard-app.sh / 'cstar forge wizard'
+│   │   ├── branding.py         # [C]Worthy header bar, favicon, page title
+│   │   └── assets/cworthy-logo.png  # bundled logo (embedded as a data URI)
 │   ├── forge/                  # The forge application (execution engine —
 │   │   │                       # relocates into C-Star as one unit)
 │   │   ├── app.py                  # ForgeRunner/ForgeApplication (C-Star application)
@@ -68,8 +77,8 @@ cstar-forge/
 │       ├── DomainSpec/{grid}/Domain.yaml   # Grid definitions
 │       ├── ForcingSpec/{name}/Forcing.yaml # Forcing source configurations
 │       ├── OutputSpec/{name}/Output.yaml   # Output configurations
-│       ├── Machines/{system}.yaml          # Machine descriptions
-│       └── blueprints/                     # Example/saved blueprints
+│       └── blueprints/                     # Example blueprints (bundled, read-only layer;
+│                                            # user saves go to the user catalog layer instead)
 ├── templates/                  # Render templates (cppdefs.opt.j2, marbl_in), decoupled
 │                                # from ModelSpec — fetched by ForgeExecutor via C-Star's
 │                                # AdditionalCode
@@ -102,7 +111,7 @@ open_boundaries, partitioning, nesting) · `forcing` (flat: initial_conditions,
 surface/boundary/tidal/river lists, cdr_forcing, resolved_datasets) · `datasets`
 (host-independent list of resolved dataset keys) · `model_settings` (flat dict: cppdefs +
 ~35 namelist sections) · `code` (roms/marbl repos + `templates_compile_time`/`_run_time`
-repo refs) · `composition` (which catalog pieces produced this + overrides layer) ·
+repo refs) · `composition` (which catalog specs produced this + overrides layer) ·
 `provenance` (generated_at, content_hash, notes). The `Blueprint` base also adds
 `state`/`schema_version` (its own versioning metadata, distinct from
 `forge_blueprint_version`) and injects a `$schema` key on serialization (stripped back
@@ -184,11 +193,16 @@ relocation stays a later step.
 
 **Authoring (catalog → resolver/wizard → blueprint):**
 1. `wiz = ForgeBlueprintWizard()` (forge_blueprint_wizard.py) — scans the catalog via
-   `domain_catalog.default_catalog`, populates dropdowns. The notebook entry point is
-   actually `ForgeBlueprintWizardApp()`, a thin wrapper that shows a catalog-location
-   bar above the wizard (auto-loads the bundled catalog; Reload rebuilds a fresh
-   `ForgeBlueprintWizard(catalog=DomainCatalog(catalog_root=...))` against a different
-   local path/`"local"`/GitHub URL/http URL, keeping the previous wizard on failure).
+   `domain_catalog.default_catalog`, populates dropdowns; entries from lower layers
+   (e.g. the bundled catalog) are shown with a `(bundled)` badge. The notebook entry
+   point is actually `ForgeBlueprintWizardApp()`, a thin wrapper that shows a
+   catalog-location bar above the wizard (auto-loads the default layered stack —
+   your writable `~/cstar-forge-data/catalog`/`CSTAR_FORGE_CATALOG` layer over the
+   read-only bundled catalog; Reload rebuilds a fresh wizard against a different
+   single local path/`"local"`/GitHub URL/http URL, or several `os.pathsep`-separated
+   locations to build a new `LayeredCatalog`, keeping the previous wizard on failure).
+   Saves (blueprints, workplans) and catalog registrations land in the stack's
+   writable top layer — never inside the installed package.
 2. User picks a domain → `_on_domain()` prefills grid/boundaries/partitioning/dates from
    `catalog.domain_data(name)`.
 3. Every edit → `_rebuild()` → `build_forge_blueprint(**self._gather())`
@@ -215,6 +229,43 @@ relocation stays a later step.
 `tests/test_forge_app_boundary.py` (an AST-based guard with an empty, actively-enforced
 violation allowlist). `namelist_model.py` and `util.py` are same-package siblings
 inside `forge/` and are covered by the guard's `_FORGE_APP_MODULES` list.
+
+### 4a. Versioned namelist schemas (ucla-roms 0.5.0+)
+
+ucla-roms 0.5.0 made its first breaking namelist change (`nrpf_rst` removed from
+`&BASIC_OUTPUT_SETTINGS`; `&PARTICLES_SETTINGS` `output_period`/`nrpf` renamed to
+`output_period_particles`/`nrpf_particles`). C-Star versions the namelist schema
+by ucla-roms release (`cstar.roms.namelist`: `RomsNamelist` for < 0.5.0,
+`RomsNamelistV0_5_0` for >= 0.5.0, selected by `namelist_schema_for_ref(ref)` —
+semver tags select exactly; branch names/hashes warn and fall back to the latest
+schema). Forge mirrors this in `namelist_model.py`: `RunTimeSettings` (legacy)
+vs `RunTimeSettingsV0_5_0`, selected by `run_time_settings_for_ref(roms_ref)`,
+where `roms_ref` is the blueprint's pinned `code.roms.commit` (threaded
+resolver → executor → `write_roms_namelist`). C-Star's registry is the single
+source of version-boundary truth — forge only maps its result to the matching
+settings class. The forge **settings vocabulary is version-stable**: YAML keys
+(`particles.output_period`, `particles.nrpf`) don't change; only the
+`serialization_alias` to namelist names differs per version, and `nrpf_rst`
+(still present in the shared `OutputSpec/standard`) is silently ignored for
+0.5.0+ models via `extra="ignore"`. One ModelSpec per tagged ucla-roms release:
+`roms-marbl-0.5-default` pins `0.5.0`; older specs stay fixed and keep emitting
+byte-identical legacy namelists.
+
+ucla-roms 0.5.0 also added a run-start precheck (`check_output_divides_rst`):
+each enabled output stream's `nrpf × output_period` must evenly divide
+`output_period_rst` (vacuous for monthly restarts / a 0 period). Three bundled
+OutputSpecs conform for every stream — `daily-restarts` (the wizard default,
+see `_DEFAULT_OUTPUT_SPEC`), `weekly-restarts`, and `monthly-restarts`
+(upstream's own convention: `monthly_restarts=T`, `output_period_rst=0`).
+`OutputSpec/standard` predates the precheck and is kept unchanged for
+blueprints that reference it — enabling its his/avg streams under a 0.5.0+
+model trips the precheck. A guard test
+(`test_bundled_output_specs_satisfy_roms_divides_rst_precheck`) pins the
+conforming specs, including `roms-marbl-0.5-default`'s ModelSpec-owned
+sponge/particles streams. The nesting extract stream is resolve-time-derived
+(child DomainSpec metadata `period` × a seeded `nrpf`), so it's enforced at
+authoring time instead: `check_extract_divides_rst` (namelist_model.py), called
+from the resolver and gated to >= 0.5.0 pins.
 
 ## 5. `models.py` vs `forge/forge_blueprint.py`
 

@@ -49,6 +49,7 @@ from cstar_forge.forge.executor import ForgeExecutor, _deep_merge_settings_dict
 from cstar_forge.forge.forge_blueprint import ForgeBlueprint
 from cstar_forge.forge.forge_blueprint_engine import process_forge_blueprint
 from cstar_forge.forge.host import HostPaths
+from cstar_forge.forge.input_data import CHILD_IC_PLACEHOLDER_LOCATION
 from cstar_forge.forge_blueprint_resolve import build_forge_blueprint
 
 requires_cstar_pio = pytest.mark.skipif(
@@ -61,6 +62,13 @@ requires_cstar_pio = pytest.mark.skipif(
 
 _MODEL_DIR = (
     Path(cstar_forge.__file__).parent / "catalog" / "ModelSpec" / "cson_roms-marbl_v0.1"
+)
+# ucla-roms >= 0.5.0 ModelSpec -- used by the versioned-namelist golden test below.
+_MODEL_DIR_ROMS050 = (
+    Path(cstar_forge.__file__).parent
+    / "catalog"
+    / "ModelSpec"
+    / "roms-marbl-0.5-default"
 )
 # ModelSpec no longer embeds a default forcing/output selection -- these tests just
 # need a valid, representative pair from the bundled catalog.
@@ -91,9 +99,7 @@ def _make_builder(args, **overrides):
         output_settings=merged.get("output_settings", _OUTPUT_SETTINGS),
     )
     tmp = Path(tempfile.mkdtemp(prefix="forge-test-core-"))
-    host = HostPaths(
-        working_dir=tmp, source_data_cache=tmp, system="test", machine_config=None
-    )
+    host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
     return ForgeExecutor.from_forge_blueprint(cfg, host=host)
 
 
@@ -446,9 +452,7 @@ class TestForgeExecutorModelPostInit:
             }
         )
         tmp = Path(tempfile.mkdtemp(prefix="forge-test-srtm15-"))
-        host = HostPaths(
-            working_dir=tmp, source_data_cache=tmp, system="test", machine_config=None
-        )
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
         staged = tmp / "SRTM15" / "SRTM15_V2.7.nc"
         # Mock the staging download: prepare_all() is a no-op, path_for_source returns the path.
         with patch("cstar_forge.forge.executor.source_data.SourceData") as mock_sd:
@@ -490,9 +494,7 @@ class TestForgeExecutorModelPostInit:
         )
         assert cfg.domain.topography_path == "/custom/my_topo.nc"
         tmp = Path(tempfile.mkdtemp(prefix="forge-test-topopath-"))
-        host = HostPaths(
-            working_dir=tmp, source_data_cache=tmp, system="test", machine_config=None
-        )
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
         # Staging must NOT be invoked when an explicit path is given.
         with patch("cstar_forge.forge.executor.source_data.SourceData") as mock_sd:
             builder = ForgeExecutor.from_forge_blueprint(cfg, host=host)
@@ -538,6 +540,131 @@ class TestForgeExecutorModelPostInit:
         assert isinstance(
             builder.roms_marbl_blueprint_from_file, cstar_models.RomsMarblBlueprint
         )
+
+
+class TestForgeExecutorModelPostInitGridFile:
+    """Tests for the ``domain.grid_file`` pathway in ``model_post_init``: a
+    user-supplied pre-made grid netCDF loaded via ``rt.Grid(filename=...)``
+    instead of one built from ``grid_kwargs``.
+
+    ``cfg`` is built normally (``_make_builder``, no ``grid_file``) and then
+    ``model_copy``'d to inject ``domain.grid_file`` -- mirrors
+    ``test_model_post_init_srtm15_injects_topography_source``'s pattern of
+    exercising an exotic domain value without re-running validators. The
+    resolver-level ``grid_file=...`` normalization/derivation itself is covered
+    in ``tests/test_forge_blueprint.py``.
+    """
+
+    @staticmethod
+    def _write_tiny_netcdf(tmp_path, name="grid.nc"):
+        import numpy as np
+        import xarray as xr
+
+        ds = xr.Dataset(
+            {"mask_rho": (("eta_rho", "xi_rho"), np.ones((4, 5)))},
+            attrs={"title": "tiny user-supplied grid"},
+        )
+        path = tmp_path / name
+        ds.to_netcdf(path)
+        return path
+
+    def _cfg_with_grid_file(self, minimal_cstar_spec_builder_args, tmp_path, gf):
+        args = minimal_cstar_spec_builder_args
+        cfg = build_forge_blueprint(
+            model_dir=_MODEL_DIR,
+            grid_name=args["grid_name"],
+            grid_kwargs=args["grid_kwargs"],
+            open_boundaries=args["open_boundaries"].model_dump(),
+            partitioning=args["partitioning"].model_dump(),
+            start_date=args["start_date"],
+            end_date=args["end_date"],
+            dt=7200,
+            forcing_inputs=_FORCING_INPUTS,
+            output_settings=_OUTPUT_SETTINGS,
+        )
+        return cfg.model_copy(
+            update={
+                "domain": cfg.domain.model_copy(
+                    update={"grid_kwargs": {}, "grid_file": gf}
+                )
+            }
+        )
+
+    def test_grid_file_builds_via_filename(
+        self, minimal_cstar_spec_builder_args, mock_grid, tmp_path
+    ):
+        from cstar_forge.forge.forge_blueprint import UserProvidedFile
+        from cstar_forge.forge.user_files import hash_netcdf_contents
+
+        grid_path = self._write_tiny_netcdf(tmp_path)
+        gf = UserProvidedFile(
+            location=str(grid_path), content_hash=hash_netcdf_contents(grid_path)
+        )
+        cfg = self._cfg_with_grid_file(minimal_cstar_spec_builder_args, tmp_path, gf)
+
+        tmp = Path(tempfile.mkdtemp(prefix="forge-test-gridfile-"))
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
+        builder = ForgeExecutor.from_forge_blueprint(cfg, host=host)
+
+        mock_grid.assert_called_once_with(
+            filename=str(grid_path.resolve()), verbose=builder.verbose
+        )
+        assert builder.grid == mock_grid.return_value
+
+    def test_grid_file_missing_raises_file_not_found(
+        self, minimal_cstar_spec_builder_args, tmp_path
+    ):
+        from cstar_forge.forge.forge_blueprint import UserProvidedFile
+
+        missing = tmp_path / "does-not-exist.nc"
+        gf = UserProvidedFile(location=str(missing), content_hash="x" * 64)
+        cfg = self._cfg_with_grid_file(minimal_cstar_spec_builder_args, tmp_path, gf)
+
+        tmp = Path(tempfile.mkdtemp(prefix="forge-test-gridfile-missing-"))
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
+        with pytest.raises(FileNotFoundError, match="grid"):
+            ForgeExecutor.from_forge_blueprint(cfg, host=host)
+
+    def test_grid_file_hash_mismatch_warns(
+        self, minimal_cstar_spec_builder_args, mock_grid, tmp_path
+    ):
+        from cstar_forge.forge.forge_blueprint import UserProvidedFile
+
+        grid_path = self._write_tiny_netcdf(tmp_path)
+        gf = UserProvidedFile(location=str(grid_path), content_hash="not-the-real-hash")
+        cfg = self._cfg_with_grid_file(minimal_cstar_spec_builder_args, tmp_path, gf)
+
+        tmp = Path(tempfile.mkdtemp(prefix="forge-test-gridfile-mismatch-"))
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
+        with pytest.warns(UserWarning, match="grid"):
+            ForgeExecutor.from_forge_blueprint(cfg, host=host)
+
+    def test_grid_file_rejects_nesting_kwargs(
+        self, minimal_cstar_spec_builder_args, tmp_path
+    ):
+        """Defensive check on the executor itself: even though the ForgeBlueprint
+        schema already forbids ``grid_file`` + nesting (``Domain``), the executor
+        (a separate Pydantic model, fed by ``forge_blueprint_to_builder_kwargs``)
+        raises too rather than silently building a nested grid from a
+        user-supplied file.
+        """
+        from cstar_forge.forge.forge_blueprint import UserProvidedFile
+
+        grid_path = self._write_tiny_netcdf(tmp_path)
+        gf = UserProvidedFile(location=str(grid_path), content_hash="x" * 64)
+        cfg = self._cfg_with_grid_file(minimal_cstar_spec_builder_args, tmp_path, gf)
+        cfg = cfg.model_copy(
+            update={
+                "domain": cfg.domain.model_copy(
+                    update={"grid_kwargs_parent": {"nx": 10, "ny": 10}}
+                )
+            }
+        )
+
+        tmp = Path(tempfile.mkdtemp(prefix="forge-test-gridfile-nesting-"))
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
+        with pytest.raises(ValueError, match="nesting"):
+            ForgeExecutor.from_forge_blueprint(cfg, host=host)
 
 
 class TestForgeExecutorGetDs:
@@ -951,9 +1078,7 @@ class TestForgeExecutorBuildAndRun:
         assert cfg.model_settings["tides"]["ntides"] == 15
 
         tmp = Path(tempfile.mkdtemp(prefix="forge-test-core-clobber-"))
-        host = HostPaths(
-            working_dir=tmp, source_data_cache=tmp, system="test", machine_config=None
-        )
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
         builder = ForgeExecutor.from_forge_blueprint(cfg, host=host)
 
         # Before the fix, this pre-generation snapshot is exactly what configure_build's
@@ -1025,9 +1150,7 @@ class TestForgeExecutorBuildAndRun:
             **build_over,
         )
         tmp = Path(tempfile.mkdtemp(prefix="forge-test-core-cdr-"))
-        host = HostPaths(
-            working_dir=tmp, source_data_cache=tmp, system="test", machine_config=None
-        )
+        host = HostPaths(working_dir=tmp, source_data_cache=tmp, system="test")
         return cfg, host
 
     def _run_configure_build(self, cfg, host):
@@ -1098,6 +1221,30 @@ class TestForgeExecutorBuildAndRun:
         cfg.model_settings["cppdefs"]["marbl"] = False
 
         with pytest.raises(ValueError, match="requires MARBL"):
+            self._run_configure_build(cfg, host)
+
+    def test_configure_build_rejects_non_divisible_rst_period(
+        self, sample_grid_kwargs, sample_open_boundaries, sample_partitioning
+    ):
+        """The resolver's restart-period guard re-checked at configure_build: a
+        stored/hand-edited blueprint reaches here without re-resolving, so a
+        hand-mutated output_period_rst that no longer divides evenly by dt must
+        still be caught before any build side effects.
+        """
+        cfg, host = self._cdr_cfg_and_builder(
+            sample_grid_kwargs, sample_open_boundaries, sample_partitioning
+        )
+        assert cfg.model_settings["time_stepping"]["dt"] == 7200
+        # Reassign rather than mutate in place: ocean_vars isn't in the ModelSpec's
+        # own model_settings, so the resolver's deep-merge aliases this dict
+        # straight from the (test-module-shared) OutputSpec dict -- mutating it
+        # in place would leak into every other test using the default fixture.
+        cfg.model_settings["ocean_vars"] = {
+            **cfg.model_settings["ocean_vars"],
+            "output_period_rst": 10000.0,
+        }
+
+        with pytest.raises(ValueError, match="output_period_rst"):
             self._run_configure_build(cfg, host)
 
     def test_configure_build_generated_cdr_forcing_wins_over_stored_disabled(
@@ -1307,7 +1454,6 @@ class TestForgeExecutorRomsBlueprintWorkingDir:
             working_dir=run_dir,
             source_data_cache=builder.host.source_data_cache,
             system="test",
-            machine_config=None,
         )
 
         assert builder.roms_blueprint_working_dir == Path(
@@ -1326,7 +1472,6 @@ class TestForgeExecutorRomsBlueprintWorkingDir:
             working_dir=run_dir,
             source_data_cache=builder.host.source_data_cache,
             system="test",
-            machine_config=None,
         )
 
         assert builder.roms_blueprint_working_dir == Path("/custom/spot/cstar-roms-run")
@@ -1447,6 +1592,19 @@ class TestCaptureOutput:
 
         assert "late write" in capsys.readouterr().out
         assert "late write" not in log_path.read_text()
+
+    def test_escaping_exception_traceback_is_written_to_log(self, tmp_path):
+        """An exception that escapes the block is pretty-printed by typer/rich only
+        after the capture context has restored stderr and closed the file, so
+        _capture_output itself must record the traceback before re-raising.
+        """
+        with pytest.raises(ValueError, match="boom"):
+            with forge_run._capture_output(tmp_path) as log_path:
+                raise ValueError("boom")
+
+        content = log_path.read_text()
+        assert "Traceback (most recent call last)" in content
+        assert "ValueError: boom" in content
 
     def test_logging_handler_created_during_capture_survives_exit(
         self, tmp_path, capsys
@@ -1996,9 +2154,25 @@ class TestGoldenNamelist:
         )
         return mock_sd
 
-    def test_golden_namelist_test_tiny(self, mock_grid, tmp_path):
+    def _run_golden_namelist_case(
+        self, mock_grid, tmp_path, model_dir, golden_filename
+    ) -> str:
+        """Shared body for the golden namelist tests: drives the real
+        ``generate_inputs()`` -> ``configure_build()`` chain against ``model_dir``
+        and diffs the rendered ``namelist.nml`` against
+        ``tests/fixtures/<golden_filename>``.
+
+        Factored out (rather than ``pytest.mark.parametrize``) so
+        ``UPDATE_GOLDEN=1 pytest -k <test name>`` regenerates exactly one fixture
+        at a time -- the two golden tests stay independently selectable and the
+        pre-existing fixture is never at risk from a run targeting the other.
+
+        Returns the normalized rendered namelist text (workdir paths replaced by
+        ``<WORKDIR>``) so callers can layer additional assertions on top of the
+        byte-for-byte golden comparison.
+        """
         cfg = build_forge_blueprint(
-            model_dir=_MODEL_DIR,
+            model_dir=model_dir,
             grid_name="test-tiny",
             grid_kwargs=self._GRID_KWARGS,
             open_boundaries=self._BOUNDARIES,
@@ -2010,6 +2184,13 @@ class TestGoldenNamelist:
             forcing_inputs=_FORCING_INPUTS,
             output_settings=_OUTPUT_SETTINGS,
             cdr_forcing=self._CDR_FORCING,
+            # Explicit False (matches cson_roms-marbl_v0.1's own default) so both
+            # golden cases stay decoupled from PIO: roms-marbl-0.5-default bakes in
+            # use_pio: true, which would otherwise route grid generation through
+            # the real ``nccopy`` CDF-5 conversion (_pio_finalize) -- unrelated to
+            # the versioned-namelist behavior this test targets, and incompatible
+            # with the mocked (empty-file) grid.save() used here.
+            use_pio=False,
         )
 
         grid_mock = _create_grid_mock()
@@ -2027,7 +2208,6 @@ class TestGoldenNamelist:
             working_dir=run_dir,
             source_data_cache=run_dir,
             system="test",
-            machine_config=None,
         )
         builder = ForgeExecutor.from_forge_blueprint(cfg, host=host)
         builder.src_data = self._mock_source_data(tmp_path)
@@ -2131,7 +2311,7 @@ class TestGoldenNamelist:
             Path(cstar_forge.__file__).parents[1]
             / "tests"
             / "fixtures"
-            / "golden_namelist_test-tiny.nml"
+            / golden_filename
         )
 
         if os.environ.get("UPDATE_GOLDEN"):
@@ -2143,13 +2323,213 @@ class TestGoldenNamelist:
 
         golden = golden_path.read_text()
         assert normalized == golden, (
-            "Rendered namelist.nml drifted from "
-            "tests/fixtures/golden_namelist_test-tiny.nml. If this is an intentional "
-            "schema/default/template change, regenerate with "
-            "UPDATE_GOLDEN=1 pytest tests/test_core.py -k golden_namelist_test_tiny, "
+            f"Rendered namelist.nml drifted from tests/fixtures/{golden_filename}. "
+            "If this is an intentional schema/default/template change, regenerate "
+            f"with UPDATE_GOLDEN=1 pytest tests/test_core.py -k <this test name>, "
             "review the diff, and commit the updated fixture; otherwise this is a "
             "regression."
         )
+        return normalized
+
+    def test_golden_namelist_test_tiny(self, mock_grid, tmp_path):
+        self._run_golden_namelist_case(
+            mock_grid, tmp_path, _MODEL_DIR, "golden_namelist_test-tiny.nml"
+        )
+
+    def test_golden_namelist_test_tiny_roms050(self, mock_grid, tmp_path):
+        """Same test-tiny domain/forcing/output, but resolved against the
+        ``roms-marbl-0.5-default`` ModelSpec (ucla-roms >= 0.5.0) -- proves the
+        versioned namelist path end to end: ``configure_build`` threads
+        ``code_spec.roms.commit`` ("0.5.0") through to ``write_roms_namelist``,
+        which selects ``RunTimeSettingsV0_5_0``/``RomsNamelistV0_5_0``.
+
+        The two schema-visible differences from the < 0.5.0 golden are: no
+        ``nrpf_rst`` in ``&basic_output_settings``, and
+        ``output_period_particles``/``nrpf_particles`` (not ``output_period``/
+        ``nrpf``) in ``&particles_settings``.
+        """
+        normalized = self._run_golden_namelist_case(
+            mock_grid,
+            tmp_path,
+            _MODEL_DIR_ROMS050,
+            "golden_namelist_test-tiny-roms050.nml",
+        )
+
+        basic_output = normalized.split("&basic_output_settings")[1].split("/", 1)[0]
+        assert "nrpf_rst" not in basic_output
+
+        particles = normalized.split("&particles_settings")[1].split("/", 1)[0]
+        assert "output_period_particles" in particles
+        assert "nrpf_particles" in particles
+        assert "output_period =" not in particles
+        assert "nrpf =" not in particles
+
+
+class TestChildDomainNoInitialConditionsValidatesAtEmit:
+    """End-to-end proof that a child domain with no explicit initial conditions
+    (``Forcing.initial_conditions=None``; see
+    ``forge_blueprint_resolve._build_forcing``) survives the real
+    ``generate_inputs()`` -> ``configure_build()`` chain (the same
+    roms-tools-mocked chain ``TestGoldenNamelist`` drives) and emits a
+    schema-valid roms_marbl blueprint plus a valid namelist.
+
+    C-Star's ``RomsMarblBlueprint.initial_conditions`` requires a non-empty
+    Dataset (min_length=1), and its orchestrator validates the emitted
+    blueprint eagerly -- before the runtime 'nest-from' directive can replace
+    it with the parent-derived initial state -- so ``RomsMarblInputData`` must
+    emit a schema-valid PLACEHOLDER resource for a child with no generated IC
+    (``CHILD_IC_PLACEHOLDER_LOCATION`` in input_data.py). This closes the gap
+    ``_validated_roms_marbl_blueprint`` would otherwise hit at emit time.
+
+    Separately, C-Star's namelist ``InitialConditions.inifile`` is also
+    required non-None, and ``_generate_initial_conditions`` (the only code
+    that normally populates the run-time "initial" settings section) never
+    runs for this child -- so ``RomsMarblInputData.__init__`` seeds the same
+    sentinel into ``self._settings_run_time["initial"]`` up front. The
+    run-time namelist gets regenerated downstream from the blueprint once the
+    'nest-from' directive supplies the real parent-derived IC.
+    """
+
+    _GRID_KWARGS: ClassVar[dict] = TestGoldenNamelist._GRID_KWARGS
+    _BOUNDARIES: ClassVar[dict] = TestGoldenNamelist._BOUNDARIES
+    _PARTITIONING: ClassVar[dict] = TestGoldenNamelist._PARTITIONING
+    _PARENT_GRID_KWARGS: ClassVar[dict] = dict(
+        nx=20,
+        ny=20,
+        size_x=2000,
+        size_y=2000,
+        center_lon=0,
+        center_lat=55,
+        rot=0,
+        N=10,
+        theta_s=6.0,
+        theta_b=3.0,
+        hc=250.0,
+    )
+
+    def test_configure_build_succeeds_with_ic_placeholder(self, mock_grid, tmp_path):
+        import copy
+
+        forcing_inputs = copy.deepcopy(_FORCING_INPUTS)
+        assert forcing_inputs["initial_conditions"]["source"]  # sanity: fixture has IC
+        del forcing_inputs["initial_conditions"]
+
+        cfg = build_forge_blueprint(
+            model_dir=_MODEL_DIR,
+            grid_name="test-tiny",
+            grid_kwargs=self._GRID_KWARGS,
+            grid_kwargs_parent=self._PARENT_GRID_KWARGS,
+            open_boundaries=self._BOUNDARIES,
+            partitioning=self._PARTITIONING,
+            start_date=datetime(2012, 1, 1),
+            end_date=datetime(2012, 1, 2),
+            description="Child domain, no IC",
+            dt=7200,
+            forcing_inputs=forcing_inputs,
+            output_settings=_OUTPUT_SETTINGS,
+        )
+        assert cfg.domain.is_child is True
+        assert cfg.forcing.initial_conditions is None
+
+        grid_mock = _create_grid_mock()
+        grid_mock.nx = self._GRID_KWARGS["nx"]
+        grid_mock.ny = self._GRID_KWARGS["ny"]
+        grid_mock.N = self._GRID_KWARGS["N"]
+        grid_mock.theta_s = self._GRID_KWARGS["theta_s"]
+        grid_mock.theta_b = self._GRID_KWARGS["theta_b"]
+        grid_mock.hc = self._GRID_KWARGS["hc"]
+        grid_mock.save.side_effect = TestGoldenNamelist._touch_save
+        mock_grid.return_value = grid_mock
+
+        run_dir = tmp_path / "run"
+        host = HostPaths(working_dir=run_dir, source_data_cache=run_dir, system="test")
+
+        # A child (has a parent, but is not itself a parent) makes the executor
+        # build grid_parent + align this grid to it -- align_grids is a real
+        # roms-tools function that expects real xarray Grid internals, which the
+        # autouse rt.Grid mock doesn't provide, so it's stubbed too.
+        with patch("cstar_forge.forge.executor.rt.align_grids", return_value=grid_mock):
+            builder = ForgeExecutor.from_forge_blueprint(cfg, host=host)
+        builder.src_data = TestGoldenNamelist._mock_source_data(tmp_path)
+
+        with (
+            patch("cstar_forge.forge.input_data.rt.InitialConditions") as mock_ic,
+            patch("cstar_forge.forge.input_data.rt.SurfaceForcing") as mock_surface,
+            patch("cstar_forge.forge.input_data.rt.BoundaryForcing") as mock_boundary,
+            patch("cstar_forge.forge.input_data.rt.TidalForcing") as mock_tidal,
+            patch("cstar_forge.forge.input_data.rt.RiverForcing") as mock_river,
+            patch(
+                "cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES",
+                {"ERA5"},
+            ),
+        ):
+            mock_surface_instance = MagicMock()
+            mock_surface_instance.save.side_effect = TestGoldenNamelist._touch_save
+            mock_surface_instance.use_coarse_grid = False
+            mock_surface.return_value = mock_surface_instance
+
+            mock_tidal_instance = MagicMock()
+            mock_tidal_instance.save.side_effect = TestGoldenNamelist._touch_save
+            mock_tidal_instance.ntides = 15
+            mock_tidal.return_value = mock_tidal_instance
+
+            mock_river_instance = MagicMock()
+            mock_river_instance.save.side_effect = TestGoldenNamelist._touch_save
+            mock_river_instance.ds = xr.Dataset(
+                {
+                    "river_volume": (["nriver", "time"], np.zeros((3, 2))),
+                    "river_tracer": (
+                        ["nriver", "time", "tracer"],
+                        np.zeros((3, 2, 2)),
+                    ),
+                }
+            )
+            mock_river.return_value = mock_river_instance
+
+            builder.generate_inputs(clobber=True, use_dask=False, test=False)
+
+        # Neither IC nor boundary generation is planned for this child: IC has no
+        # explicit source, and boundary is skipped for a child by the resolver.
+        mock_ic.assert_not_called()
+        mock_boundary.assert_not_called()
+        assert builder._inputs_generated is True
+
+        # Right after generate_inputs the in-memory blueprint is a plain dict
+        # (model_construct round-tripped via model_dump -- see generate_inputs);
+        # the typed-model assertion comes after configure_build re-validates.
+        ic_elem = builder.roms_marbl_blueprint.initial_conditions
+        assert len(ic_elem["data"]) == 1
+        assert ic_elem["data"][0]["location"] == CHILD_IC_PLACEHOLDER_LOCATION
+        assert (
+            builder._settings_run_time["initial"]["initial_file"]
+            == CHILD_IC_PLACEHOLDER_LOCATION
+        )
+
+        from cstar_forge.forge.forge_blueprint_engine import split_model_settings
+
+        run_ov, compile_ov = split_model_settings(cfg)
+        with patch("cstar_forge.forge.executor.render_roms_settings") as mock_render:
+            mock_render.return_value = {
+                "location": str(builder.compile_time_code_dir),
+                "filter": {"files": ["cppdefs.opt"]},
+                "branch": "main",
+            }
+            builder.configure_build(
+                compile_time_settings=compile_ov, run_time_settings=run_ov
+            )
+
+        validated = builder.roms_marbl_blueprint
+        assert isinstance(validated, cstar_models.RomsMarblBlueprint)
+        assert len(validated.initial_conditions.data) == 1
+        assert (
+            validated.initial_conditions.data[0].location
+            == CHILD_IC_PLACEHOLDER_LOCATION
+        )
+
+        namelist_path = builder.run_time_code_dir / "namelist.nml"
+        assert namelist_path.exists()
+        raw = namelist_path.read_text()
+        assert CHILD_IC_PLACEHOLDER_LOCATION in raw
 
 
 class TestForgeRunnerEndToEnd:
@@ -2206,7 +2586,6 @@ class TestForgeRunnerEndToEnd:
             working_dir=run_dir,
             source_data_cache=run_dir,
             system="test",
-            machine_config=None,
         )
 
         def fake_process(spec, **_kwargs):
@@ -2602,7 +2981,6 @@ class TestOnlyInputsReuseIsIdempotent:
             working_dir=run_dir,
             source_data_cache=run_dir,
             system="test",
-            machine_config=None,
         )
 
         namelist_1, blueprint_1 = self._run_one_pass(cfg, host, mock_grid, tmp_path)

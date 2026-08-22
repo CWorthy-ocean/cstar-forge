@@ -1,6 +1,6 @@
 """
 Resolver: ``build_forge_blueprint`` — assemble a validated :class:`ForgeBlueprint`
-from the composable pieces (a ModelSpec + a domain selection + a run window).
+from the composable specs (a ModelSpec + a domain selection + a run window).
 
 This is the *collection / curation* half of the planned split (see
 ``docs/dev-notes/forge-blueprint-inventory.md``). It is intentionally **dependency-light**: it
@@ -28,6 +28,7 @@ It should be unified with ``source_data.py`` once the two-phase refactor lands.
 from __future__ import annotations
 
 import copy
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -48,17 +49,19 @@ try:  # pragma: no cover - exercised both ways
         InitialConditions,
         OpenBoundaries,
         Partitioning,
-        PieceRef,
         Provenance,
         ResolvedDataset,
         RiverForcingItem,
         RunWindow,
         SourceSpec,
+        SpecRef,
         SurfaceForcingItem,
         TemplateRepo,
         TidalForcingItem,
         TopographySource,
+        UserProvidedFile,
         sanitize_name,
+        vert_kwargs_from_grid_kwargs,
     )
 except ImportError:  # pragma: no cover
     from forge_blueprint import (  # type: ignore
@@ -73,12 +76,12 @@ except ImportError:  # pragma: no cover
         InitialConditions,
         OpenBoundaries,
         Partitioning,
-        PieceRef,
         Provenance,
         ResolvedDataset,
         RiverForcingItem,
         RunWindow,
         SourceSpec,
+        SpecRef,
         SurfaceForcingItem,
         TemplateRepo,
         TidalForcingItem,
@@ -112,10 +115,15 @@ DEFAULT_TEMPLATE_REPO = CodeRepo(
 # the executor can share it. Dual import keeps the resolver standalone-importable.
 try:  # pragma: no cover - exercised both ways
     from cstar_forge.forge.namelist_model import (
+        RunTimeSettings,
+        check_extract_divides_rst,
+        check_rst_period_divisible,
         ensure_cdr_output_marbl_diagnostics,
+        run_time_settings_for_ref,
     )
 except ImportError:  # pragma: no cover
     from namelist_model import (  # type: ignore
+        check_rst_period_divisible,
         ensure_cdr_output_marbl_diagnostics,
     )
 
@@ -164,13 +172,50 @@ def _parse_source(block: Any) -> SourceSpec:
     return SourceSpec(**kw)
 
 
+def _normalize_user_file(
+    value: str | Path | dict[str, Any] | UserProvidedFile, label: str
+) -> UserProvidedFile:
+    """Normalize a user-supplied netCDF reference into a :class:`UserProvidedFile`.
+
+    Accepts the same three forms every user-provided-file field takes: a bare
+    ``str``/``Path`` (hashed here via ``hash_netcdf_contents`` -- the file must
+    exist at authoring time, else a clear ``FileNotFoundError``); a plain dict
+    already carrying ``location``/``content_hash`` (trusted as-is, e.g. the
+    wizard's rebuild path -- no rehashing); or an existing ``UserProvidedFile``
+    instance (passed through unchanged). ``label`` names the field in the raised
+    error message.
+    """
+    if isinstance(value, UserProvidedFile):
+        return value
+    if isinstance(value, dict):
+        return UserProvidedFile(**value)
+
+    from cstar_forge.forge.user_files import hash_netcdf_contents
+
+    path = Path(value)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{label} {path} does not exist; a user-provided file must be "
+            "readable at authoring time so its contents can be hashed into "
+            "the blueprint."
+        )
+    return UserProvidedFile(location=str(path), content_hash=hash_netcdf_contents(path))
+
+
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge ``override`` into ``base`` (override wins). Returns base."""
+    """Recursively merge ``override`` into ``base`` (override wins). Returns base.
+
+    Values taken from ``override`` are deep-copied (mirroring the executor's
+    ``_deep_merge_settings_dict``): assigning by reference would alias e.g. a
+    whole OutputSpec section dict into every blueprint resolved from it, so a
+    later in-place edit of one resolved ``model_settings`` could silently
+    mutate the shared spec dict and cross-contaminate other resolves.
+    """
     for k, v in (override or {}).items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
             _deep_merge(base[k], v)
         else:
-            base[k] = v
+            base[k] = copy.deepcopy(v)
     return base
 
 
@@ -209,7 +254,7 @@ _PROCESSING_FILLED_SECTIONS = (
     "output_root_name",
 )
 
-# The "output settings" piece (OutputSpec): whole model_settings sections that are
+# The "output settings" spec (OutputSpec): whole model_settings sections that are
 # output controls, plus the MARBL output write-lists (a partial of marbl_bgc).
 OUTPUT_SECTIONS = (
     "ocean_vars",
@@ -250,7 +295,7 @@ PARTIAL_OUTPUT_SECTIONS: dict[str, tuple[str, ...]] = {
 
 def extract_output_settings(model_settings: dict[str, Any]) -> dict[str, Any]:
     """Pull the output-settings subset out of a full model_settings dict (used to
-    seed an OutputSpec catalog entry and to gather the piece for save).
+    seed an OutputSpec catalog entry and to gather the spec for save).
     """
     out: dict[str, Any] = {}
     for sec in OUTPUT_SECTIONS:
@@ -380,11 +425,14 @@ def build_forge_blueprint(
     grid_kwargs_parent: dict[str, Any] | None = None,
     metadata_child: dict[str, Any] | None = None,
     nesting_include_pressure_fluxes: bool = False,
+    grid_file: str | Path | dict[str, Any] | UserProvidedFile | None = None,
+    cdr_forcing_file: str | Path | dict[str, Any] | UserProvidedFile | None = None,
     topography_path: str | None = None,
     topography_source: str | TopographySource = TopographySource.ETOPO5,
     use_pio: bool | None = None,
     bgc_mode: Literal["marbl", "none"] | None = None,
     roms_ref: str | None = None,
+    marbl_ref: str | None = None,
     run_time_overrides: dict[str, Any] | None = None,
     compile_time_overrides: dict[str, Any] | None = None,
     dt: float | None = None,
@@ -397,7 +445,7 @@ def build_forge_blueprint(
     roms_tools_version: str | None = None,
     notes: str | None = None,
 ) -> ForgeBlueprint:
-    """Resolve the composable pieces into a validated, host-independent ``ForgeBlueprint``.
+    """Resolve the composable specs into a validated, host-independent ``ForgeBlueprint``.
 
     Parameters mirror the logical inputs a UI would collect. ``dt`` may be supplied
     directly (fully lightweight); if ``None`` it is computed from the CFL criterion,
@@ -414,6 +462,13 @@ def build_forge_blueprint(
     default), it falls back to the ModelSpec's own ``bgc_mode`` (itself defaulting
     to ``"marbl"``) -- the ModelSpec is the single source of the default; pass an
     explicit value to override it for one run.
+
+    ``roms_ref``/``marbl_ref`` are per-run checkout-target overrides (commit hash,
+    tag, or branch) for ``code.roms``/``code.marbl``. If ``None`` (the default),
+    the ModelSpec's own pin is snapshotted verbatim; when set, the override is
+    stored in ``commit`` with ``branch`` cleared (C-Star's CodeRepository treats
+    all three as the same checkout target). ``marbl_ref`` only takes effect when
+    ``bgc_mode == "marbl"`` (otherwise ``code.marbl`` is not populated at all).
 
     ``use_pio`` is a per-run toggle mirroring ``bgc_mode``: it overwrites
     ``cppdefs.use_pio`` and gates whether ``code.pio`` is populated (raising if PIO
@@ -450,13 +505,57 @@ def build_forge_blueprint(
     save (see ``cstar_forge.forge.forge_blueprint._forge_version`` /
     ``_installed_version``), preserving an explicit value passed here instead
     (e.g. carrying one forward through a re-resolve).
+
+    ``grid_file``, if given, is a user-supplied pre-made grid netCDF used in place
+    of one Forge would otherwise generate from ``grid_kwargs``. A ``str``/``Path``
+    is normalized into a :class:`UserProvidedFile` by hashing the file's contents
+    (``cstar_forge.forge.user_files.hash_netcdf_contents``) -- the file must exist
+    at authoring time. A dict or ``UserProvidedFile`` carrying both ``location``
+    and ``content_hash`` is trusted as-is (the wizard passes this to avoid
+    rehashing on every rebuild). Either way, the grid is loaded once here
+    (``rt.Grid(filename=..., **vert)``, where ``vert`` is the theta_s/theta_b/
+    hc/N subset of ``grid_kwargs`` -- see :func:`vert_kwargs_from_grid_kwargs`)
+    to read back ``nx``/``ny``/``N`` for ``model_settings["param"]`` and, when
+    ``dt``/``v_sponge`` are not supplied explicitly, ``size_x``/``size_y`` for
+    their derivation -- which raises a clear ``ValueError`` if the file lacks
+    those attrs (a hand-made file roms-tools never wrote), since there is then
+    no way to derive them and an explicit value must be passed instead.
+    ``grid_kwargs`` itself must then carry only the vertical-coord keys (the
+    schema validator rejects generation-geometry keys and nesting alongside
+    ``grid_file`` -- see ``Domain._grid_file_excludes_generation_geometry``).
+
+    ``cdr_forcing_file``, if given, is a user-supplied pre-made CDR-forcing netCDF
+    used in place of building one via ``rt.CDRForcing`` from ``cdr_forcing``/
+    ``cdr_forcing_yaml``. Normalized into a :class:`UserProvidedFile` the same way
+    as ``grid_file`` (see :func:`_normalize_user_file`) -- a ``str``/``Path`` is
+    hashed here (must exist at authoring time), a dict/``UserProvidedFile`` is
+    trusted as-is. Mutually exclusive with ``cdr_forcing``/``cdr_forcing_yaml``
+    (raised here, before the ``Forcing`` model validator would, so the caller gets
+    a resolver-level message); like a set ``cdr_forcing``, it forces
+    ``do_cdr_output=True``, requires ``bgc_mode == "marbl"``, sets
+    ``cppdefs.cdr_forcing = True``, and ensures the CDR-output MARBL diagnostics.
     """
+    if cdr_forcing_file is not None and (
+        cdr_forcing is not None or cdr_forcing_yaml is not None
+    ):
+        raise ValueError(
+            "cdr_forcing_file and cdr_forcing/cdr_forcing_yaml are mutually "
+            "exclusive; supply either a generated-CDR config or a pre-made "
+            "CDR-forcing file, not both."
+        )
+
     if cdr_forcing_yaml is not None:
         cdr_forcing = read_cdr_forcing_yaml(cdr_forcing_yaml)
     elif cdr_forcing is not None:
         # defensive strip -- a caller may hand us a dict copied straight from a
         # to_yaml() dump (which still carries the human-readable metadata block).
         cdr_forcing = {k: v for k, v in cdr_forcing.items() if k != "_tracer_metadata"}
+
+    cdr_forcing_file_obj: UserProvidedFile | None = None
+    if cdr_forcing_file is not None:
+        cdr_forcing_file_obj = _normalize_user_file(
+            cdr_forcing_file, label="cdr_forcing_file"
+        )
 
     spec = load_model_spec_data(model_dir)
     model = spec["model"]
@@ -479,21 +578,60 @@ def build_forge_blueprint(
         )
     inputs = forcing_inputs
 
-    nx = grid_kwargs["nx"]
-    ny = grid_kwargs["ny"]
-    nvert = grid_kwargs["N"]
+    # ----- optional user-provided grid file ----------------------------------
+    # Normalize `grid_file` into a UserProvidedFile, then load the grid ONCE
+    # (nx/ny/N/dt/v_sponge derivation below all read from this single object
+    # rather than re-opening the file or re-hashing it).
+    grid_file_obj: UserProvidedFile | None = None
+    loaded_grid: Any = None
+    if grid_file is not None:
+        grid_file_obj = _normalize_user_file(grid_file, label="grid_file")
+
+        if grid is not None:
+            # A caller (the wizard, rebuilding on every widget edit) may pass the
+            # already-loaded grid to avoid re-reading the netCDF each rebuild.
+            loaded_grid = grid
+        else:
+            vert = vert_kwargs_from_grid_kwargs(grid_kwargs)
+            import roms_tools as rt
+
+            loaded_grid = rt.Grid(filename=grid_file_obj.location, **vert)
+
+    if loaded_grid is not None:
+        nx = loaded_grid.nx
+        ny = loaded_grid.ny
+        nvert = loaded_grid.N
+    else:
+        nx = grid_kwargs["nx"]
+        ny = grid_kwargs["ny"]
+        nvert = grid_kwargs["N"]
     npx = partitioning["n_procs_x"]
     npy = partitioning["n_procs_y"]
 
     # ----- derived numerics --------------------------------------------------
     if dt is None:
-        dt = _compute_dt_from_cfl(grid_kwargs, grid)
+        if loaded_grid is not None and loaded_grid.size_x is None:
+            raise ValueError(
+                "dt was not provided and the grid_file grid has no size_x/size_y "
+                "(a hand-made file roms-tools never wrote those attrs to) -- CFL "
+                "derivation is impossible; pass dt= explicitly."
+            )
+        dt = _compute_dt_from_cfl(
+            grid_kwargs, loaded_grid if loaded_grid is not None else grid
+        )
     n_days = (end_date - start_date).days
     ntimes = round(n_days * 24 * 3600 / dt)
     # v_sponge default = grid spacing (m) / 10 -- a caller (e.g. the wizard, restoring
     # a user override saved into a DomainSpec) may pass an explicit value instead.
     if v_sponge is None:
-        v_sponge = _compute_v_sponge_default(grid_kwargs)
+        if loaded_grid is not None and loaded_grid.size_x is None:
+            raise ValueError(
+                "v_sponge was not provided and the grid_file grid has no size_x "
+                "(a hand-made file roms-tools never wrote that attr to) -- "
+                "derivation from grid spacing is impossible; pass v_sponge= "
+                "explicitly."
+            )
+        v_sponge = _compute_v_sponge_default(grid_kwargs, loaded_grid)
 
     # ----- flat model_settings ----------------------------------------------
     settings: dict[str, Any] = copy.deepcopy(model.get("model_settings", {}) or {})
@@ -535,7 +673,7 @@ def build_forge_blueprint(
     cppdefs["obc_east"] = bool(open_boundaries.get("east", False))
     cppdefs["obc_north"] = bool(open_boundaries.get("north", False))
     cppdefs["obc_south"] = bool(open_boundaries.get("south", False))
-    cppdefs["cdr_forcing"] = cdr_forcing is not None
+    cppdefs["cdr_forcing"] = cdr_forcing is not None or cdr_forcing_file_obj is not None
     cppdefs["use_pio"] = bool(use_pio)
     cppdefs["marbl"] = bgc_mode == "marbl"
     # nhy_forcing/nox_forcing default from the ModelSpec (advanced-settings editable)
@@ -601,7 +739,7 @@ def build_forge_blueprint(
         extract["extract_period"] = float(period) if period is not None else 3600.0
         settings["extract_data"] = extract
 
-    # OutputSpec piece: deep-merge the output-settings selection over the model
+    # OutputSpec spec: deep-merge the output-settings selection over the model
     # defaults (before manual overrides, so a hand override still wins).
     _deep_merge(settings, output_settings)
 
@@ -635,12 +773,16 @@ def build_forge_blueprint(
 
     # ----- CDR output consistency --------------------------------------------
     # CDR output is valid without CDR forcing (cdr_frc.cdr_source stays false;
-    # ROMS opens no CDR file), and CDR forcing implies CDR output. Either way
-    # the CDR_FORCING cppdef must be on (it gates compiling ucla-roms'
-    # cdr_output.F90) and the MARBL diagnostics ucla-roms looks up by name,
-    # unchecked, must be in the write list.
+    # ROMS opens no CDR file), and CDR forcing (generated OR a user-supplied
+    # cdr_forcing_file) implies CDR output. Either way the CDR_FORCING cppdef
+    # must be on (it gates compiling ucla-roms' cdr_output.F90) and the MARBL
+    # diagnostics ucla-roms looks up by name, unchecked, must be in the write list.
     cdr_out = settings.setdefault("cdr_output", {})
-    do_cdr_output = bool(cdr_out.get("do_cdr_output")) or cdr_forcing is not None
+    do_cdr_output = (
+        bool(cdr_out.get("do_cdr_output"))
+        or cdr_forcing is not None
+        or cdr_forcing_file_obj is not None
+    )
     cdr_out["do_cdr_output"] = do_cdr_output
     if do_cdr_output:
         if bgc_mode != "marbl":
@@ -654,6 +796,35 @@ def build_forge_blueprint(
             marbl.get("marbl_diagnostics_to_write")
         )
 
+    # ----- restart period consistency ----------------------------------------
+    # Fail fast at authoring time (mirrors the executor's net for hand-edited
+    # blueprints): restart writes must land on a timestep.
+    check_rst_period_divisible(
+        settings.get("time_stepping", {}).get("dt"), settings.get("ocean_vars", {})
+    )
+    # Nesting extraction files must roll on restart boundaries under
+    # ucla-roms >= 0.5.0 (its check_output_divides_rst aborts the run
+    # otherwise); older releases don't enforce it, so gate on the schema the
+    # pinned ref selects. The extract values are resolver-derived (child
+    # DomainSpec metadata 'period' x a seeded nrpf), so authoring time is the
+    # only place the author sees the failure with the knobs still in hand.
+    roms_block = (model.get("code") or {}).get("roms") or {}
+    effective_roms_ref = (
+        roms_ref or roms_block.get("commit") or roms_block.get("branch")
+    )
+    with warnings.catch_warnings():
+        # A non-semver pin (e.g. pio-dev's 'main') warns on every schema
+        # selection; this internal version probe shouldn't repeat it -- the
+        # engine/executor selection paths already surface it once per run.
+        warnings.simplefilter("ignore", UserWarning)
+        settings_cls = run_time_settings_for_ref(
+            str(effective_roms_ref) if effective_roms_ref is not None else None
+        )
+    if settings_cls is not RunTimeSettings:
+        check_extract_divides_rst(
+            settings.get("ocean_vars", {}), settings.get("extract_data", {})
+        )
+
     # ----- forcing (initial conditions + surface/boundary/tidal/river + CDR) --
     # A child grid (has a parent) receives its boundary values from the parent's
     # nesting.nc extraction, not from reanalysis boundary forcing -- the executor
@@ -665,8 +836,13 @@ def build_forge_blueprint(
     sources = _build_forcing(
         inputs,
         cdr_forcing,
-        topography_source,
+        # A user-provided grid file has its topography baked in -- the executor
+        # skips topography staging entirely, so don't note the configured source
+        # into resolved_datasets/datasets (a user-staged source like EMOD would
+        # otherwise hard-fail ensure_source_data over a file that is never used).
+        None if grid_file_obj is not None else topography_source,
         is_child=grid_kwargs_parent is not None,
+        cdr_forcing_file=cdr_forcing_file_obj,
     )  # kept as `sources` locally for brevity
 
     # ----- bgc_mode consistency check ----------------------------------------
@@ -683,7 +859,12 @@ def build_forge_blueprint(
                 bgc_signals.append(
                     f"boundary.bgc_sources[{i}] (source={bs.source.name})"
                 )
-        for i, bs in enumerate(sources.initial_conditions.bgc_sources):
+        # initial_conditions is None only for a child domain with no explicit IC.
+        for i, bs in enumerate(
+            sources.initial_conditions.bgc_sources
+            if sources.initial_conditions is not None
+            else []
+        ):
             bgc_signals.append(
                 f"initial_conditions.bgc_sources[{i}] (source={bs.source.name})"
             )
@@ -705,6 +886,7 @@ def build_forge_blueprint(
         use_pio=use_pio,
         bgc_mode=bgc_mode,
         roms_ref=roms_ref,
+        marbl_ref=marbl_ref,
     )
 
     default_name = sanitize_name(f"{model_name}_{grid_name}_{npx * npy}procs")
@@ -746,6 +928,7 @@ def build_forge_blueprint(
             # ``run_time_overrides={"time_stepping": {"dt": ...}}`` caller can't
             # desync this field from ``model_settings["time_stepping"]["dt"]``.
             dt=settings["time_stepping"]["dt"],
+            grid_file=grid_file_obj,
         ),
         forcing=sources,
         # Host-independent source-dataset keys to prepare (forcing/IC sources + topography),
@@ -761,14 +944,14 @@ def build_forge_blueprint(
         code=code,
         composition=composition
         or Composition(
-            model=PieceRef(name=model_name, origin="catalog"),
-            domain=PieceRef(name=grid_name, origin="custom"),
+            model=SpecRef(name=model_name, origin="catalog"),
+            domain=SpecRef(name=grid_name, origin="custom"),
             # forcing_inputs/output_settings are always supplied now (no more
             # "model_default" fallback); a caller not tracking finer-grained
             # catalog/custom provenance (e.g. direct/test callers -- the wizard
             # builds its own Composition via _composition()) gets "custom".
-            forcing=PieceRef(name=None, origin="custom"),
-            output=PieceRef(name=None, origin="custom"),
+            forcing=SpecRef(name=None, origin="custom"),
+            output=SpecRef(name=None, origin="custom"),
         ),
         provenance=Provenance(
             generated_at=generated_at,
@@ -785,6 +968,7 @@ def _build_forcing(
     cdr_forcing: dict[str, Any] | None,
     topography_source: str | TopographySource | None = None,
     is_child: bool = False,
+    cdr_forcing_file: UserProvidedFile | None = None,
 ) -> Forcing:
     """Build the flat ``Forcing`` object from model inputs + CDR config.
 
@@ -794,7 +978,16 @@ def _build_forcing(
 
     ``is_child`` (this domain has a parent grid) skips boundary items entirely --
     not just clears them afterward -- so a boundary-only source is never noted
-    into ``resolved_datasets``/``datasets`` either.
+    into ``resolved_datasets``/``datasets`` either. The same applies to
+    initial_conditions when no source is given: it resolves to ``None`` for a
+    child domain (state comes from the parent's nesting extraction) instead of
+    the hard error a non-child domain gets.
+
+    ``cdr_forcing_file``, if given, is already a normalized :class:`UserProvidedFile`
+    (see ``build_forge_blueprint``'s ``_normalize_user_file`` call) -- passed straight
+    through onto ``Forcing.cdr_forcing_file``; mutual exclusion with ``cdr_forcing``
+    is enforced both by the caller (a clearer, resolver-level message) and by
+    ``Forcing``'s own validator (defense in depth).
     """
     ic_block = inputs.get("initial_conditions", {}) or {}
     forcing_block = inputs.get("forcing", {}) or {}
@@ -817,7 +1010,13 @@ def _build_forcing(
             kw = {f: _parse_source(it.get(f)) for f in source_fields}
             for f in plain_fields:
                 if f in it:
-                    kw[f] = it[f]
+                    if f == "custom_file":
+                        # Accept the same three forms as grid_file (str/Path/dict/
+                        # instance) -- see _normalize_user_file. Only river carries
+                        # this today; the label generalizes to any future item.
+                        kw[f] = _normalize_user_file(it[f], label=f"{key} custom_file")
+                    else:
+                        kw[f] = it[f]
             out.append(cls(**kw))
         return out
 
@@ -846,7 +1045,21 @@ def _build_forcing(
                 kw[f] = block[f]
         return cls(**kw)
 
-    ic = _build_bgc_section(InitialConditions, ic_block)
+    if not ic_block.get("source"):
+        # No IC source given. A child domain gets its state from the parent's
+        # nesting extraction, so IC is optional -- skip building it entirely,
+        # the same way boundary is skipped below, so nothing leaks into
+        # resolved_datasets/datasets. A non-child domain has no other source of
+        # state, so this is a hard error.
+        if not is_child:
+            raise ValueError(
+                "initial_conditions is required unless the domain has a parent "
+                "grid (child domains inherit state from the parent's nesting "
+                "extraction)"
+            )
+        ic = None
+    else:
+        ic = _build_bgc_section(InitialConditions, ic_block)
 
     surface = _items("surface", SurfaceForcingItem)
     boundary_block = forcing_block.get("boundary")
@@ -865,17 +1078,31 @@ def _build_forcing(
     resolved: dict[str, ResolvedDataset] = {}
 
     def _note(src: SourceSpec):
+        if not (src and src.name):
+            return
         # DERIVED_BGC_SOURCES (CONSTANTS/ESPER) are computed at generation time, not
         # fetched/staged by Forge -- noting them here would land them in
         # resolved_datasets/datasets and raise "Unknown dataset" downstream in SourceData.
-        if src and src.name and str(src.name).upper() not in DERIVED_BGC_SOURCES:
-            resolved.setdefault(
-                src.name, _resolved_dataset(src.name, src.glorys_layout)
-            )
+        if str(src.name).upper() in DERIVED_BGC_SOURCES:
+            return
+        # CUSTOM_FILE (river.source) has no registry entry -- the file is
+        # verified/staged directly from RiverForcingItem.custom_file, not from
+        # SourceData, so noting it here would either raise "Unknown dataset"
+        # downstream or cause bogus staging of a source that is never used.
+        if src.name.upper() == "CUSTOM_FILE":
+            return
+        # An explicit path (SourceSpec.path) bypasses staging entirely -- mirrors
+        # topography_path semantics -- so the item is never noted into
+        # resolved_datasets/datasets (see input_data._resolve_source_block, which
+        # returns an explicit path verbatim without ever calling path_for_source).
+        if src.path:
+            return
+        resolved.setdefault(src.name, _resolved_dataset(src.name, src.glorys_layout))
 
-    _note(ic.source)
-    for bs in ic.bgc_sources:
-        _note(bs.source)
+    if ic is not None:
+        _note(ic.source)
+        for bs in ic.bgc_sources:
+            _note(bs.source)
     if boundary is not None:
         _note(boundary.source)
         for bs in boundary.bgc_sources:
@@ -905,6 +1132,7 @@ def _build_forcing(
         tidal=tidal,
         river=river,
         cdr_forcing=cdr_forcing,
+        cdr_forcing_file=cdr_forcing_file,
         resolved_datasets=resolved,
     )
 
@@ -919,6 +1147,7 @@ def _build_code(
     use_pio: bool = False,
     bgc_mode: str = "marbl",
     roms_ref: str | None = None,
+    marbl_ref: str | None = None,
 ) -> Code:
     code_block = model.get("code", {}) or {}
 
@@ -975,6 +1204,10 @@ def _build_code(
                 'bgc_mode="marbl" but the ModelSpec model.yaml has no code.marbl '
                 "repository (Forge pins codebases for reproducibility)"
             )
+        if marbl_ref:
+            # Same convention as roms_ref above: any git checkout target lands in
+            # `commit`, `branch` is cleared for C-Star's exactly-one validator.
+            marbl = CodeRepo(location=marbl.location, commit=marbl_ref, branch=None)
     return Code(
         roms=roms,
         marbl=marbl,
@@ -984,10 +1217,15 @@ def _build_code(
     )
 
 
-def _compute_v_sponge_default(grid_kwargs: dict[str, Any]) -> float:
+def _compute_v_sponge_default(grid_kwargs: dict[str, Any], grid: Any = None) -> float:
     """Lazily compute the default sponge viscosity from grid spacing (no grid build
     needed -- pure arithmetic on ``nx``/``size_x``). Mirrors ``_compute_dt_from_cfl``'s
     lazy-import pattern to keep this module dependency-light when unused.
+
+    ``grid``, if given (a user-supplied ``grid_file``'s loaded grid, whose
+    ``grid_kwargs`` carries no ``nx``/``size_x`` -- see
+    ``Domain._grid_file_excludes_generation_geometry``), reads ``size_x``/``nx``
+    from the grid object instead of ``grid_kwargs``.
     """
     try:
         from cstar_forge.forge.util import compute_v_sponge_from_grid
@@ -997,6 +1235,8 @@ def _compute_v_sponge_default(grid_kwargs: dict[str, Any]) -> float:
             "cstar_forge.forge.util failed. Pass v_sponge= explicitly to keep "
             f"resolution dependency-light. ({exc})"
         ) from exc
+    if grid is not None:
+        return compute_v_sponge_from_grid(grid.size_x, grid.nx)
     return compute_v_sponge_from_grid(grid_kwargs["size_x"], grid_kwargs["nx"])
 
 

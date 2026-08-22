@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-import yaml
+from cstar_forge.domain_catalog import user_catalog_root
 
 logger = logging.getLogger(__name__)
 
@@ -60,27 +60,6 @@ class DataPaths:
     blueprints: Path
     models_yaml: Path
     builds_yaml: Path
-    machines_yaml: Path
-
-
-@dataclass(frozen=True)
-class MachineConfig:
-    """
-    Machine-specific configuration loaded from machines.yaml.
-
-    Attributes
-    ----------
-    account : str, optional
-        Account/project name for job submission.
-    pes_per_node : int, optional
-        Processing elements (cores) per node.
-    queues : dict, optional
-        Dictionary of queue names, with 'default' and optionally 'premium' keys.
-    """
-
-    account: str | None = None
-    pes_per_node: int | None = None
-    queues: dict[str, str] | None = None
 
 
 # --------------------------------------------------------
@@ -201,16 +180,6 @@ def _layout_unknown(home: Path, env: dict) -> tuple[Path, Path, Path]:
 # --------------------------------------------------------
 
 
-def default_catalog_inner_dir(input_data: Path) -> Path:
-    """
-    Default inner *catalog* directory: the folder that directly contains ``blueprints/``.
-
-    The catalog lives alongside ``input-data`` inside the base data directory, e.g.
-    ``~/cstar-forge-data/catalog/blueprints/``.
-    """
-    return input_data.parent.resolve() / "catalog"
-
-
 def get_data_paths(create: bool = False) -> DataPaths:
     """Return canonical data and project paths adapted to the system we're running on.
 
@@ -229,12 +198,14 @@ def get_data_paths(create: bool = False) -> DataPaths:
     source_data, input_data, scratch = layout_fn(home, env)
 
     here = Path(__file__).resolve().parent
-    # Inner catalog dir: .../cstar_forge_data/catalog/blueprints/
-    catalog = default_catalog_inner_dir(input_data)
+    # The catalog is deliberately home-anchored (unlike source_data/input_data/
+    # scratch above, which get rebased onto HPC $SCRATCH/$WORK): catalog entries
+    # are durable, user-registered content that must survive scratch purges, not
+    # job-scoped working data. See user_catalog_root's docstring.
+    catalog = user_catalog_root()
     blueprints_dir = catalog / "blueprints"
     models_yaml = here / "models.yaml"
     builds_yaml = here / "builds.yaml"
-    machines_yaml = here / "machines.yaml"
 
     if create:
         for p in (source_data, input_data, scratch, catalog, blueprints_dir):
@@ -249,7 +220,6 @@ def get_data_paths(create: bool = False) -> DataPaths:
         blueprints=blueprints_dir,
         models_yaml=models_yaml,
         builds_yaml=builds_yaml,
-        machines_yaml=machines_yaml,
     )
 
 
@@ -282,54 +252,6 @@ def with_catalog(paths: DataPaths, catalog: Path) -> DataPaths:
         catalog=catalog,
         blueprints=catalog / "blueprints",
     )
-
-
-# --------------------------------------------------------
-# Machine configuration loader
-# --------------------------------------------------------
-
-
-def load_machine_config(system_tag: str, machines_yaml_path: Path) -> MachineConfig:
-    """
-    Load machine-specific configuration from machines.yaml.
-
-    Parameters
-    ----------
-    system_tag : str
-        System tag (e.g., "NERSC_perlmutter", "RCAC_anvil").
-    machines_yaml_path : Path
-        Path to the machines.yaml file.
-
-    Returns
-    -------
-    MachineConfig
-        Machine configuration object. Returns empty config if machine not found
-        or file doesn't exist.
-    """
-    if not machines_yaml_path.exists():
-        return MachineConfig()
-
-    try:
-        with machines_yaml_path.open("r") as f:
-            machines_data = yaml.safe_load(f) or {}
-
-        machine_data = machines_data.get(system_tag, {})
-        if not isinstance(machine_data, dict):
-            machine_data = {}
-
-        return MachineConfig(
-            account=machine_data.get("account"),
-            pes_per_node=machine_data.get("pes_per_node"),
-            queues=machine_data.get("queues"),
-        )
-    except (OSError, yaml.YAMLError) as exc:
-        logger.warning(
-            "Failed to load machine config for %r from %s: %s",
-            system_tag,
-            machines_yaml_path,
-            exc,
-        )
-        return MachineConfig()
 
 
 # =========================================================
@@ -535,32 +457,10 @@ def main(argv: list[str] | None = None) -> int:
     return 1
 
 
-def _load_machine_config_from_catalog(system_tag: str) -> MachineConfig:
-    """Load machine config from the default DomainCatalog (internal cstar-forge catalog)."""
-    from cstar_forge.domain_catalog import default_catalog
-
-    try:
-        data = default_catalog.machine_data(system_tag)
-    except (KeyError, OSError, yaml.YAMLError) as exc:
-        # Machine not in the catalog, or its YAML is missing/unreadable -- fall
-        # back to an empty config rather than failing import-time module setup.
-        logger.warning(
-            "Failed to load machine config for %r from catalog: %s", system_tag, exc
-        )
-        return MachineConfig()
-
-    return MachineConfig(
-        account=data.get("account"),
-        pes_per_node=data.get("pes_per_node"),
-        queues=data.get("queues"),
-    )
-
-
 # Initialize canonical instance
 paths = get_data_paths()
 system = _detect_system()
 system_id = system  # Alias for compatibility
-machine_config = _load_machine_config_from_catalog(system)
 cluster_type = _default_cluster_type(system)
 
 
@@ -662,7 +562,6 @@ def resolve_host(working_dir):
         working_dir=relocate_working_dir(working_dir),
         source_data_cache=paths.source_data,
         system=system,
-        machine_config=machine_config,
     )
 
 

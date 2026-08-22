@@ -139,10 +139,13 @@ GENERATION_DERIVED_LEAF_KEYS: dict[str, tuple[str, ...]] = {
 def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
     """Convert cfg.forcing to the forcing_override dict for RomsMarblInputData.
 
-    Always returns a dict with ``initial_conditions`` and ``forcing`` keys mirroring
-    the model.yaml inputs block. ``cfg.forcing`` is fully resolved by the
-    resolver (from the model default or an authored/edited selection), so the executor
-    always drives input generation from this dict and never reads ``model_spec.inputs``.
+    Always returns a dict with a ``forcing`` key, mirroring the model.yaml inputs
+    block. ``initial_conditions`` is included too unless ``cfg.forcing.initial_conditions``
+    is ``None`` (a child domain with no explicit IC -- state comes from the parent's
+    nesting extraction instead), in which case the key is omitted entirely.
+    ``cfg.forcing`` is fully resolved by the resolver (from the model default or an
+    authored/edited selection), so the executor always drives input generation from
+    this dict and never reads ``model_spec.inputs``.
     """
 
     def _src(spec) -> dict[str, Any]:
@@ -200,7 +203,6 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
         return {k: v for k, v in d.items() if v is not None}
 
     f = cfg.forcing
-    ic = _bgc_section(f.initial_conditions)
 
     forc: dict[str, Any] = {}
     if f.boundary is not None:
@@ -213,7 +215,13 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
         if items:
             forc[cat] = [_item(it) for it in items]
 
-    return {"initial_conditions": ic, "forcing": forc}
+    out: dict[str, Any] = {"forcing": forc}
+    # None only for a child domain with no explicit IC (state comes from the
+    # parent's nesting extraction) -- omit the key entirely rather than
+    # emitting a None/placeholder value.
+    if f.initial_conditions is not None:
+        out["initial_conditions"] = _bgc_section(f.initial_conditions)
+    return out
 
 
 def forge_blueprint_to_builder_kwargs(cfg: ForgeBlueprint) -> dict[str, Any]:
@@ -236,6 +244,11 @@ def forge_blueprint_to_builder_kwargs(cfg: ForgeBlueprint) -> dict[str, Any]:
         start_time=cfg.run.start_date,
         end_time=cfg.run.end_date,
         cdr_forcing=cfg.forcing.cdr_forcing,
+        # Mirrors cdr_forcing/grid_file: a top-level builder kwarg (not routed
+        # through sources_to_forcing_override, which only ever carries
+        # initial_conditions/surface/boundary/tidal/river) -- the UserProvidedFile
+        # object is passed straight through, same as domain.grid_file below.
+        cdr_forcing_file=cfg.forcing.cdr_forcing_file,
         forcing_override=sources_to_forcing_override(cfg),
         model_reference_date=cfg.run.model_reference_date,
         source_dataset_keys=list(cfg.datasets),
@@ -244,6 +257,7 @@ def forge_blueprint_to_builder_kwargs(cfg: ForgeBlueprint) -> dict[str, Any]:
         },
         resolved_settings=copy.deepcopy(cfg.model_settings),
         code_spec=cfg.code,
+        grid_file=cfg.domain.grid_file,
     )
     # nesting: the builder expects grid_kwargs_child to carry an optional "metadata"
     # block (which the ForgeBlueprint stores separately) — re-embed it.
@@ -339,7 +353,7 @@ def process_forge_blueprint(
     via the last).
 
     Returns the executor (``ForgeExecutor`` by default), so callers can reach
-    ``.path_roms_marbl_blueprint()`` / ``.prep_cstar_environment(...)`` / ``.run()``.
+    ``.path_roms_marbl_blueprint()``.
 
     Parameters
     ----------
@@ -406,7 +420,9 @@ def process_forge_blueprint(
         warnings.warn(integrity, UserWarning, stacklevel=2)
 
     if validate:
-        problems = validate_run_time_sections(cfg.model_settings)
+        problems = validate_run_time_sections(
+            cfg.model_settings, roms_ref=cfg.code.roms.commit or cfg.code.roms.branch
+        )
         if problems:
             raise ValueError(
                 "forge_blueprint.model_settings has invalid values (fix before "

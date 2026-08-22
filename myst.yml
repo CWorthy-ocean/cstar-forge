@@ -23,7 +23,6 @@ project:
 
     - title: Reference
       children:
-        - file: docs/reference-machines.md
         - file: docs/reference-model-yaml.md
         - file: docs/reference-domains.md
         - file: docs/reference-roms-marbl-blueprint.md
@@ -34,6 +33,7 @@ project:
         - file: docs/INSTALLATION-CHANGES.md
         - file: docs/machine-config.md
         - file: docs/architecture-details.md
+        - file: docs/catalog-plan.md
         - file: docs/domain-generation-overview.md
         - file: docs/source-data-intro.md
         - file: docs/source-data-example.md
