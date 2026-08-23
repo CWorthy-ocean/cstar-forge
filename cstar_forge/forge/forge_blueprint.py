@@ -291,6 +291,7 @@ class RiverSource(str, Enum):
 
     DAI = "DAI"
     GLOFAS = "GLOFAS"
+    CUSTOM_FILE = "CUSTOM_FILE"  # user-supplied pre-made river forcing netCDF
 
 
 class RiverBgcSource(str, Enum):
@@ -346,17 +347,24 @@ _HASH_EXCLUDE = {
 # match the ROMS namelist key directly (CDR output became independently
 # user-controllable, decoupled from CDR forcing -- see ``forge_blueprint_resolve``'s
 # CDR-output consistency block).
-# v6 (2026-08): ``forcing.initial_conditions.bgc_source`` (singular) replaced by
+# v6 (2026-08): user-provided input files. New optional ``UserProvidedFile``-typed
+# fields -- ``domain.grid_file``, ``forcing.river[*].custom_file``,
+# ``forcing.cdr_forcing_file`` -- let a user supply a pre-made netCDF instead of
+# having Forge generate it. All additive (default ``None``); no migration beyond
+# the version bump is needed for existing v5 files.
+# v7 (2026-08): ``forcing.initial_conditions.bgc_source`` (singular) replaced by
 # ``bgc_sources`` (a list of ``BgcSourceItem``), mirroring how boundary/surface
 # forcing already support multiple sources -- lets initial conditions combine
 # multiple BGC datasets (e.g. UNIFIED + GLODAP + a constants source), each
 # down-selected via ``use_vars`` and completed by ``BGCMarbl().process_bgc_fields()``.
-# Also within v6 (never released outside this branch, so no bump/migration needed):
+# Also within v7 (never released, so no separate bump/migration needed):
 # ``forcing.boundary`` changed from a flat, ``type``-discriminated
 # ``list[BoundaryForcingItem]`` to a singular ``BoundaryForcing`` section (``source``
 # + ``bgc_sources: list[BgcSourceItem]``), mirroring ``InitialConditions`` exactly --
 # both sections now build on the same roms-tools wrapper API.
-FORGE_BLUEPRINT_VERSION = 6
+# NOTE: this branch originally numbered the bgc_sources change v6; main released a
+# different v6 (user-provided files) first, so it was renumbered to v7 on merge.
+FORGE_BLUEPRINT_VERSION = 7
 
 # Identifies the C-Star application that CONSUMES this blueprint — i.e. the "forge"
 # application (this processing engine), whose blueprint IS the ForgeBlueprint. Do not confuse
@@ -415,12 +423,22 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
     ``validation_alias`` for this spelling, but the migration keeps the on-disk
     dict itself current).
 
-    **v5 -> v6**: ``forcing.initial_conditions.bgc_source`` (a single ``SourceSpec``
+    **v5 -> v6**: no-op beyond the version bump -- the new user-provided-file
+    fields (``domain.grid_file``, ``forcing.river[*].custom_file``,
+    ``forcing.cdr_forcing_file``) are purely additive and default to ``None``, so
+    a v5 file already validates against the v6 schema unchanged.
+
+    **v6 -> v7**: ``forcing.initial_conditions.bgc_source`` (a single ``SourceSpec``
     dict) is rewrapped as ``forcing.initial_conditions.bgc_sources`` (a one-item
     list of ``{"source": <old dict>}``); absent/``None`` becomes an empty list. If
     both keys are present in the same dict (an inconsistent, likely hand-edited
     file -- genuinely already-migrated data would only ever have ``bgc_sources``),
     raises rather than silently discarding ``bgc_source``.
+    Also v6 -> v7: ``forcing.boundary`` collapses from a flat, ``type``-
+    discriminated list into a single ``BoundaryForcing`` section -- the
+    ``type: physics`` entry supplies ``source`` plus the section's plain fields,
+    and every ``type: bgc`` entry becomes a ``bgc_sources`` item. An empty list
+    becomes ``None`` (a child domain with no boundary forcing).
 
     Idempotent and a no-op on already-current data (e.g. direct keyword
     construction, ``ForgeBlueprint(name=..., ...)``) -- called automatically from a
@@ -480,7 +498,7 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
             ):
                 cdr_output["do_cdr_output"] = cdr_output.pop("do_cdr")
 
-    if version is None or version < 6:
+    if version is None or version < 7:
         forcing = data.get("forcing")
         if isinstance(forcing, dict):
             ic = forcing.get("initial_conditions")
@@ -501,6 +519,37 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
                     [{"source": old_bgc_source}] if old_bgc_source else []
                 )
 
+        # `forcing.boundary` collapsed from a flat, `type`-discriminated list into a
+        # single BoundaryForcing section. Main released v6 with the list shape, so
+        # (unlike when this change was branch-local) real files carry it and DO need
+        # converting: the `type: physics` item becomes the section's own
+        # source + plain fields, each `type: bgc` item becomes a `bgc_sources` entry.
+        if isinstance(forcing, dict) and isinstance(forcing.get("boundary"), list):
+            items = [b for b in forcing["boundary"] if isinstance(b, dict)]
+            if not items:
+                forcing["boundary"] = None
+            else:
+                phys = next(
+                    (b for b in items if b.get("type") in (None, "physics")), None
+                )
+                if phys is None:
+                    raise ValueError(
+                        "forcing.boundary has no type='physics' entry to convert "
+                        "into the v7 BoundaryForcing section source."
+                    )
+                bgc_keys = set(BgcSourceItem.model_fields)
+                sect_keys = set(BoundaryForcing.model_fields) - {"source", "bgc_sources"}
+                section: dict[str, Any] = {"source": phys.get("source")}
+                for k, v in phys.items():
+                    if k in sect_keys:
+                        section[k] = v
+                section["bgc_sources"] = [
+                    {k: v for k, v in b.items() if k in bgc_keys}
+                    for b in items
+                    if b.get("type") == "bgc"
+                ]
+                forcing["boundary"] = section
+
     data["forge_blueprint_version"] = FORGE_BLUEPRINT_VERSION
     return data
 
@@ -508,6 +557,56 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
 class _Section(BaseModel):
     # Strict by default: an unknown key is a bug in the resolver or a stale file.
     model_config = ConfigDict(extra="forbid")
+
+
+class UserProvidedFile(_Section):
+    """A user-supplied, pre-made netCDF used in place of one Forge would
+    otherwise generate (grid / river forcing / CDR forcing -- see
+    ``Domain.grid_file``, ``RiverForcingItem.custom_file``,
+    ``Forcing.cdr_forcing_file``).
+
+    ``location`` is a path on the machine that will run the executor -- it must
+    exist there at processing time (a hard error if not: see
+    ``cstar_forge.forge.user_files.verify_user_file``). It is host/transport, not
+    results-affecting content, so it is excluded from :meth:`ForgeBlueprint.content_hash`.
+
+    ``content_hash`` pins the file's *data content* (via
+    ``cstar_forge.forge.user_files.hash_netcdf_contents``) as it was when the
+    blueprint was authored. It IS results-affecting and stays in the content hash;
+    a mismatch at processing time is a warning (the file may have been
+    legitimately regenerated), not an error.
+    """
+
+    location: str
+    content_hash: str
+
+
+# The vertical-coordinate keys roms-tools accepts alongside ``filename=`` when
+# loading a grid from an existing netCDF (``rt.Grid(filename=..., theta_s=...,
+# theta_b=..., hc=..., N=...)``) -- must be passed all-or-none.
+_GRID_FILE_VERT_KEYS = ("theta_s", "theta_b", "hc", "N")
+
+
+def vert_kwargs_from_grid_kwargs(grid_kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Extract the ``theta_s``/``theta_b``/``hc``/``N`` subset of ``grid_kwargs``
+    for use alongside a user-supplied ``Domain.grid_file``
+    (``rt.Grid(filename=..., **vert_kwargs_from_grid_kwargs(grid_kwargs))``).
+
+    roms-tools requires these four passed all-or-none alongside ``filename`` --
+    raises a clear ``ValueError`` here (before ever calling roms-tools) if 1-3 of
+    them (not 0 or 4) are present. Returns ``{}`` when none are present, so
+    roms-tools derives them from the file's own attrs (or its own defaults, with
+    a warning, as a last resort).
+    """
+    present = {k: grid_kwargs[k] for k in _GRID_FILE_VERT_KEYS if k in grid_kwargs}
+    if present and len(present) != len(_GRID_FILE_VERT_KEYS):
+        missing = sorted(set(_GRID_FILE_VERT_KEYS) - present.keys())
+        raise ValueError(
+            "grid_file requires theta_s/theta_b/hc/N to be supplied all-or-none in "
+            f"grid_kwargs (roms-tools' rule); missing {missing}, present "
+            f"{sorted(present)}."
+        )
+    return present
 
 
 # ===========================================================================
@@ -589,6 +688,13 @@ class Domain(_Section):
     (``cstar_forge.forge.util``, via a grid build) when not explicitly supplied, and
     is the sole writer of both this field and the identical
     ``model_settings["time_stepping"]["dt"]`` leaf -- the two must never diverge."""
+    grid_file: UserProvidedFile | None = None
+    """A user-supplied pre-made grid netCDF, used in place of generating one from
+    ``grid_kwargs``. When set, ``grid_kwargs`` must carry only the vertical-coord
+    keys roms-tools still accepts alongside a ``filename`` (``theta_s``/
+    ``theta_b``/``hc``/``N``) -- not the generation-geometry keys (see
+    ``_grid_file_excludes_generation_geometry``) -- and nesting
+    (``grid_kwargs_parent``/``grid_kwargs_child``) is unsupported (v1)."""
 
     @property
     def is_child(self) -> bool:
@@ -599,6 +705,32 @@ class Domain(_Section):
     def is_parent(self) -> bool:
         """Whether this domain is a parent that extracts nesting data for a child."""
         return self.grid_kwargs_child is not None
+
+    @model_validator(mode="after")
+    def _grid_file_excludes_generation_geometry(self) -> Domain:
+        if self.grid_file is None:
+            return self
+        # Whitelist, not blacklist: everything except the vertical-coord keys is
+        # silently dropped by the grid-file pathway (vert_kwargs_from_grid_kwargs
+        # forwards only theta_s/theta_b/hc/N to rt.Grid(filename=...)), so a
+        # generation-only key like mask_shapefile or hmin alongside grid_file is
+        # a config that would never take effect -- reject it loudly instead.
+        extras = set(self.grid_kwargs) - set(_GRID_FILE_VERT_KEYS)
+        if extras:
+            raise ValueError(
+                "domain.grid_file is set (a user-supplied grid) but grid_kwargs "
+                f"still carries generation-only keys {sorted(extras)}; these "
+                "describe a grid to *build* and would be silently ignored once a "
+                "grid file is supplied directly. Only theta_s/theta_b/hc/N are "
+                "allowed alongside grid_file."
+            )
+        if self.grid_kwargs_parent is not None or self.grid_kwargs_child is not None:
+            raise ValueError(
+                "domain.grid_file (a user-supplied grid) cannot be combined with "
+                "nesting (grid_kwargs_parent/grid_kwargs_child); custom grid + "
+                "nesting is unsupported."
+            )
+        return self
 
 
 # ===========================================================================
@@ -731,6 +863,13 @@ class RiverForcingItem(_Section):
         20  # grid cells beyond domain edge kept in the bounding-box pre-filter
     )
     options: dict[str, Any] = Field(default_factory=dict, description=_OPTIONS_HELP)
+    custom_file: UserProvidedFile | None = None
+    """A user-supplied pre-made river-forcing netCDF, used in place of building
+    river forcing from a ``DAI``/``GLOFAS`` source. Required iff
+    ``source.name`` is ``RiverSource.CUSTOM_FILE`` (see
+    ``_custom_file_matches_custom_source``); a custom file has no separate
+    river-BGC dataset config, so ``bgc_source`` must be unset (see
+    ``_custom_file_excludes_bgc_source``)."""
 
     @model_validator(mode="after")
     def _bgc_source_requires_include_bgc(self) -> RiverForcingItem:
@@ -750,6 +889,31 @@ class RiverForcingItem(_Section):
                 raise ValueError(
                     f"river bgc_source name {name!r} is not one of {sorted(valid)}"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _custom_file_matches_custom_source(self) -> RiverForcingItem:
+        is_custom_source = self.source.name.upper() == RiverSource.CUSTOM_FILE.value
+        if is_custom_source and self.custom_file is None:
+            raise ValueError(
+                f"river source is {RiverSource.CUSTOM_FILE.value!r} but custom_file "
+                "is not set; a user-provided river source requires custom_file"
+            )
+        if not is_custom_source and self.custom_file is not None:
+            raise ValueError(
+                "river custom_file is set but source is "
+                f"{self.source.name!r}, not {RiverSource.CUSTOM_FILE.value!r}; "
+                "custom_file is only valid with a CUSTOM_FILE source"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _custom_file_excludes_bgc_source(self) -> RiverForcingItem:
+        if self.custom_file is not None and self.bgc_source is not None:
+            raise ValueError(
+                "river custom_file and bgc_source are mutually exclusive; a "
+                "user-supplied river file has no separate river-BGC dataset config"
+            )
         return self
 
 
@@ -861,7 +1025,10 @@ class Forcing(_Section):
     items are flat here under a single ``forcing:`` key in the YAML.
     """
 
-    initial_conditions: InitialConditions
+    initial_conditions: InitialConditions | None = None
+    """None only when the domain has a parent grid: child domains inherit state
+    from the parent's nesting extraction, so IC is optional for them (a child
+    may still provide one explicitly to override the inherited state)."""
     surface: list[SurfaceForcingItem] = Field(default_factory=list)
     boundary: BoundaryForcing | None = None
     """``None`` when this domain has no boundary forcing at all -- a child/nested
@@ -870,8 +1037,22 @@ class Forcing(_Section):
     tidal: list[TidalForcingItem] = Field(default_factory=list)
     river: list[RiverForcingItem] = Field(default_factory=list)
     cdr_forcing: dict[str, Any] | None = None
+    cdr_forcing_file: UserProvidedFile | None = None
+    """A user-supplied pre-made CDR-forcing netCDF, used in place of building CDR
+    forcing from ``cdr_forcing``. Mutually exclusive with ``cdr_forcing`` (see
+    ``_cdr_forcing_file_excludes_cdr_forcing``)."""
     # logical-name -> resolved registry entry (snapshot of source_data.py tables)
     resolved_datasets: dict[str, ResolvedDataset] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _cdr_forcing_file_excludes_cdr_forcing(self) -> Forcing:
+        if self.cdr_forcing_file is not None and self.cdr_forcing is not None:
+            raise ValueError(
+                "forcing.cdr_forcing_file and forcing.cdr_forcing are mutually "
+                "exclusive; supply either a generated-CDR config or a pre-made "
+                "CDR-forcing file, not both"
+            )
+        return self
 
 
 # Back-compat alias: code that imported Sources can import Forcing instead.
@@ -906,36 +1087,36 @@ class Code(_Section):
 
 
 # ===========================================================================
-# Composition (which catalog pieces produced this config) & provenance
+# Composition (which catalog specs produced this config) & provenance
 # ===========================================================================
-class PieceRef(_Section):
-    """Records where one composable piece (model / domain / forcing) came from.
+class SpecRef(_Section):
+    """Records where one composable spec (model / domain / forcing) came from.
 
     Supports the "pick from a catalog or build your own" workflow: a UI can show,
-    for each piece, whether it was a catalog selection (and which one), whether the
+    for each spec, whether it was a catalog selection (and which one), whether the
     user edited it, or whether it was authored from scratch.
     """
 
     name: str | None = None  # catalog entry name, or None if authored from scratch
     origin: str = "custom"  # "catalog" | "custom" | "model_default"
-    modified: bool = False  # True if a catalog piece was edited after selection
+    modified: bool = False  # True if a catalog spec was edited after selection
 
 
 class Composition(_Section):
-    """The composable pieces selected to build this config. The resolved data lives
+    """The composable specs selected to build this config. The resolved data lives
     in the sections above; this records provenance for review/UI.
 
     ``forcing`` corresponds to the ``sources`` section (initial conditions + surface/
     boundary/tidal/river + CDR).
     """
 
-    model: PieceRef = Field(default_factory=PieceRef)
-    domain: PieceRef = Field(default_factory=PieceRef)
-    forcing: PieceRef = Field(default_factory=PieceRef)
-    output: PieceRef = Field(
-        default_factory=PieceRef
-    )  # output-settings piece (OutputSpec)
-    # Manual edits applied on top of the composed pieces: a sparse
+    model: SpecRef = Field(default_factory=SpecRef)
+    domain: SpecRef = Field(default_factory=SpecRef)
+    forcing: SpecRef = Field(default_factory=SpecRef)
+    output: SpecRef = Field(
+        default_factory=SpecRef
+    )  # output-settings spec (OutputSpec)
+    # Manual edits applied on top of the composed specs: a sparse
     # {section: {field: value}} (or {section: scalar}) layer. ``model_settings`` already
     # reflects these; this records *which* values were overridden vs. composed/derived.
     overrides: dict[str, Any] = Field(default_factory=dict)
@@ -1097,13 +1278,19 @@ class ForgeBlueprint(Blueprint):
         default of 1. Deliberately NOT ``n_procs`` -- that is the ROMS
         partitioning the downstream simulation uses, not what generating the
         inputs needs. See :func:`estimate_forge_cpus`.
+
+        When ``domain.grid_file`` is set, ``grid_kwargs`` carries no ``nx``/``ny``/
+        ``N`` (a user-supplied grid has no generation-geometry keys -- see
+        ``Domain._grid_file_excludes_generation_geometry``); the resolver stamps
+        the loaded grid's dims onto ``model_settings["param"]["llm"/"mmm"/"n"]``
+        instead, so fall back to those when ``grid_kwargs`` lacks them.
         """
         gk = self.domain.grid_kwargs
-        return estimate_forge_cpus(
-            int(gk.get("nx", 0) or 0),
-            int(gk.get("ny", 0) or 0),
-            int(gk.get("N", 0) or 0),
-        )
+        param = self.model_settings.get("param", {}) or {}
+        nx = gk.get("nx", param.get("llm", 0))
+        ny = gk.get("ny", param.get("mmm", 0))
+        nvert = gk.get("N", param.get("n", 0))
+        return estimate_forge_cpus(int(nx or 0), int(ny or 0), int(nvert or 0))
 
     @property
     def n_tracers(self) -> int:
@@ -1157,6 +1344,25 @@ class ForgeBlueprint(Blueprint):
                 repo = code.get(repo_key)
                 if repo:
                     repo.pop("location", None)
+        # Same rationale as `code.<repo>.location` above: a user-provided file's
+        # `location` is host/transport (where the executor finds it on *this*
+        # machine), not results-affecting content -- the same file staged at a
+        # different path must hash identically. Its `content_hash` leaf (the pin on
+        # the file's actual data) stays in and IS what's results-affecting.
+        domain = data.get("domain")
+        if domain:
+            grid_file = domain.get("grid_file")
+            if grid_file:
+                grid_file.pop("location", None)
+        forcing = data.get("forcing")
+        if forcing:
+            cdr_forcing_file = forcing.get("cdr_forcing_file")
+            if cdr_forcing_file:
+                cdr_forcing_file.pop("location", None)
+            for river in forcing.get("river") or []:
+                custom_file = river.get("custom_file")
+                if custom_file:
+                    custom_file.pop("location", None)
         blob = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 

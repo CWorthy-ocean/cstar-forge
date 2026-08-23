@@ -33,6 +33,7 @@ from cstar_forge.forge.forge_blueprint import (
     SurfaceForcingItem,
     TidalForcingItem,
     TopographySource,
+    UserProvidedFile,
 )
 from cstar_forge.forge.forge_blueprint import (
     InitialConditions as InitialConditionsInput,
@@ -54,6 +55,7 @@ __all__ = [
     "SurfaceForcingItem",
     "TidalForcingItem",
     "TopographySource",
+    "UserProvidedFile",
     "load_models_yaml",
 ]
 

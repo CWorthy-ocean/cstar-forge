@@ -28,6 +28,7 @@ import copy
 import json
 import re
 import typing
+import warnings
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, get_args, get_origin
@@ -50,7 +51,6 @@ from cstar_forge.forge.forge_blueprint import (
     InitialConditionsSource,
     PhysicsBoundarySource,
     PhysicsSurfaceSource,
-    PieceRef,
     Prefill,
     RegridMethod,
     RestoringSurfaceSource,
@@ -58,11 +58,17 @@ from cstar_forge.forge.forge_blueprint import (
     RiverForcingItem,
     RiverSource,
     SurfaceForcingItem,
+    SpecRef,
     SurfaceType,
     TidalForcingItem,
     TidalSource,
 )
-from cstar_forge.forge.namelist_model import RunTimeSettings, validate_run_time_sections
+from cstar_forge.forge.namelist_model import (
+    RunTimeSettings,
+    run_time_settings_for_ref,
+    validate_run_time_sections,
+)
+from cstar_forge.forge.user_files import hash_netcdf_contents
 from cstar_forge.forge_blueprint_resolve import (
     OUTPUT_SECTIONS,
     PARTIAL_OUTPUT_SECTIONS,
@@ -146,6 +152,19 @@ HELP_TEXT: dict[str, str] = {
     ): "Path to a custom topography file for the grid's topography source. Leave "
     "blank to use the default: staged for non-ETOPO5 sources, fetched by roms-tools "
     "for ETOPO5.",
+    (
+        "grid",
+        "grid_file",
+    ): "Attach a pre-made grid netCDF instead of generating one from the kwargs "
+    "above. Locks the grid/topography/nesting fields (their values are read from "
+    "the file); the file must exist at this exact path on the machine that runs "
+    "the executor.",
+    (
+        "cdr",
+        "cdr_file",
+    ): "Attach a pre-made CDR-forcing netCDF instead of building one from the "
+    "uploaded roms-tools YAML above. Mutually exclusive with it; the file must "
+    "exist at this exact path on the machine that runs the executor.",
     # ---- nesting ---------------------------------------------------------------
     (
         "nesting",
@@ -446,6 +465,12 @@ HELP_TEXT: dict[str, str] = {
         "domain_edge_buffer",
     ): "Number of grid cells beyond the domain edge kept in the bounding-box pre-filter "
     "when selecting rivers. Default: 20.",
+    (
+        "river",
+        "custom_file",
+    ): "Attach a pre-made river-forcing netCDF instead of building one from a "
+    "DAI/GLOFAS source (selected via 'src: CUSTOM_FILE' above). The file must "
+    "exist at this exact path on the machine that runs the executor.",
     # ---- output settings -------------------------------------------------------
     (
         "output",
@@ -535,11 +560,37 @@ def _base_type(ann, value):
     return str
 
 
-def _make_field_widget(W, name: str, base: type, value: Any, tooltip: str = ""):
+# Boolean fields that read better as a two-option mode dropdown than a checkbox.
+# ``base`` stays bool everywhere else (widgets dict, overrides layer) -- only the
+# rendering + read/sync string<->bool mapping is special-cased for these keys.
+_BOOL_DROPDOWN_FIELDS: dict[tuple[str, str], tuple[str, str]] = {
+    ("cdr_output", "do_avg"): ("averaged", "instantaneous"),
+    ("cdr_output", "monthly_averages"): ("monthly", "periodic"),
+}
+
+
+def _make_field_widget(
+    W,
+    name: str,
+    base: type,
+    value: Any,
+    tooltip: str = "",
+    bool_dropdown: tuple[str, str] | None = None,
+):
     style = {"description_width": "170px"}
     wide = W.Layout(width="430px")
     num = W.Layout(width="300px")
     kw = {"tooltip": tooltip} if tooltip else {}
+    if bool_dropdown is not None:
+        true_label, false_label = bool_dropdown
+        return W.Dropdown(
+            options=(true_label, false_label),
+            value=true_label if value else false_label,
+            description=name,
+            style=style,
+            layout=num,
+            **kw,
+        )
     if base is bool:
         return W.Checkbox(
             value=bool(value) if value is not None else False,
@@ -582,8 +633,14 @@ def _make_field_widget(W, name: str, base: type, value: Any, tooltip: str = ""):
     )
 
 
-def _read_field_widget(widget, base: type, original: Any = None) -> Any:
+def _read_field_widget(
+    widget, base: type, original: Any = None, key: tuple[str, str] | None = None
+) -> Any:
     v = widget.value
+    labels = _BOOL_DROPDOWN_FIELDS.get(key) if key is not None else None
+    if labels is not None:
+        true_label, _false_label = labels
+        return v == true_label
     if base is bool:
         return bool(v)
     if base is int:
@@ -605,16 +662,37 @@ def _read_field_widget(widget, base: type, original: Any = None) -> Any:
     return v
 
 
-def _section_submodel(section: str):
-    """The RunTimeSettings sub-model for a section, or None (scalar / unknown)."""
-    field = RunTimeSettings.model_fields.get(section)
+def _section_submodel(section: str, settings_cls: type[BaseModel] = RunTimeSettings):
+    """The ``settings_cls`` sub-model for a section, or None (scalar / unknown).
+
+    ``settings_cls`` defaults to the legacy :class:`RunTimeSettings` for
+    back-compat; callers that know the blueprint's ucla-roms ref should pass
+    the class picked by :func:`_wizard_settings_cls_for_ref` instead, so a
+    section that varies by ucla-roms version (e.g. ``ocean_vars``) is
+    introspected against the right field set.
+    """
+    field = settings_cls.model_fields.get(section)
     if field is None:
         return None
     ann = field.annotation
     return ann if isinstance(ann, type) and issubclass(ann, BaseModel) else None
 
 
-# --- overrides layer: effective = composed(pieces) ⊕ overrides -----------------
+def _wizard_settings_cls_for_ref(roms_ref: str | None) -> type[BaseModel]:
+    """``run_time_settings_for_ref`` with the non-semver-ref ``UserWarning`` swallowed.
+
+    The wizard calls this on every live rebuild -- including every keystroke
+    typed into the ``roms_ref`` override text box -- so letting a branch-name
+    pin's warning (e.g. ``"main"``) through would spam the notebook output on
+    each edit; the schema selection itself is unaffected, only the warning is
+    dropped.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        return run_time_settings_for_ref(roms_ref)
+
+
+# --- overrides layer: effective = composed(specs) ⊕ overrides -----------------
 # overrides are keyed (section, field) with field=None for scalar sections.
 def _apply_overrides(
     composed: dict[str, Any], overrides: dict[Any, Any]
@@ -644,7 +722,7 @@ def _overrides_nested(overrides: dict[Any, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# "Save modified pieces to catalog" -- per-piece extractors + round-trip verify
+# "Save modified specs to catalog" -- per-spec extractors + round-trip verify
 # ---------------------------------------------------------------------------
 # Whole sections that are Domain/Forcing-owned or purely resolver-derived (never
 # a ModelSpec default) -- the exact inverse of the mutations build_forge_blueprint
@@ -735,8 +813,8 @@ def _valid_spec_name(name: str) -> bool:
 
 
 def _is_output_key(section: str, field: Any) -> bool:
-    """True if an (section, field) override key belongs to the Output piece
-    (vs. the Model piece) -- shared by `_on_output_spec` (clearing stale overrides
+    """True if an (section, field) override key belongs to the Output spec
+    (vs. the Model spec) -- shared by `_on_output_spec` (clearing stale overrides
     on a fresh OutputSpec pick) and `_rebuild` (deriving `composition.output.modified`
     / `composition.model.modified` from the same override map).
     """
@@ -796,13 +874,13 @@ _ACCORDION_EXCLUDED_FIELDS: dict[str, frozenset[str]] = {
 # and the output/model "modified" tracking are all unaffected by the grouping.
 #
 # Sections deliberately absent (time_stepping, reference_date_settings, grid,
-# s_coord, param, title, output_root_name, initial, forcing) are filled
+# s_coord, param, title, output_root_name, initial, forcing, river_frc) are filled
 # dynamically at resolve/run time (ntimes from the run duration, grid/IC/forcing
-# paths from generated files) or edited by a dedicated widget elsewhere in the
-# wizard (theta_s/theta_b/hc, dt, np_xi/np_eta, reference date, PIO/open-boundary
-# checkboxes). Their resolver-composed value still flows through untouched --
-# omitting the pane only removes an editor that would be clobbered or duplicated,
-# never the value.
+# paths from generated files, river_frc entirely generation-derived) or edited by a
+# dedicated widget elsewhere in the wizard (theta_s/theta_b/hc, dt, np_xi/np_eta,
+# reference date, PIO/open-boundary checkboxes). Their resolver-composed value still
+# flows through untouched -- omitting the pane only removes an editor that would be
+# clobbered or duplicated, never the value.
 #
 # ``cppdefs`` is almost entirely resolver-derived (obc_*/marbl/use_pio/cdr_forcing/
 # co2_tvarying/sal_restore/tides) and stays out of the accordion for those fields --
@@ -839,7 +917,13 @@ _ADVANCED_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "blk_frc",
             "flux_frc",
             "tides",
-            "river_frc",
+            # river_frc is deliberately absent: all three of its typed fields
+            # (river_source/analytical/nriv) are generation-derived -- see
+            # GENERATION_DERIVED_LEAF_KEYS["river_frc"] in forge_blueprint_engine.py
+            # -- so the executor overwrites every one from the actual river forcing
+            # (nriv = the "nriver" dimension of the generated/attached dataset).
+            # An accordion editor here would only record overrides that generation
+            # discards. The resolver-composed value still flows through untouched.
             "pipe_frc",
             "sss_correction",
             "sst_correction",
@@ -914,8 +998,14 @@ class _SettingsEditor:
     Each pane groups several namelist sections under a sub-header per section, so the
     grouping reads by ocean-modeling concern (physics, forcing, BGC, CDR, output)
     while every widget is still keyed by its real ``(section, field)``. Auto-generates
-    typed widgets per field using the ``RunTimeSettings`` sub-model schema (falling
-    back to value-type inference). All panes are collapsed by default. ``sync()``
+    typed widgets per field using the ``settings_cls`` sub-model schema (falling
+    back to value-type inference). ``settings_cls`` defaults to the legacy
+    :class:`RunTimeSettings` for back-compat; pass the class matching the
+    blueprint's ucla-roms ref (see :func:`_wizard_settings_cls_for_ref`) so a
+    version-varying section (``ocean_vars``, ``particles``) is introspected
+    against the right field set -- e.g. ``ocean_vars.nrpf_rst`` only exists pre
+    ucla-roms 0.5.0, so a widget for it is only generated when `settings_cls`
+    is the legacy class. All panes are collapsed by default. ``sync()``
     pushes values in (used on load); ``read()`` returns a single field. Fields listed
     in ``_ACCORDION_EXCLUDED_FIELDS`` (and sections not named in a category) are
     skipped -- their value still flows through from the resolver-composed settings
@@ -923,11 +1013,24 @@ class _SettingsEditor:
     hiding the widget cannot drop or reset the value.
     """
 
-    def __init__(self, W, model_settings: dict[str, Any], on_edit=None):
+    def __init__(
+        self,
+        W,
+        model_settings: dict[str, Any],
+        on_edit=None,
+        settings_cls: type[BaseModel] = RunTimeSettings,
+    ):
         self.W = W
+        self._settings_cls = settings_cls
         # (section, field|None) -> (widget, base_type)
         self._widgets: dict[Any, Any] = {}
         self._section_fields: dict[str, list[str | None]] = {}
+        # True while sync() is pushing composed values into widgets -- distinct from
+        # the wizard's own _syncing flag, which guards the *wizard-level* on_edit
+        # override recording. This one guards the editor-internal forcing rule (see
+        # _register_field_rule_observers) so a sync-driven value push never mutates
+        # a sibling widget the way a real user edit is allowed to.
+        self._syncing_internal = False
         # category title -> sections shown under it (a section may appear under two
         # panes when split along PARTIAL_OUTPUT_SECTIONS, e.g. bgc/marbl_bgc).
         self._pane_sections: dict[str, list[str]] = {}
@@ -964,29 +1067,127 @@ class _SettingsEditor:
                 widget.observe(
                     lambda _ch, s=section, f=field: on_edit(s, f), names="value"
                 )
+        self._register_field_rule_observers()
+        self._apply_field_rules()
 
     def sync(self, model_settings: dict[str, Any]):
         """Set every widget to the effective values (caller suspends edit tracking)."""
-        for (section, field), (widget, base) in self._widgets.items():
-            if section not in model_settings:
-                continue
-            sec = model_settings[section]
-            value = (
-                sec
-                if field is None
-                else (sec.get(field) if isinstance(sec, dict) else None)
-            )
-            try:
-                if base is list:
-                    widget.value = ", ".join(str(x) for x in (value or []))
-                elif value is not None:
-                    widget.value = base(value)
-            except (ValueError, TypeError):
-                pass
+        self._syncing_internal = True
+        try:
+            for (section, field), (widget, base) in self._widgets.items():
+                if section not in model_settings:
+                    continue
+                sec = model_settings[section]
+                value = (
+                    sec
+                    if field is None
+                    else (sec.get(field) if isinstance(sec, dict) else None)
+                )
+                try:
+                    labels = _BOOL_DROPDOWN_FIELDS.get((section, field))
+                    if labels is not None and value is not None:
+                        true_label, false_label = labels
+                        widget.value = true_label if bool(value) else false_label
+                    elif base is list:
+                        widget.value = ", ".join(str(x) for x in (value or []))
+                    elif value is not None:
+                        widget.value = base(value)
+                except (ValueError, TypeError):
+                    pass
+        finally:
+            self._syncing_internal = False
+        self._apply_field_rules()
 
     def read(self, section, field):
         widget, base = self._widgets[(section, field)]
-        return _read_field_widget(widget, base)
+        return _read_field_widget(widget, base, key=(section, field))
+
+    # ocean_vars/cdr_output cross-field rules -----------------------------------
+    def _register_field_rule_observers(self) -> None:
+        """Wire the controlling widgets to `_apply_field_rules` for instant
+        show/hide + disable feedback, plus the one forcing rule (monthly
+        restarts implies file restarts) on its own dedicated handler.
+        """
+
+        def _rerun(_change=None):
+            self._apply_field_rules()
+
+        for key in (
+            ("ocean_vars", "wrt_file_rst"),
+            ("ocean_vars", "monthly_restarts"),
+            ("cdr_output", "do_cdr_output"),
+            ("cdr_output", "do_avg"),
+            ("cdr_output", "monthly_averages"),
+        ):
+            entry = self._widgets.get(key)
+            if entry is not None:
+                entry[0].observe(_rerun, names="value")
+
+        wrt_entry = self._widgets.get(("ocean_vars", "wrt_file_rst"))
+        monthly_entry = self._widgets.get(("ocean_vars", "monthly_restarts"))
+        if wrt_entry is not None and monthly_entry is not None:
+            wrt_widget = wrt_entry[0]
+
+            def _force_wrt_on_monthly(change) -> None:
+                # monthly_restarts is meaningless without wrt_file_rst -- a real
+                # user edit that turns it on pulls wrt_file_rst on too, so the
+                # setting isn't silently ignored downstream. Skipped during
+                # sync() (self._syncing_internal), which pushes both widgets'
+                # values independently and must not cross-mutate them.
+                if self._syncing_internal:
+                    return
+                if change["new"] and not wrt_widget.value:
+                    wrt_widget.value = True
+
+            monthly_entry[0].observe(_force_wrt_on_monthly, names="value")
+
+    def _apply_field_rules(self) -> None:
+        """Show/hide and enable/disable ocean_vars/cdr_output widgets from their
+        CURRENT values -- never mutates a value, only visibility/``disabled``.
+
+        Rationale: the dependent fields are meaningless (and ignored by the
+        namelist) once their master switch is off, and `output_period_*` has no
+        effect once a "monthly" cadence fixes the period implicitly -- hiding/
+        disabling them keeps the form from offering a control with no effect.
+        """
+
+        def _show(entry, on: bool) -> None:
+            if entry is not None:
+                entry[0].layout.display = "" if on else "none"
+
+        wrt = self._widgets.get(("ocean_vars", "wrt_file_rst"))
+        monthly_r = self._widgets.get(("ocean_vars", "monthly_restarts"))
+        nrpf_r = self._widgets.get(("ocean_vars", "nrpf_rst"))
+        period_r = self._widgets.get(("ocean_vars", "output_period_rst"))
+        if wrt is not None:
+            wrt_on = bool(wrt[0].value)
+            _show(monthly_r, wrt_on)
+            _show(nrpf_r, wrt_on)
+            _show(period_r, wrt_on)
+            if monthly_r is not None and period_r is not None:
+                period_r[0].disabled = bool(monthly_r[0].value)
+
+        cdr_on = self._widgets.get(("cdr_output", "do_cdr_output"))
+        do_avg = self._widgets.get(("cdr_output", "do_avg"))
+        monthly_avg = self._widgets.get(("cdr_output", "monthly_averages"))
+        period = self._widgets.get(("cdr_output", "output_period"))
+        nrpf = self._widgets.get(("cdr_output", "nrpf"))
+        if cdr_on is not None:
+            on = bool(cdr_on[0].value)
+            _show(do_avg, on)
+            _show(monthly_avg, on)
+            _show(period, on)
+            _show(nrpf, on)
+            if on and do_avg is not None:
+                is_avg = self.read("cdr_output", "do_avg")
+                _show(monthly_avg, is_avg)
+                if period is not None:
+                    is_monthly = (
+                        self.read("cdr_output", "monthly_averages")
+                        if is_avg and monthly_avg is not None
+                        else False
+                    )
+                    period[0].disabled = bool(is_avg and is_monthly)
 
     def _build_section(
         self,
@@ -996,7 +1197,7 @@ class _SettingsEditor:
         exclude: frozenset = frozenset(),
     ):
         W = self.W
-        sub = _section_submodel(section)
+        sub = _section_submodel(section, self._settings_cls)
         if not isinstance(value, dict):  # scalar section (e.g. gamma2, ubind)
             base = _base_type(None, value)
             tip = _namelist_tooltip(section, section)
@@ -1024,7 +1225,10 @@ class _SettingsEditor:
             base = _base_type(ann, val)
             tip = _namelist_tooltip(section, key)
             label = _namelist_label(section, key)
-            w = _make_field_widget(W, label, base, val, tooltip=tip)
+            bool_dropdown = _BOOL_DROPDOWN_FIELDS.get((section, key))
+            w = _make_field_widget(
+                W, label, base, val, tooltip=tip, bool_dropdown=bool_dropdown
+            )
             self._widgets[(section, key)] = (w, base)
             rows.append(w)
             fields.append(key)
@@ -1081,7 +1285,11 @@ _SOURCE_OPTS: dict[Any, list[str]] = {
     ("river", None): [e.value for e in RiverSource],
     ("ic_bgc", None): [e.value for e in BgcInitialConditionsSource],
 }
-_IC_SOURCE_OPTS = [e.value for e in InitialConditionsSource]
+# Sentinel dropdown value meaning "no initial conditions" -- valid only for a
+# child domain (state comes from the parent's nesting extraction instead).
+_IC_NONE = "(none)"
+_IC_SOURCE_OPTS = [e.value for e in InitialConditionsSource] + [_IC_NONE]
+_IC_BGC_SOURCE_OPTS = [""] + [e.value for e in BgcInitialConditionsSource]
 _RIVER_BGC_SOURCE_OPTS = [""] + [e.value for e in RiverBgcSource]
 # ESPER source fields (SourceSpec.esper_method/esper_equation); "" = unset (roms-tools
 # default: method="nn", equation=8).
@@ -1257,8 +1465,50 @@ def _options_editor(W, value: Any, description: str = "options:"):
     )
 
 
+# ===========================================================================
+# User-provided-file attach flows (grid / CDR forcing / river custom_file):
+# shared status-HTML rendering and browser-upload staging, used by the grid
+# section, the CDR section, and each river row's custom-file widgets alike.
+# ===========================================================================
+
+
+def _user_file_status_html(file_dict: dict[str, Any] | None) -> str:
+    """Status HTML for an attached user-provided-file dict (``{"location",
+    "content_hash"}``): the attached filename, a short hash prefix, and the
+    persistent host-path warning (this file is host/transport, not shipped
+    with the blueprint -- see ``UserProvidedFile``). Empty string when nothing
+    is attached.
+    """
+    if not file_dict:
+        return ""
+    name = Path(file_dict["location"]).name
+    short = file_dict["content_hash"][:12]
+    return (
+        f"<span style='color:#080'>✓ attached {name} (sha256 {short}…)</span><br>"
+        "<span style='color:#b58900'>⚠ This file must exist at this exact path "
+        "on the machine where the executor runs.</span>"
+    )
+
+
+def _stage_uploaded_netcdf(filename: str, content: bytes) -> Path:
+    """Write browser-uploaded netCDF bytes to a stable server/kernel-filesystem
+    location, then treat it exactly like a server-side path Attach.
+
+    ``ipywidgets.FileUpload`` only hands over raw bytes (no filesystem path),
+    but every attach flow needs a real path to hash/load/pass through to the
+    resolver as ``UserProvidedFile.location``. Lands under
+    ``Path.cwd()/"forge_user_files"/<original filename>``; an existing file of
+    the same name is overwritten (last upload wins).
+    """
+    dest_dir = Path.cwd() / "forge_user_files"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / filename
+    dest.write_bytes(content)
+    return dest
+
+
 class _ForcingEditor:
-    """Editor for the forcing piece: initial conditions + per-category forcing items,
+    """Editor for the forcing spec: initial conditions + per-category forcing items,
     with add/remove. ``gather()`` returns an ``inputs``-shaped dict the resolver
     accepts via ``forcing_inputs=``.
     """
@@ -1267,13 +1517,22 @@ class _ForcingEditor:
         self.W = W
         self.on_change = on_change
         fi = forcing_inputs or {}
-        ic = fi.get("initial_conditions", {}) or {}
+        # An explicit `None` (emitted by `_sources_to_inputs` for a loaded child
+        # blueprint with no IC) means "seed as (none)"; a plain missing key (fresh-
+        # wizard startup, which always supplies a real initial_conditions block)
+        # keeps the historical GLORYS default.
+        if "initial_conditions" in fi and fi["initial_conditions"] is None:
+            ic: dict[str, Any] = {}
+            _ic_default = _IC_NONE
+        else:
+            ic = fi.get("initial_conditions") or {}
+            _ic_default = _IC_SOURCE_OPTS[0]
         forc = fi.get("forcing", {}) or {}
 
         # initial conditions
-        _ic_name_val = str((ic.get("source") or {}).get("name", _IC_SOURCE_OPTS[0]))
+        _ic_name_val = str((ic.get("source") or {}).get("name", _ic_default))
         if _ic_name_val not in _IC_SOURCE_OPTS:
-            _ic_name_val = _IC_SOURCE_OPTS[0]
+            _ic_name_val = _ic_default
         self.ic_name = W.Dropdown(
             options=_IC_SOURCE_OPTS,
             value=_ic_name_val,
@@ -1374,11 +1633,30 @@ class _ForcingEditor:
         ):
             _w.observe(lambda _ch: on_change(), names="value")
 
-        # "glorys_layout" only applies to a GLORYS source (item 7).
+        # "glorys_layout" only applies to a GLORYS source (item 7). When "(none)"
+        # is selected, this domain carries no IC at all -- hide every other IC
+        # widget too so the UI doesn't imply they still apply.
         def _sync_ic_layout_visibility(_change=None):
+            has_ic = self.ic_name.value != _IC_NONE
             self.ic_layout.layout.display = (
-                "" if self.ic_name.value == "GLORYS" else "none"
+                "" if has_ic and self.ic_name.value == "GLORYS" else "none"
             )
+            for w in (
+                self.ic_path,
+                self.ic_bgc_interp,
+                self.ic_flex_time,
+                self.ic_prefill,
+                self.ic_regrid_method,
+                self.ic_extrap_method,
+                self.ic_options,
+            ):
+                w.layout.display = "" if has_ic else "none"
+            # The pre-merge scalar ic_bgc_name/ic_bgc_clim/ic_bgc_path group is now
+            # the "ic_bgc" row list, so hide its whole pane instead. Guarded because
+            # the first call below runs before `_containers` is built.
+            ic_bgc_pane = getattr(self, "_containers", {}).get("ic_bgc")
+            if ic_bgc_pane is not None:
+                ic_bgc_pane.layout.display = "" if has_ic else "none"
 
         self.ic_name.observe(_sync_ic_layout_visibility, names="value")
         _sync_ic_layout_visibility()
@@ -1538,6 +1816,10 @@ class _ForcingEditor:
                 self._rows[cat].append(self._make_row(cat, item))
             self._render(cat)
 
+        # The panes now exist; re-run so a seeded "(none)" IC hides the ic_bgc pane
+        # (the call during widget construction above could not reach it yet).
+        _sync_ic_layout_visibility()
+
     # ---- one item row --------------------------------------------------------
     @staticmethod
     def _apply_row_visibility(w: dict[str, Any]) -> None:
@@ -1580,8 +1862,12 @@ class _ForcingEditor:
         # regridding knobs (prefill/regrid_method/extrap_method/bgc_interpolation_method)
         # only make sense for a dataset-backed source being regridded onto the grid.
         is_derived_bgc = name in ("constants", "ESPER")
+        # A CUSTOM_FILE river row is owned by `_sync_river_custom_visibility`, which
+        # hides these outright (the attach flow replaces the standard-source row).
+        # Without this, the re-show below would undo that hide on every row rebuild.
+        hide_dataset_knobs = is_derived_bgc or name == RiverSource.CUSTOM_FILE.value
         if "climatology" in w:
-            show(w["climatology"], not is_derived_bgc)
+            show(w["climatology"], not hide_dataset_knobs)
         for key in (
             "prefill",
             "regrid_method",
@@ -1589,7 +1875,7 @@ class _ForcingEditor:
             "bgc_interpolation_method",
         ):
             if key in w:
-                show(w[key], not is_derived_bgc)
+                show(w[key], not hide_dataset_knobs)
 
     def _make_row(self, cat: str, item: dict[str, Any]):
         W = self.W
@@ -1855,6 +2141,41 @@ class _ForcingEditor:
 
             w["include_bgc"].observe(_sync_river_bgc_visibility, names="value")
             _sync_river_bgc_visibility()
+
+            # RiverSource.CUSTOM_FILE replaces this whole standard-source row
+            # (climatology/bgc/coast-snap/edge-buffer/generic path) with a
+            # single attach flow -- see _sync_river_custom_visibility below.
+            def _sync_river_custom_visibility(_change=None, ws=w):
+                is_custom = ws["name"].value == RiverSource.CUSTOM_FILE.value
+                for key in (
+                    "climatology",
+                    "include_bgc",
+                    "convert_to_climatology",
+                    "coast_snap_buffer_km",
+                    "domain_edge_buffer",
+                    "path",
+                ):
+                    ws[key].layout.display = "none" if is_custom else ""
+                for key in (
+                    "custom_file_path",
+                    "custom_file_attach_btn",
+                    "custom_file_upload",
+                    "custom_file_status",
+                ):
+                    ws[key].layout.display = "" if is_custom else "none"
+                if is_custom:
+                    # Keep the bgc widgets hidden regardless of include_bgc --
+                    # a custom-file river item carries no bgc_source (see
+                    # RiverForcingItem._custom_file_excludes_bgc_source).
+                    ws["bgc_source_name"].layout.display = "none"
+                    ws["bgc_source_path"].layout.display = "none"
+                else:
+                    # Restored from custom-file mode (or never in it): let
+                    # include_bgc's own sync decide bgc widget visibility again,
+                    # rather than unconditionally showing them here.
+                    _sync_river_bgc_visibility()
+
+            w["name"].observe(_sync_river_custom_visibility, names="value")
         # Advanced passthrough: raw roms-tools kwargs not (yet) typed above.
         # BgcSourceItem (shared by "ic_bgc"/"boundary_bgc") has no `options` field
         # (extra="forbid") -- it isn't its own roms-tools object, just a
@@ -1870,6 +2191,82 @@ class _ForcingEditor:
         for widget in w.values():
             widget.observe(lambda _ch: self.on_change(), names="value")
         w["_remove_btn"] = remove
+        if cat == "river":
+            # Custom-file attach row (RiverSource.CUSTOM_FILE): added after the
+            # generic per-widget on_change wiring above (mirrors _remove_btn) --
+            # the Text/Button/FileUpload here are wired to _attach_custom_file
+            # explicitly, which calls self.on_change() itself on a successful
+            # attach, so they don't need the generic per-keystroke wiring too.
+            # `_custom_file` is plain cached state (not a widget), also excluded
+            # from that loop and from _row_box below.
+            _cf = item.get("custom_file")
+            w["_custom_file"] = dict(_cf) if _cf else None
+            w["custom_file_path"] = W.Text(
+                value=str((_cf or {}).get("location") or ""),
+                description="file:",
+                placeholder="path to a pre-made river-forcing netCDF",
+                style=small,
+                layout=W.Layout(width="320px"),
+                tooltip=_tip("river", "custom_file"),
+            )
+            w["custom_file_attach_btn"] = W.Button(
+                description="Attach", icon="link", layout=W.Layout(width="90px")
+            )
+            w["custom_file_upload"] = W.FileUpload(
+                accept=".nc", multiple=False, description="…or upload"
+            )
+            w["custom_file_status"] = W.HTML(_user_file_status_html(w["_custom_file"]))
+
+            def _attach_river_custom_file(path_str: str, ws=w) -> None:
+                ws["custom_file_status"].value = "<i>attaching…</i>"
+                try:
+                    path = Path(path_str).expanduser().resolve()
+                    if not path.exists():
+                        raise FileNotFoundError(f"river custom file not found: {path}")
+                    content_hash = hash_netcdf_contents(path)
+                except Exception as exc:
+                    ws[
+                        "custom_file_status"
+                    ].value = (
+                        f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
+                    )
+                    return
+                ws["_custom_file"] = {
+                    "location": str(path),
+                    "content_hash": content_hash,
+                }
+                ws["custom_file_status"].value = _user_file_status_html(
+                    ws["_custom_file"]
+                )
+                self.on_change()
+
+            def _on_river_custom_file_attach_click(_btn, ws=w) -> None:
+                path_str = ws["custom_file_path"].value.strip()
+                if not path_str:
+                    ws[
+                        "custom_file_status"
+                    ].value = "<span style='color:#b00'>Enter a path first.</span>"
+                    return
+                _attach_river_custom_file(path_str)
+
+            def _on_river_custom_file_upload(change, ws=w) -> None:
+                items = change["new"]
+                if not items:
+                    return
+                up_item = (
+                    items[0]
+                    if isinstance(items, (list, tuple))
+                    else next(iter(items.values()))
+                )
+                dest = _stage_uploaded_netcdf(
+                    up_item["name"], bytes(up_item["content"])
+                )
+                ws["custom_file_path"].value = str(dest)
+                _attach_river_custom_file(str(dest))
+
+            w["custom_file_attach_btn"].on_click(_on_river_custom_file_attach_click)
+            w["custom_file_upload"].observe(_on_river_custom_file_upload, names="value")
+            _sync_river_custom_visibility()
         self._apply_row_visibility(w)
         return w
 
@@ -1880,7 +2277,7 @@ class _ForcingEditor:
         # trailing button is easily clipped off-screen in a notebook without
         # horizontal scrolling -- putting it first keeps it reachable regardless of
         # how many fields are visible.
-        keys = [k for k in w if k != "_remove_btn"]
+        keys = [k for k in w if k not in ("_remove_btn", "_custom_file")]
         if "type" in keys:
             keys = ["type", *[k for k in keys if k != "type"]]
         w["_remove_btn"].layout.display = ""
@@ -1936,6 +2333,17 @@ class _ForcingEditor:
 
     # ---- gather --------------------------------------------------------------
     def _gather_item(self, cat: str, w) -> dict[str, Any]:
+        if cat == "river" and w["name"].value == RiverSource.CUSTOM_FILE.value:
+            # A custom-file river item bypasses roms-tools' RiverForcing entirely
+            # (the executor stages the file directly -- see
+            # RiverForcingItem.custom_file) -- none of the standard-source fields
+            # (climatology/include_bgc/convert_to_climatology/coast_snap_buffer_km/
+            # domain_edge_buffer/bgc_source/options) apply, and the schema
+            # forbids most of them from being paired with a source path.
+            item: dict[str, Any] = {"source": {"name": w["name"].value}}
+            if w.get("_custom_file"):
+                item["custom_file"] = dict(w["_custom_file"])
+            return item
         src: dict[str, Any] = {"name": w["name"].value}
         if "climatology" in w and w["climatology"].value:
             src["climatology"] = True
@@ -2005,6 +2413,17 @@ class _ForcingEditor:
         return item
 
     def gather(self) -> dict[str, Any]:
+        forcing = {
+            cat: [self._gather_item(cat, w) for w in self._rows[cat]]
+            for cat in _FORCING_CATEGORIES
+        }
+        if self.ic_name.value == _IC_NONE:
+            # No IC for this domain -- omit the key entirely (the resolver
+            # requires a hard error for a non-child domain with no IC, and
+            # treats an omitted/sourceless block as "inherit from parent" for
+            # a child domain).
+            return {"forcing": forcing}
+
         ic_source = {"name": self.ic_name.value}
         if self.ic_layout.value:  # Dropdown: "" means not specified
             ic_source["glorys_layout"] = self.ic_layout.value
@@ -2132,6 +2551,12 @@ class _ForcingEditor:
 # the first catalog model otherwise).
 _DEFAULT_MODEL = "pio-dev"
 
+# Preselected in the Output dropdown when present in the catalog (falls back to
+# the first catalog spec otherwise). 'daily-restarts' conforms to the
+# ucla-roms >= 0.5.0 check_output_divides_rst precheck; 'standard' is kept
+# unchanged for blueprints that reference it.
+_DEFAULT_OUTPUT_SPEC = "daily-restarts"
+
 _GRID_INT = ("nx", "ny", "N")
 _GRID_FLOAT = ("size_x", "size_y", "center_lon", "center_lat", "rot")
 _SCOORD = ("theta_s", "theta_b", "hc")
@@ -2151,7 +2576,13 @@ _DEFAULT_GRID = dict(
 
 
 def _get_catalog():
-    """Return the bundled DomainCatalog (read-only discovery of pieces)."""
+    """Return the default catalog stack for spec discovery.
+
+    A layered stack: the user's writable catalog layer (``~/cstar-forge-data/
+    catalog`` by default, or ``CSTAR_FORGE_CATALOG``) over the read-only
+    bundled in-repo catalog. Reads resolve top-first; writes (``register_*``)
+    land in the user layer.
+    """
     from cstar_forge.domain_catalog import default_catalog
 
     return default_catalog
@@ -2170,6 +2601,48 @@ def _schedule_coroutine(coro):
         return asyncio.get_running_loop().create_task(coro)
     except RuntimeError:
         return asyncio.run(coro)
+
+
+_STREAM_READ_SIZE = 2**16  # bytes per subprocess read; also bounds the flush below
+# A run whose child never emits a newline for a long stretch -- classically a
+# ``\r``-redrawn progress bar (git clone, tqdm, download progress) -- would grow an
+# unbounded "line". Flush an unterminated run once it reaches this so memory stays
+# bounded and the log still updates. (This is also what a line-oriented reader could
+# not survive: asyncio's StreamReader.readline() raises ValueError, "Separator is not
+# found, and chunk exceed the limit", at its 64 KiB default -- the bug this avoids.)
+_STREAM_MAX_LINE = 2**16
+
+
+def _drain_stream_buffer(
+    buf: bytes, *, at_eof: bool = False
+) -> tuple[list[str], bytes]:
+    r"""Split accumulated subprocess bytes into display lines, returning
+    ``(lines, remainder)``.
+
+    Segments are cut on ``\r\n``, ``\r`` or ``\n`` and each terminator is normalised
+    to a single trailing ``\n``, so ``\r``-only progress redraws surface as successive
+    log lines instead of one ever-growing line. A lone trailing ``\r`` is held back in
+    the remainder (unless at EOF) so a ``\r\n`` split across two reads is not mistaken
+    for a bare ``\r`` plus a spurious blank line. When not at EOF, an unterminated
+    remainder that reaches ``_STREAM_MAX_LINE`` is emitted as a partial line to keep
+    memory bounded; at EOF any remainder is flushed.
+    """
+    held = b""
+    if not at_eof and buf.endswith(b"\r"):
+        buf, held = buf[:-1], b"\r"
+    tokens = re.split(rb"(\r\n|\r|\n)", buf)
+    remainder = tokens.pop() + held
+    lines = [
+        tokens[i].decode(errors="replace") + "\n" for i in range(0, len(tokens), 2)
+    ]
+    if at_eof:
+        if remainder:
+            lines.append(remainder.decode(errors="replace"))
+        remainder = b""
+    elif len(remainder) >= _STREAM_MAX_LINE:
+        lines.append(remainder.decode(errors="replace"))
+        remainder = b""
+    return lines, remainder
 
 
 class ForgeBlueprintWizard:
@@ -2201,9 +2674,9 @@ class ForgeBlueprintWizard:
         )
         self.load_status = W.HTML("")
 
-        # --- piece selectors ---
+        # --- spec selectors ---
         self.model_dd = W.Dropdown(
-            options=models,
+            options=self._dd_options(models, "model"),
             description="Model:",
             value=(
                 _DEFAULT_MODEL
@@ -2223,7 +2696,7 @@ class ForgeBlueprintWizard:
             ),
         )
         self.domain_dd = W.Dropdown(
-            options=["<custom>", *domains],
+            options=self._dd_options(domains, "domain", prefix=["<custom>"]),
             description="Domain:",
             value="<custom>",
             style={"description_width": "110px"},
@@ -2320,6 +2793,16 @@ class ForgeBlueprintWizard:
             placeholder="commit / tag / branch",
             tooltip="ucla-roms checkout target (commit hash, tag, or branch). "
             "Prefilled from the selected Model's pinned default; edit to override.",
+        )
+        self.marbl_ref = W.Text(
+            value="",  # populated from the selected Model's pinned default below
+            description="MARBL ref:",
+            style={"description_width": "120px"},
+            layout=W.Layout(width="260px"),
+            placeholder="commit / tag / branch",
+            tooltip="MARBL checkout target (commit hash, tag, or branch). "
+            "Prefilled from the selected Model's pinned default; edit to override. "
+            'Only used when BGC mode is "marbl".',
         )
 
         # --- nesting (optional child grid) ---
@@ -2499,6 +2982,36 @@ class ForgeBlueprintWizard:
             tooltip=_tip("grid", "topography_path"),
         )
 
+        # --- user-provided grid file (attach a pre-made grid netCDF instead of
+        # generating one from the kwargs above) ---
+        # `_grid_file` = the cached {"location","content_hash"} dict emitted via
+        # grid_file=; `_grid_file_grid` = the loaded roms_tools.Grid, cached so
+        # _rebuild()/_gather() never reload or rehash the file (see
+        # _finish_grid_file_attach). Both None when detached.
+        self._grid_file: dict[str, Any] | None = None
+        self._grid_file_grid: Any | None = None
+        # Snapshot of grid_w/scoord_chk taken the moment an attach first
+        # overwrites them with the loaded file's own values (see
+        # _finish_grid_file_attach) -- restored by _on_grid_file_detach so the
+        # Detach button gives back the user's own pre-attach geometry instead
+        # of leaving the (unlocked, but now-wrong) file's values sitting there.
+        # None means "nothing to restore" (never attached, or already restored).
+        self._grid_widgets_snapshot: dict[str, Any] | None = None
+        self.grid_file_path = W.Text(
+            value="",
+            description="Grid file:",
+            placeholder="path to a pre-made grid netCDF",
+            style={"description_width": "110px"},
+            layout=W.Layout(width="420px"),
+            tooltip=_tip("grid", "grid_file"),
+        )
+        self.grid_file_attach_btn = W.Button(description="Attach", icon="link")
+        self.grid_file_detach_btn = W.Button(description="Detach", icon="unlink")
+        self.grid_file_upload = W.FileUpload(
+            accept=".nc", multiple=False, description="…or upload"
+        )
+        self.grid_file_status = W.HTML("")
+
         # --- timestep ---
         self.dt = W.FloatText(
             value=7200.0,
@@ -2528,12 +3041,12 @@ class ForgeBlueprintWizard:
         )
 
         # --- output / preview ---
-        # --- forcing piece (ForcingSpec selection + add/remove/edit editor) ---
+        # --- forcing spec (ForcingSpec selection + add/remove/edit editor) ---
         # A ForcingSpec must always be explicitly selected -- ModelSpec no longer
         # embeds a default forcing.
         _forcing_names = list(self.catalog.forcing_names)
         self.forcing_dd = W.Dropdown(
-            options=_forcing_names,
+            options=self._dd_options(_forcing_names, "forcing"),
             value=(_forcing_names[0] if _forcing_names else None),
             description="Forcing:",
             style={"description_width": "110px"},
@@ -2563,15 +3076,41 @@ class ForgeBlueprintWizard:
         self.cdr_clear_btn = W.Button(description="Clear CDR", icon="times")
         self.cdr_status = W.HTML("")
 
-        # --- output settings piece (OutputSpec selection) ---
+        # --- CDR forcing: user-provided pre-made netCDF (mutually exclusive with
+        # the uploaded YAML above -- attaching one clears the other, see
+        # _attach_cdr_file_from_path / _on_cdr_upload). ---
+        self._cdr_forcing_file: dict[str, Any] | None = None
+        self.cdr_file_path = W.Text(
+            value="",
+            description="CDR file:",
+            placeholder="path to a pre-made CDR-forcing netCDF",
+            style={"description_width": "110px"},
+            layout=W.Layout(width="420px"),
+            tooltip=_tip("cdr", "cdr_file"),
+        )
+        self.cdr_file_attach_btn = W.Button(description="Attach", icon="link")
+        self.cdr_file_clear_btn = W.Button(description="Clear", icon="times")
+        self.cdr_file_upload = W.FileUpload(
+            accept=".nc", multiple=False, description="…or upload"
+        )
+        self.cdr_file_status = W.HTML("")
+
+        # --- output settings spec (OutputSpec selection) ---
         # The output sections themselves are edited in the Advanced settings accordion;
         # this dropdown selects a named OutputSpec that seeds those sections. An
         # OutputSpec must always be explicitly selected -- ModelSpec no longer embeds
         # default output settings.
         _output_names = list(self.catalog.output_names)
         self.output_dd = W.Dropdown(
-            options=_output_names,
-            value=(_output_names[0] if _output_names else None),
+            options=self._dd_options(_output_names, "output"),
+            # Prefer the bundled default explicitly -- output_names is sorted
+            # alphabetically, so relying on position would silently change the
+            # default whenever a new spec sorts first.
+            value=(
+                _DEFAULT_OUTPUT_SPEC
+                if _DEFAULT_OUTPUT_SPEC in _output_names
+                else (_output_names[0] if _output_names else None)
+            ),
             description="Output:",
             style={"description_width": "110px"},
             tooltip=_tip("output", "output_dd"),
@@ -2580,10 +3119,20 @@ class ForgeBlueprintWizard:
         # --- advanced settings editor (built lazily on first rebuild) ---
         self.editor: _SettingsEditor | None = None
         self._editor_model: str | None = None
+        # The RunTimeSettings variant the editor was last built against -- rebuilt
+        # not only on a model switch but also when the effective ucla-roms ref
+        # crosses a schema boundary (e.g. editing the roms_ref override across the
+        # 0.5.0 line while keeping the same ModelSpec selected).
+        self._editor_settings_cls: type[BaseModel] | None = None
         self.editor_box = W.VBox([])  # placeholder; filled with the editor's accordion
         # sparse manual overrides layer: (section, field|None) -> value
         self._overrides: dict[Any, Any] = {}
         self._syncing = False  # True while pushing composed values into editor widgets
+        # Reentrancy depth for _suspend()/_Suspender -- lets a programmatic backfill
+        # (e.g. _populate_grid_widgets_from_grid) nest inside an already-suspended
+        # block (e.g. _populate_from's outer _suspend()) without the inner
+        # context's __exit__ prematurely clearing the outer one's suspension.
+        self._suspend_depth = 0
         # snapshot of the domain-defining widgets at the last catalog Domain pick;
         # compared in _rebuild() to detect a deviation (composition.domain.modified).
         # None means no catalog domain has been picked yet (or domain_dd == "<custom>").
@@ -2640,8 +3189,8 @@ class ForgeBlueprintWizard:
         self._save_path_touched = False
         self.save_path.observe(self._on_save_path_change, names="value")
 
-        # --- save modified pieces to catalog (name + button + status per piece) ---
-        def _piece_save_row(placeholder):
+        # --- save modified specs to catalog (name + button + status per spec) ---
+        def _spec_save_row(placeholder):
             name_w = W.Text(
                 value="",
                 description="Name:",
@@ -2654,16 +3203,16 @@ class ForgeBlueprintWizard:
             return name_w, btn, status
 
         self.save_output_name, self.save_output_btn, self.save_output_status = (
-            _piece_save_row("(new OutputSpec name)")
+            _spec_save_row("(new OutputSpec name)")
         )
         self.save_model_name, self.save_model_btn, self.save_model_status = (
-            _piece_save_row("(new ModelSpec name)")
+            _spec_save_row("(new ModelSpec name)")
         )
         self.save_domain_name, self.save_domain_btn, self.save_domain_status = (
-            _piece_save_row("(new DomainSpec name)")
+            _spec_save_row("(new DomainSpec name)")
         )
         self.save_forcing_name, self.save_forcing_btn, self.save_forcing_status = (
-            _piece_save_row("(new ForcingSpec name)")
+            _spec_save_row("(new ForcingSpec name)")
         )
 
         # --- run (invokes the C-Star CLI on the just-saved blueprint) ---
@@ -2708,8 +3257,10 @@ class ForgeBlueprintWizard:
         )
 
         self.roms_ref.value = self._model_default_roms_ref()
+        self.marbl_ref.value = self._model_default_marbl_ref()
         self.bgc_dd.value = self._model_default_bgc_mode()
         self.use_pio_chk.value = self._model_default_use_pio()
+        self._sync_marbl_ref_visibility()
         self._build_forcing_editor(self.catalog.forcing_data(self.forcing_dd.value))
         self._forcing_seed = self._forcing_editor.gather()
         self._wire()
@@ -2733,7 +3284,14 @@ class ForgeBlueprintWizard:
         self.upload.observe(self._on_upload, names="value")
         self.cdr_upload.observe(self._on_cdr_upload, names="value")
         self.cdr_clear_btn.on_click(self._on_cdr_clear)
+        self.grid_file_attach_btn.on_click(self._on_grid_file_attach)
+        self.grid_file_detach_btn.on_click(self._on_grid_file_detach)
+        self.grid_file_upload.observe(self._on_grid_file_upload, names="value")
+        self.cdr_file_attach_btn.on_click(self._on_cdr_file_attach)
+        self.cdr_file_clear_btn.on_click(self._on_cdr_file_clear)
+        self.cdr_file_upload.observe(self._on_cdr_file_upload, names="value")
         self.model_dd.observe(self._on_model_change, names="value")
+        self.bgc_dd.observe(self._sync_marbl_ref_visibility, names="value")
         self.nest_domain_dd.observe(self._on_nest_domain, names="value")
         self.parent_domain_dd.observe(self._on_parent_domain, names="value")
         self.parent_plot_btn.on_click(self._on_parent_plot)
@@ -2748,6 +3306,7 @@ class ForgeBlueprintWizard:
             self.use_pio_chk,
             self.bgc_dd,
             self.roms_ref,
+            self.marbl_ref,
             self.start,
             self.end,
             self.model_ref_date,
@@ -2794,18 +3353,78 @@ class ForgeBlueprintWizard:
             return
         self._save_path_touched = True
 
+    def _dd_options(
+        self, names: list[str], kind: str, *, prefix: list[str] | None = None
+    ) -> list:
+        """Badge dropdown ``options`` with their source layer when it isn't the
+        top (writable) one -- ipywidgets-homogeneous.
+
+        ipywidgets' ``Dropdown`` requires ``options`` to be either ALL bare
+        values or ALL ``(label, value)`` 2-tuples: ``_make_options`` only takes
+        the "pairs" branch when *every* entry is a 2-tuple, so a mix silently
+        falls through to treating each element (tuples included) as a literal
+        value, and ``dd.value`` ends up holding a raw ``(label, value)`` tuple
+        instead of the bare name. So: if no *names* entry needs a badge, this
+        returns plain names unchanged (matching pre-layering behavior, safe to
+        mix with a plain sentinel like domain_dd's ``"<custom>"``); otherwise
+        *every* entry -- including any *prefix* sentinels -- is emitted as an
+        explicit ``(label, value)`` tuple so the whole list stays homogeneous.
+        ``dd.value`` is always the bare name/sentinel either way.
+
+        A ``KeyError`` from ``entry_source`` (name absent, shouldn't happen for
+        names drawn from the same catalog) is treated as "no badge".
+        """
+        prefix = prefix or []
+        entry_source = getattr(self.catalog, "entry_source", None)
+        top = getattr(self.catalog, "top", None)
+        top_label = top.label if top is not None else None
+
+        badges: dict[str, str] = {}
+        if entry_source is not None:
+            for name in names:
+                try:
+                    source = entry_source(kind, name)
+                except KeyError:
+                    continue
+                if source != top_label:
+                    badges[name] = source
+
+        if not badges:
+            return [*prefix, *names]
+
+        options: list[Any] = [(p, p) for p in prefix]
+        for name in names:
+            label = f"{name} ({badges[name]})" if name in badges else name
+            options.append((label, name))
+        return options
+
+    @staticmethod
+    def _dd_values(dd) -> list:
+        """Bare values of a dropdown's ``options``, whether badged
+        ``(label, value)`` tuples (see ``_dd_options``) or plain strings
+        (ipywidgets' label == value shorthand). Use this instead of reading
+        ``dd.options`` directly for membership tests / indexing.
+        """
+        return [o[1] if isinstance(o, tuple) else o for o in dd.options]
+
     def _default_blueprint_path(self, name: str) -> str:
         """Default "Save to:" path for a blueprint named *name*.
 
         Prefers the active catalog's ``blueprints/`` directory so a save lands
-        where the wizard's other catalog-aware pieces look; falls back to a
+        where the wizard's other catalog-aware specs look; falls back to a
         bare filename (CWD-relative) when the catalog isn't a local filesystem
         (e.g. loaded from a GitHub/http URL) and so isn't writable.
         """
         fname = f"{name}.forge_blueprint.yaml"
         cat = getattr(self, "catalog", None)
         try:
-            if cat is not None and getattr(cat, "_is_local", False):
+            # A read-only catalog (e.g. the bundled one loaded as a single
+            # store) must not be offered as a save destination.
+            if (
+                cat is not None
+                and getattr(cat, "_is_local", False)
+                and not getattr(cat, "read_only", False)
+            ):
                 return str(cat.roms_marbl_blueprints_dir / fname)
         except Exception:
             pass
@@ -2823,6 +3442,186 @@ class ForgeBlueprintWizard:
             self.derive_status.value = ""
         self._rebuild()
 
+    # ---- user-provided grid file ----------------------------------------------
+    def _set_grid_widgets_locked(self, locked: bool) -> None:
+        """Disable/re-enable every grid-generation widget a user-provided grid
+        file makes meaningless: geometry/vertical kwargs, mask/topography, and
+        nesting (custom grid + nesting is unsupported -- see
+        ``Domain._grid_file_excludes_generation_geometry``). Open boundaries and
+        v_sponge stay editable/derivable -- both work fine off a loaded grid.
+        """
+        for w in (
+            *self.grid_w.values(),
+            self.scoord_chk,
+            self.hmin,
+            self.close_narrow_chk,
+            self.mask_shapefile,
+            self.topo_source,
+            self.topo_path,
+            self.nest_enable,
+            self.parent_enable,
+        ):
+            w.disabled = locked
+
+    def _populate_grid_widgets_from_grid(self, grid: Any) -> None:
+        """Display a loaded grid file's own attributes on the (now-locked) grid
+        widgets, skipping any that are ``None`` (a hand-made file may lack
+        ``size_x``/``size_y`` -- see ``build_forge_blueprint``'s grid_file
+        docstring). Purely cosmetic here -- ``_gather()`` never reads these
+        widget values while a grid file is attached (``grid_kwargs`` is ``{}``).
+        """
+        with self._suspend():
+            for key in _GRID_INT + _GRID_FLOAT + _SCOORD:
+                val = getattr(grid, key, None)
+                if val is not None:
+                    self.grid_w[key].value = val
+            if all(
+                getattr(grid, a, None) is not None for a in ("theta_s", "theta_b", "hc")
+            ):
+                self.scoord_chk.value = True
+
+    def _finish_grid_file_attach(
+        self, file_dict: dict[str, Any], grid: Any, *, snapshot: bool = True
+    ) -> None:
+        """Common tail of a successful (or reused-hash) grid-file attach: cache
+        state, populate + lock widgets, invalidate any prior mask-derived
+        boundaries (a new grid means a new mask -- mirrors
+        ``_on_grid_kwarg_change``), and show the attach status.
+
+        ``snapshot=False`` skips capturing the pre-attach widget snapshot -- used
+        by ``_reattach_grid_file`` (blueprint load-back), where the widgets hold
+        leftover values from whatever was on screen before the load, not a
+        user-authored geometry worth restoring on Detach.
+        """
+        if snapshot and self._grid_widgets_snapshot is None:
+            # Capture the user's own pre-attach geometry exactly once per
+            # detached->attached transition -- a second attach while already
+            # attached (e.g. picking a different file without detaching first)
+            # must not overwrite the ORIGINAL values with the first file's.
+            self._grid_widgets_snapshot = {
+                **{k: w.value for k, w in self.grid_w.items()},
+                "scoord_chk": self.scoord_chk.value,
+            }
+        self._grid_file = file_dict
+        self._grid_file_grid = grid
+        self._populate_grid_widgets_from_grid(grid)
+        self._set_grid_widgets_locked(True)
+        self._boundaries_derived = False
+        self.derive_status.value = ""
+        self.grid_file_status.value = _user_file_status_html(file_dict)
+
+    def _attach_grid_file_from_path(self, path_str: str) -> None:
+        self.grid_file_status.value = "<i>attaching…</i>"
+        try:
+            path = Path(path_str).expanduser().resolve()
+            if not path.exists():
+                raise FileNotFoundError(f"grid file not found: {path}")
+            import roms_tools as rt
+
+            grid = rt.Grid(filename=str(path))
+            content_hash = hash_netcdf_contents(path)
+        except Exception as exc:
+            self.grid_file_status.value = (
+                f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
+            )
+            return
+        self._finish_grid_file_attach(
+            {"location": str(path), "content_hash": content_hash}, grid
+        )
+        self._rebuild()
+
+    def _on_grid_file_attach(self, _btn):
+        path_str = self.grid_file_path.value.strip()
+        if not path_str:
+            self.grid_file_status.value = (
+                "<span style='color:#b00'>Enter a path first.</span>"
+            )
+            return
+        self._attach_grid_file_from_path(path_str)
+
+    def _on_grid_file_upload(self, change):
+        items = change["new"]
+        if not items:
+            return
+        item = (
+            items[0] if isinstance(items, (list, tuple)) else next(iter(items.values()))
+        )
+        dest = _stage_uploaded_netcdf(item["name"], bytes(item["content"]))
+        self.grid_file_path.value = str(dest)
+        self._attach_grid_file_from_path(str(dest))
+
+    def _detach_grid_file(self) -> None:
+        """Pure state reset (no _rebuild(), no widget-value restore) -- shared
+        by the Detach button and _on_domain/_populate_from (a catalog Domain
+        pick or a freshly-loaded grid-kwargs blueprint both set grid_w to their
+        OWN authoritative values immediately after calling this, which must
+        win outright -- restoring the pre-attach snapshot here would clobber
+        them with stale values from a since-superseded attach). Only
+        _on_grid_file_detach (the explicit user action, with nothing else
+        about to overwrite grid_w) restores the snapshot -- see there.
+        """
+        self._grid_file = None
+        self._grid_file_grid = None
+        self._grid_widgets_snapshot = None
+        self._set_grid_widgets_locked(False)
+        self._boundaries_derived = False
+        self.derive_status.value = ""
+        self.grid_file_path.value = ""
+        self.grid_file_upload.value = ()
+        self.grid_file_status.value = ""
+
+    def _on_grid_file_detach(self, _btn):
+        snapshot = (
+            self._grid_widgets_snapshot
+        )  # read before _detach_grid_file clears it
+        self._detach_grid_file()
+        if snapshot is not None:
+            with self._suspend():
+                for k, v in snapshot.items():
+                    if k == "scoord_chk":
+                        self.scoord_chk.value = v
+                    elif k in self.grid_w:
+                        self.grid_w[k].value = v
+        self._rebuild()
+
+    def _reattach_grid_file(self, file_obj: Any) -> None:
+        """``_populate_from``'s grid_file restore: reload the grid but REUSE the
+        blueprint's recorded content_hash (never recompute it on load -- mirrors
+        the CDR-file restore). On a reload failure, keep the grid_file dict and
+        widgets locked (rather than silently falling back to the generic/default
+        grid_kwargs, which would gather a completely different blueprint) and
+        surface the error -- the resolver will raise the same "file not found"
+        on the next _gather()/_rebuild(), which is the loud failure this must
+        produce instead of a silent wrong answer.
+        """
+        file_dict = {
+            "location": file_obj.location,
+            "content_hash": file_obj.content_hash,
+        }
+        self._grid_file = file_dict
+        # Whatever sits in the grid widgets right now predates this load and is
+        # not a geometry worth restoring on Detach -- drop any stale snapshot.
+        self._grid_widgets_snapshot = None
+        self.grid_file_path.value = file_dict["location"]
+        self._set_grid_widgets_locked(True)
+        try:
+            path = Path(file_dict["location"]).expanduser()
+            if not path.exists():
+                raise FileNotFoundError(f"grid file not found: {path}")
+            import roms_tools as rt
+
+            grid = rt.Grid(filename=str(path))
+        except Exception as exc:
+            self._grid_file_grid = None
+            self._boundaries_derived = False
+            self.derive_status.value = ""
+            self.grid_file_status.value = (
+                f"<span style='color:#b00'>⚠ could not re-attach grid_file: "
+                f"{type(exc).__name__}: {exc}</span>"
+            )
+            return
+        self._finish_grid_file_attach(file_dict, grid, snapshot=False)
+
     def _on_boundary_edit(self, _change):
         # A programmatic backfill (see _apply_grid_derived_properties, _on_domain,
         # _populate_from) happens under _suspend() -- only a real user edit should
@@ -2839,6 +3638,10 @@ class ForgeBlueprintWizard:
         self._v_sponge_touched = True
         self._rebuild()
 
+    def _sync_marbl_ref_visibility(self, _change=None):
+        # MARBL ref is inert without MARBL, so hide it (value is kept, not cleared)
+        self.marbl_ref.layout.display = "" if self.bgc_dd.value == "marbl" else "none"
+
     def _on_model_change(self, _change):
         # a different model has different defaults -> existing overrides no longer apply.
         # Forcing/Output are independent catalog dimensions from the model (a ForcingSpec/
@@ -2847,6 +3650,7 @@ class ForgeBlueprintWizard:
             return
         self._overrides = {}
         self.roms_ref.value = self._model_default_roms_ref()
+        self.marbl_ref.value = self._model_default_marbl_ref()
         self.bgc_dd.value = self._model_default_bgc_mode()
         self.use_pio_chk.value = self._model_default_use_pio()
         self._rebuild()
@@ -2884,6 +3688,7 @@ class ForgeBlueprintWizard:
                 if k in gk:
                     w.value = gk[k]
         self._clear_boundary_forcing()
+        self._clear_initial_conditions()
         self._rebuild()
         self._on_parent_plot(None)
 
@@ -2891,12 +3696,22 @@ class ForgeBlueprintWizard:
         """Enabling a parent clears boundary forcing: a child grid receives its
         boundary values from the parent's nesting.nc extraction, not reanalysis
         boundary forcing (open-boundary edge flags are left untouched -- the
-        edges stay open, just fed differently).
+        edges stay open, just fed differently). It also clears IC to "(none)"
+        as a *default* -- unlike boundary, IC is widget-state-authoritative, so
+        the user can undo this by re-selecting a source.
+
+        Disabling a parent restores the IC default (if it's still "(none)")
+        so a non-child domain isn't stranded on the resolver's hard error for
+        a missing IC -- a user who had manually re-added an explicit IC while
+        parented is left alone.
         """
         if getattr(self, "_suspended", False):
             return
         if change["new"]:
             self._clear_boundary_forcing()
+            self._clear_initial_conditions()
+        else:
+            self._restore_initial_conditions_default()
 
     def _clear_boundary_forcing(self):
         """Remove any boundary-bgc rows from the forcing editor (UX mirror of the
@@ -2910,29 +3725,63 @@ class ForgeBlueprintWizard:
         if getattr(self, "_forcing_editor", None) is not None:
             self._forcing_editor.clear_category("boundary_bgc")
 
-    # ---- forcing piece -------------------------------------------------------
+    def _clear_initial_conditions(self):
+        """Default a child domain's IC dropdown to "(none)" -- a child receives
+        state from the parent's nesting extraction, so IC is optional. Unlike
+        boundary forcing, this is only a default: the user can re-select a
+        source (e.g. GLORYS) to re-add an explicit IC for the child.
+        """
+        if getattr(self, "_forcing_editor", None) is not None:
+            self._forcing_editor.ic_name.value = _IC_NONE
+
+    def _restore_initial_conditions_default(self):
+        """Undo ``_clear_initial_conditions``'s default when a parent is turned
+        back off -- a non-child domain has no other source of state, so leaving
+        IC at "(none)" would strand the user on the resolver's hard error. Only
+        resets it when it's still at the "(none)" default; a user who manually
+        re-added an explicit IC while parented is left alone.
+        """
+        if (
+            getattr(self, "_forcing_editor", None) is not None
+            and self._forcing_editor.ic_name.value == _IC_NONE
+        ):
+            self._forcing_editor.ic_name.value = _IC_SOURCE_OPTS[0]
+
+    # ---- forcing spec -------------------------------------------------------
     def _model_spec_declared(self) -> dict[str, Any]:
-        """The selected ModelSpec's declared ``roms_ref``/``bgc_mode``/``use_pio``.
+        """The selected ModelSpec's declared ``roms_ref``/``marbl_ref``/``bgc_mode``/
+        ``use_pio``.
 
         Single re-parse of ``model.yaml`` backing ``_model_default_*`` below and
-        the spec-deviation check in ``_rebuild`` -- both need the same three
+        the spec-deviation check in ``_rebuild`` -- both need the same
         catalog-declared values to compare live widget state against.
         """
         try:
             data = load_model_spec_data(self.catalog.model_dir(self.model_dd.value))
             model = data["model"]
             roms = model.get("code", {}).get("roms", {}) or {}
+            marbl = model.get("code", {}).get("marbl", {}) or {}
             return {
                 "roms_ref": roms.get("commit") or roms.get("branch") or "",
+                "marbl_ref": marbl.get("commit") or marbl.get("branch") or "",
                 "bgc_mode": model.get("bgc_mode", "marbl"),
                 "use_pio": bool(model.get("use_pio", False)),
             }
         except Exception:
-            return {"roms_ref": "", "bgc_mode": "marbl", "use_pio": False}
+            return {
+                "roms_ref": "",
+                "marbl_ref": "",
+                "bgc_mode": "marbl",
+                "use_pio": False,
+            }
 
     def _model_default_roms_ref(self) -> str:
         """The selected model's pinned ucla-roms checkout target (commit or branch)."""
         return self._model_spec_declared()["roms_ref"]
+
+    def _model_default_marbl_ref(self) -> str:
+        """The selected model's pinned MARBL checkout target (commit or branch)."""
+        return self._model_spec_declared()["marbl_ref"]
 
     def _model_default_bgc_mode(self) -> str:
         """The selected model's ModelSpec-declared bgc_mode (prepopulates self.bgc_dd)."""
@@ -2941,6 +3790,18 @@ class ForgeBlueprintWizard:
     def _model_default_use_pio(self) -> bool:
         """The selected model's ModelSpec-declared use_pio (prepopulates self.use_pio_chk)."""
         return self._model_spec_declared()["use_pio"]
+
+    def _effective_roms_ref(self) -> str | None:
+        """The ucla-roms ref that determines the run-time-settings schema.
+
+        Mirrors the resolver's own precedence for ``roms_ref`` (see
+        ``_gather()``): the live override in ``self.roms_ref`` when non-blank,
+        else the selected ModelSpec's pinned ``code.roms`` ref. ``None`` when
+        neither is set, so :func:`_wizard_settings_cls_for_ref`/
+        ``run_time_settings_for_ref`` fall back to the legacy schema instead of
+        warning on an empty ref.
+        """
+        return self.roms_ref.value.strip() or self._model_default_roms_ref() or None
 
     def _build_forcing_editor(self, base_inputs: dict[str, Any]):
         self._forcing_editor = _ForcingEditor(
@@ -2961,7 +3822,21 @@ class ForgeBlueprintWizard:
             # nesting.nc extraction, not reanalysis boundary forcing -- strip any
             # boundary items the freshly-built editor just reseeded from the spec.
             self._clear_boundary_forcing()
+            # Same reasoning for IC: the freshly-built editor reseeds from the
+            # spec's real IC block, which would silently undo the "(none)"
+            # default a parent toggle already applied.
+            self._clear_initial_conditions()
         self._cdr_forcing = cdr
+        if cdr and self._cdr_forcing_file is not None:
+            # A ForcingSpec carrying CDR forcing is mutually exclusive with an
+            # attached CDR file (Forcing's own validator forbids both).
+            self._cdr_forcing_file = None
+            self.cdr_file_path.value = ""
+            self.cdr_file_upload.value = ()
+            self.cdr_file_status.value = (
+                "<span style='color:#666'>(cleared -- mutually exclusive with "
+                "the ForcingSpec's CDR forcing)</span>"
+            )
         self.cdr_status.value = (
             f"<span style='color:#080'>✓ CDR loaded from ForcingSpec: "
             f"{len(cdr.get('releases', []))} release(s)</span>"
@@ -2996,29 +3871,29 @@ class ForgeBlueprintWizard:
         return self.catalog.output_data(self.output_dd.value)
 
     def _composition(self) -> Composition:
-        # Every piece keeps origin="catalog" when picked from the catalog (never
+        # Every spec keeps origin="catalog" when picked from the catalog (never
         # flips to "custom" on edit) -- `modified` is what signals a deviation.
         # `modified` itself is computed afterward in `_rebuild()`, where the
-        # composed baseline, effective settings, and per-piece seeds are all
-        # available; the base PieceRefs built here always start `modified=False`.
+        # composed baseline, effective settings, and per-spec seeds are all
+        # available; the base SpecRefs built here always start `modified=False`.
         dom = (
-            PieceRef(name=self.domain_dd.value, origin="catalog")
+            SpecRef(name=self.domain_dd.value, origin="catalog")
             if self.domain_dd.value != "<custom>"
-            else PieceRef(name=self.grid_name.value, origin="custom")
+            else SpecRef(name=self.grid_name.value, origin="custom")
         )
         # forcing/output are always an explicit catalog selection now (no more
         # "model_default" origin -- ModelSpec no longer provides either as a fallback).
-        forcing = PieceRef(name=self.forcing_dd.value, origin="catalog")
-        output = PieceRef(name=self.output_dd.value, origin="catalog")
+        forcing = SpecRef(name=self.forcing_dd.value, origin="catalog")
+        output = SpecRef(name=self.output_dd.value, origin="catalog")
         return Composition(
-            model=PieceRef(name=self.model_dd.value, origin="catalog"),
+            model=SpecRef(name=self.model_dd.value, origin="catalog"),
             domain=dom,
             forcing=forcing,
             output=output,
         )
 
-    def _verify_piece_roundtrip(self, piece: str, new_name: str) -> bool:
-        """Side-effect-free check: does re-resolving with ``piece`` sourced from
+    def _verify_spec_roundtrip(self, spec: str, new_name: str) -> bool:
+        """Side-effect-free check: does re-resolving with ``spec`` sourced from
         its freshly-written catalog file (``new_name``) reproduce the exact same
         resolved blueprint currently shown (``self.config``)?
 
@@ -3026,30 +3901,31 @@ class ForgeBlueprintWizard:
         mutates nothing on the wizard. Compares ``content_hash()``, which covers
         exactly the results-affecting data (excludes identity/composition/
         provenance/working_dir -- see ``ForgeBlueprint._HASH_EXCLUDE``), so a
-        match proves the saved piece is a safe substitute for what's currently
-        composed/edited and the piece can be marked ``modified=False``.
+        match proves the saved spec is a safe substitute for what's currently
+        composed/edited and the spec can be marked ``modified=False``.
         """
         if self.config is None:
             return False
         kw = self._gather()
         overrides2 = dict(self._overrides)
         try:
-            if piece == "output":
+            if spec == "output":
                 kw["output_settings"] = self.catalog.output_data(new_name)
                 overrides2 = {
                     k: v for k, v in overrides2.items() if not _is_output_key(*k)
                 }
-            elif piece == "model":
+            elif spec == "model":
                 kw["model_dir"] = self.catalog.model_dir(new_name)
                 # Let the saved spec speak for these: the resolver falls back to the
                 # ModelSpec when use_pio/bgc_mode are None (resolve.py:418-421) and to
-                # code.roms verbatim when roms_ref is absent. Re-applying the live
-                # widget values here would apply them to BOTH sides and make the
-                # verifier structurally blind to a spec that dropped them.
-                for k in ("use_pio", "bgc_mode", "roms_ref"):
+                # code.roms/code.marbl verbatim when roms_ref/marbl_ref are absent.
+                # Re-applying the live widget values here would apply them to BOTH
+                # sides and make the verifier structurally blind to a spec that
+                # dropped them.
+                for k in ("use_pio", "bgc_mode", "roms_ref", "marbl_ref"):
                     kw.pop(k, None)
                 overrides2 = {k: v for k, v in overrides2.items() if _is_output_key(*k)}
-            elif piece == "forcing":
+            elif spec == "forcing":
                 fi, cdr = _split_forcing_data(self.catalog.forcing_data(new_name))
                 if self.parent_enable.value:
                     # Mirror the _gather() durable clear so re-verifying against a
@@ -3058,7 +3934,11 @@ class ForgeBlueprintWizard:
                     fi.setdefault("forcing", {})["boundary"] = None
                 kw["forcing_inputs"] = fi
                 kw["cdr_forcing"] = cdr
-            elif piece == "domain":
+                # Mutually exclusive with cdr_forcing_file (Forcing's own
+                # validator) -- a live _gather() may carry the file key even
+                # though the freshly-picked ForcingSpec's cdr wins here.
+                kw.pop("cdr_forcing_file", None)
+            elif spec == "domain":
                 d = self.catalog.domain_data(new_name)
                 kw["grid_kwargs"] = d.get("grid_kwargs", {})
                 # open_boundaries/v_sponge: only override from the saved file
@@ -3072,7 +3952,7 @@ class ForgeBlueprintWizard:
                     kw["open_boundaries"] = d["open_boundaries"]
                 if d.get("v_sponge") is not None:
                     kw["v_sponge"] = d["v_sponge"]
-                # dt is always saved (no touched gate, see _domain_piece_data),
+                # dt is always saved (no touched gate, see _domain_spec_data),
                 # so an absent value here only happens for an older DomainSpec
                 # predating this field -- fall back to kw's existing _gather()
                 # value (the live widget dt) rather than force one in.
@@ -3091,7 +3971,7 @@ class ForgeBlueprintWizard:
                     d.get("nesting_include_pressure_fluxes", False)
                 )
             else:
-                raise ValueError(f"unknown piece {piece!r}")
+                raise ValueError(f"unknown spec {spec!r}")
             cfg2 = build_forge_blueprint(**kw)
         except Exception:
             return False
@@ -3175,12 +4055,20 @@ class ForgeBlueprintWizard:
             return d
 
         f = cfg.forcing
-        ic = bgc_section(f.initial_conditions)
-        ic.update(
-            plain(
-                f.initial_conditions, InitialConditions, skip=("source", "bgc_sources")
+        if f.initial_conditions is None:
+            # Explicit sentinel (as opposed to a plain missing key) so
+            # `_ForcingEditor.__init__` seeds the "(none)" dropdown option
+            # instead of falling back to the fresh-wizard GLORYS default.
+            ic: dict[str, Any] | None = None
+        else:
+            ic = bgc_section(f.initial_conditions)
+            ic.update(
+                plain(
+                    f.initial_conditions,
+                    InitialConditions,
+                    skip=("source", "bgc_sources"),
+                )
             )
-        )
 
         forcing: dict[str, Any] = {}
         if f.boundary is not None:
@@ -3197,6 +4085,19 @@ class ForgeBlueprintWizard:
             out = []
             for it in items:
                 d: dict[str, Any] = {"source": src(it.source)}
+                _custom_file = getattr(it, "custom_file", None)
+                if _custom_file is not None:
+                    # A CUSTOM_FILE river item carries no other fields (see
+                    # RiverForcingItem's mutual-exclusion validators). Emit just the
+                    # file and skip the generic copy below, which would otherwise
+                    # embed the UserProvidedFile model object itself rather than the
+                    # plain location/content_hash dict the seed dict needs.
+                    d["custom_file"] = {
+                        "location": _custom_file.location,
+                        "content_hash": _custom_file.content_hash,
+                    }
+                    out.append(d)
+                    continue
                 d.update(plain(it, cls))
                 out.append(d)
             forcing[cat] = out
@@ -3211,6 +4112,13 @@ class ForgeBlueprintWizard:
         if name == "<custom>":
             self._domain_seed = None
             return
+        if self._grid_file is not None:
+            # A catalog Domain pick replaces the grid wholesale via grid_kwargs,
+            # which a user-provided grid file forbids carrying alongside it
+            # (Domain._grid_file_excludes_generation_geometry) -- detach first so
+            # the catalog's grid_kwargs land on now-unlocked widgets instead of
+            # being silently discarded.
+            self._detach_grid_file()
         data = self.catalog.domain_data(name)
         gk = data.get("grid_kwargs", {}) or {}
         with self._suspend():
@@ -3224,7 +4132,7 @@ class ForgeBlueprintWizard:
             # restore only what the saved Domain.yaml actually carries --
             # absence means "derive fresh from the grid" (click "Derive from
             # grid", or the Save/Run safety net), mirroring
-            # _domain_piece_data's save-only-when-touched symmetry. Leaves the
+            # _domain_spec_data's save-only-when-touched symmetry. Leaves the
             # boundary checkboxes untouched (rather than resetting to False)
             # when absent, since there's nothing to derive from without a grid
             # build -- the derive_status warning surfaces that instead.
@@ -3242,7 +4150,7 @@ class ForgeBlueprintWizard:
                     if d in saved_bnd:
                         w.value = bool(saved_bnd[d])
                 self._boundaries_touched = True
-            # dt has no touched flag (see _domain_piece_data) -- a saved
+            # dt has no touched flag (see _domain_spec_data) -- a saved
             # DomainSpec always carries it, but an older file might not, so
             # restore only if present; otherwise leave the widget's current
             # value as-is (there's no live re-derive to fall back on for dt).
@@ -3320,11 +4228,11 @@ class ForgeBlueprintWizard:
             "parent_w": {k: w.value for k, w in self.parent_w.items()},
         }
 
-    def _domain_piece_data(self) -> dict[str, Any]:
+    def _domain_spec_data(self) -> dict[str, Any]:
         """Build a ``Domain.yaml``-shaped dict from the current widget state (the
-        domain-piece extractor for "save modified pieces to catalog"). Includes
+        domain-spec extractor for "save modified specs to catalog"). Includes
         topography and nesting -- both results-affecting -- so a saved DomainSpec
-        actually round-trips (see ``_verify_piece_roundtrip``); ``register_domain``
+        actually round-trips (see ``_verify_spec_roundtrip``); ``register_domain``
         (the ForgeExecutor-driven path) predates these and omits them.
         """
         kw = self._gather()
@@ -3366,14 +4274,24 @@ class ForgeBlueprintWizard:
         return data
 
     class _Suspender:
+        """Reentrant: nesting ``with self._suspend():`` blocks (e.g. a grid-file
+        reattach's own suspend running inside ``_populate_from``'s outer suspend)
+        only clears ``_suspended`` once the outermost block exits -- a naive
+        unconditional ``False`` on ``__exit__`` would prematurely un-suspend the
+        outer block and let its remaining programmatic writes flip touched flags.
+        """
+
         def __init__(self, wiz):
             self.wiz = wiz
 
         def __enter__(self):
+            self.wiz._suspend_depth = getattr(self.wiz, "_suspend_depth", 0) + 1
             self.wiz._suspended = True
 
         def __exit__(self, *a):
-            self.wiz._suspended = False
+            self.wiz._suspend_depth = max(0, getattr(self.wiz, "_suspend_depth", 1) - 1)
+            if self.wiz._suspend_depth == 0:
+                self.wiz._suspended = False
 
     def _suspend(self):
         return ForgeBlueprintWizard._Suspender(self)
@@ -3452,8 +4370,19 @@ class ForgeBlueprintWizard:
             self._rebuild()
             return
         self._cdr_forcing = parsed
+        cleared_note = ""
+        if self._cdr_forcing_file is not None:
+            # Mutually exclusive with an attached CDR file (Forcing's own
+            # validator forbids both) -- the upload wins, matching the
+            # attach-clears-upload direction in _attach_cdr_file_from_path.
+            self._cdr_forcing_file = None
+            self.cdr_file_path.value = ""
+            self.cdr_file_upload.value = ()
+            self.cdr_file_status.value = ""
+            cleared_note = "<br><span style='color:#666'>(cleared the attached CDR file -- mutually exclusive)</span>"
         self.cdr_status.value = (
             f"<span style='color:#080'>✓ CDR: {len(cdr.releases)} release(s)</span>"
+            f"{cleared_note}"
         )
         self._rebuild()
 
@@ -3477,21 +4406,99 @@ class ForgeBlueprintWizard:
         self.cdr_status.value = ""
         self._rebuild()
 
+    # ---- CDR forcing: user-provided pre-made netCDF ---------------------------
+    def _attach_cdr_file_from_path(self, path_str: str) -> None:
+        self.cdr_file_status.value = "<i>attaching…</i>"
+        try:
+            path = Path(path_str).expanduser().resolve()
+            if not path.exists():
+                raise FileNotFoundError(f"CDR-forcing file not found: {path}")
+            content_hash = hash_netcdf_contents(path)
+        except Exception as exc:
+            self.cdr_file_status.value = (
+                f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
+            )
+            return
+        # Light validation only (never blocks the attach -- the executor is the
+        # hard gate): warn if the file doesn't even look like CDR forcing.
+        warning = ""
+        try:
+            import xarray as xr
+
+            with xr.open_dataset(path) as ds:
+                if "ncdr" not in ds.dims:
+                    warning = (
+                        "<br><span style='color:#b58900'>⚠ no 'ncdr' dimension "
+                        "found -- is this really a CDR-forcing file?</span>"
+                    )
+        except Exception:
+            pass
+        self._cdr_forcing_file = {"location": str(path), "content_hash": content_hash}
+        cleared_note = ""
+        if self._cdr_forcing is not None:
+            # Mutually exclusive with an uploaded CDR YAML (Forcing's own
+            # validator forbids both) -- the file attach wins here.
+            self._cdr_forcing = None
+            self.cdr_upload.value = ()
+            self.cdr_status.value = ""
+            cleared_note = (
+                "<br><span style='color:#666'>(cleared the uploaded CDR "
+                "YAML -- mutually exclusive)</span>"
+            )
+        self.cdr_file_status.value = (
+            _user_file_status_html(self._cdr_forcing_file) + warning + cleared_note
+        )
+        self._rebuild()
+
+    def _on_cdr_file_attach(self, _btn):
+        path_str = self.cdr_file_path.value.strip()
+        if not path_str:
+            self.cdr_file_status.value = (
+                "<span style='color:#b00'>Enter a path first.</span>"
+            )
+            return
+        self._attach_cdr_file_from_path(path_str)
+
+    def _on_cdr_file_upload(self, change):
+        items = change["new"]
+        if not items:
+            return
+        item = (
+            items[0] if isinstance(items, (list, tuple)) else next(iter(items.values()))
+        )
+        dest = _stage_uploaded_netcdf(item["name"], bytes(item["content"]))
+        self.cdr_file_path.value = str(dest)
+        self._attach_cdr_file_from_path(str(dest))
+
+    def _on_cdr_file_clear(self, _btn):
+        self._cdr_forcing_file = None
+        self.cdr_file_path.value = ""
+        self.cdr_file_upload.value = ()
+        self.cdr_file_status.value = ""
+        self._rebuild()
+
     def _populate_from(self, cfg: ForgeBlueprint):
         """Set the widgets from a loaded ForgeBlueprint, then re-resolve once.
 
         Round-trips the authoring inputs (name / description / run / domain /
-        partitioning / nesting / dt). Any value in the file that differs from what the composed pieces
+        partitioning / nesting / dt). Any value in the file that differs from what the composed specs
         would produce is reconstructed as a manual override (so load is non-lossy and
         the overrides layer is rebuilt), then applied on top in ``_rebuild``.
 
         Returns any validation problems found in the *loaded file's* model_settings.
         """
-        loaded_problems = validate_run_time_sections(cfg.model_settings)
+        # The file's own pinned ucla-roms ref selects the schema variant it was
+        # authored against -- not the (possibly different) currently-selected
+        # model's default. Computed once here and reused below when seeding
+        # self.roms_ref, so the two never drift apart.
+        stored_ref = cfg.code.roms.commit or cfg.code.roms.branch or ""
+        loaded_problems = validate_run_time_sections(
+            cfg.model_settings, roms_ref=stored_ref or None
+        )
         with self._suspend():
             # domain dropdown -> custom (the file, not a catalog entry, is authoritative)
             self.domain_dd.value = "<custom>"
-            if cfg.composition.model.name in self.model_dd.options:
+            if cfg.composition.model.name in self._dd_values(self.model_dd):
                 self.model_dd.value = cfg.composition.model.name
             self.grid_name.value = cfg.domain.grid_name
             self.description.value = cfg.description
@@ -3541,16 +4548,37 @@ class ForgeBlueprintWizard:
                 else "none"
             )
             # Show the file's actual pinned ref, falling back to the (now-selected)
-            # model's default when the file matches it exactly.
-            stored_ref = cfg.code.roms.commit or cfg.code.roms.branch or ""
+            # model's default when the file matches it exactly. (stored_ref was
+            # already computed above, before the suspend block, to feed the
+            # loaded-file validation with the right schema variant.)
             default_ref = self._model_default_roms_ref()
             self.roms_ref.value = (
                 default_ref if stored_ref == default_ref else stored_ref
+            )
+            # Same for MARBL -- code.marbl is absent when the file was saved with
+            # bgc_mode="none", in which case fall back to the model's default so
+            # re-enabling BGC picks the pinned ref back up.
+            stored_marbl = ""
+            if cfg.code.marbl is not None:
+                stored_marbl = cfg.code.marbl.commit or cfg.code.marbl.branch or ""
+            default_marbl = self._model_default_marbl_ref()
+            self.marbl_ref.value = (
+                stored_marbl
+                if stored_marbl and stored_marbl != default_marbl
+                else default_marbl
             )
             self.topo_source.value = getattr(
                 cfg.domain.topography_source, "value", cfg.domain.topography_source
             )
             self.topo_path.value = cfg.domain.topography_path or ""
+            # Grid file: re-attach from its recorded location (reusing the stored
+            # content_hash, never recomputing it) if the file still exists;
+            # missing/failed reload leaves the grid_file state + locked widgets in
+            # place with the error surfaced -- see _reattach_grid_file.
+            if cfg.domain.grid_file is not None:
+                self._reattach_grid_file(cfg.domain.grid_file)
+            else:
+                self._detach_grid_file()
             # CDR: FileUpload can't be repopulated with the original file, but the
             # parsed dict persists on the instance and re-emits via _gather(), so
             # load stays non-lossy.
@@ -3562,6 +4590,27 @@ class ForgeBlueprintWizard:
                 if self._cdr_forcing
                 else ""
             )
+            # CDR file: trust the stored hash (never recompute); a missing file
+            # is a warning, not a blocker -- Save must still round-trip losslessly.
+            cff = cfg.forcing.cdr_forcing_file
+            if cff is not None:
+                self._cdr_forcing_file = {
+                    "location": cff.location,
+                    "content_hash": cff.content_hash,
+                }
+                self.cdr_file_path.value = cff.location
+                missing = not Path(cff.location).expanduser().exists()
+                self.cdr_file_status.value = _user_file_status_html(
+                    self._cdr_forcing_file
+                ) + (
+                    "<br><span style='color:#b00'>⚠ file not found at this path</span>"
+                    if missing
+                    else ""
+                )
+            else:
+                self._cdr_forcing_file = None
+                self.cdr_file_path.value = ""
+                self.cdr_file_status.value = ""
             # dt: prefer the first-class domain.dt field; fall back to the
             # model_settings leaf for a pre-domain.dt file (backward compat --
             # older blueprints only ever wrote it there).
@@ -3576,17 +4625,18 @@ class ForgeBlueprintWizard:
             # fallback value); fall back to the first available option for an older
             # file recorded with origin="model_default" or an unknown/missing name.
             fname = cfg.composition.forcing.name
-            if fname in self.forcing_dd.options:
+            _forcing_values = self._dd_values(self.forcing_dd)
+            if fname in _forcing_values:
                 self.forcing_dd.value = fname
-            elif self.forcing_dd.options:
-                self.forcing_dd.value = self.forcing_dd.options[0]
+            elif _forcing_values:
+                self.forcing_dd.value = _forcing_values[0]
             self._build_forcing_editor(self._sources_to_inputs(cfg))
             if self.parent_enable.value:
                 # A loaded file may (inconsistently) carry boundary forcing for a
                 # child grid -- _gather() strips it either way, but clear the
                 # visible rows too so the editor doesn't show stale entries.
                 self._clear_boundary_forcing()
-            # Seed forcing.modified against the *catalog* piece (not the just-loaded
+            # Seed forcing.modified against the *catalog* spec (not the just-loaded
             # sources) so a deviation is detected the same way as during authoring --
             # a file that matches its recorded catalog forcing loads as unmodified;
             # one that was hand-edited before saving loads as modified.
@@ -3599,12 +4649,13 @@ class ForgeBlueprintWizard:
                 ).gather()
             except Exception:
                 self._forcing_seed = None
-            # output piece selection
+            # output spec selection
             oname = cfg.composition.output.name
-            if oname in self.output_dd.options:
+            _output_values = self._dd_values(self.output_dd)
+            if oname in _output_values:
                 self.output_dd.value = oname
-            elif self.output_dd.options:
-                self.output_dd.value = self.output_dd.options[0]
+            elif _output_values:
+                self.output_dd.value = _output_values[0]
         # Reconstruct the overrides layer = diff(loaded model_settings, composed). This
         # captures every manual deviation regardless of the file's recorded provenance,
         # making load fully non-lossy.
@@ -3619,20 +4670,24 @@ class ForgeBlueprintWizard:
     # ---- gather + resolve ----------------------------------------------------
     def _gather(self) -> dict[str, Any]:
         gk: dict[str, Any] = {}
-        for k in _GRID_INT:
-            gk[k] = int(self.grid_w[k].value)
-        for k in _GRID_FLOAT:
-            gk[k] = float(self.grid_w[k].value)
-        if self.scoord_chk.value:
-            for k in _SCOORD:
+        if self._grid_file is None:
+            for k in _GRID_INT:
+                gk[k] = int(self.grid_w[k].value)
+            for k in _GRID_FLOAT:
                 gk[k] = float(self.grid_w[k].value)
-        # hmin + close_narrow_channels + mask_shapefile injected into grid_kwargs
-        if self.hmin.value != 5.0:
-            gk["hmin"] = float(self.hmin.value)
-        if self.close_narrow_chk.value:
-            gk["close_narrow_channels"] = True
-        if self.mask_shapefile.value.strip():
-            gk["mask_shapefile"] = self.mask_shapefile.value.strip()
+            if self.scoord_chk.value:
+                for k in _SCOORD:
+                    gk[k] = float(self.grid_w[k].value)
+            # hmin + close_narrow_channels + mask_shapefile injected into grid_kwargs
+            if self.hmin.value != 5.0:
+                gk["hmin"] = float(self.hmin.value)
+            if self.close_narrow_chk.value:
+                gk["close_narrow_channels"] = True
+            if self.mask_shapefile.value.strip():
+                gk["mask_shapefile"] = self.mask_shapefile.value.strip()
+        # else: a user-provided grid file forbids the generation-geometry keys
+        # above alongside it (Domain._grid_file_excludes_generation_geometry) --
+        # grid_kwargs stays {} and grid_file=/grid= (below) carry the grid instead.
         kw = dict(
             model_dir=self.catalog.model_dir(self.model_dd.value),
             grid_name=self.grid_name.value,
@@ -3662,11 +4717,26 @@ class ForgeBlueprintWizard:
         kw["bgc_mode"] = self.bgc_dd.value
         if self.roms_ref.value.strip():
             kw["roms_ref"] = self.roms_ref.value.strip()
+        if self.marbl_ref.value.strip():
+            kw["marbl_ref"] = self.marbl_ref.value.strip()
         if self.model_ref_date.value and self.model_ref_date.value != date(2000, 1, 1):
             kw["model_reference_date"] = datetime.combine(
                 self.model_ref_date.value, datetime.min.time()
             )
-        if self.nest_enable.value:
+        if self._grid_file is not None:
+            kw["grid_file"] = self._grid_file
+            # Pass the already-loaded grid through to skip re-reading/re-hashing
+            # the file (the resolver accepts a pre-built `grid=` alongside
+            # `grid_file=` for exactly this -- see build_forge_blueprint). Omitted
+            # (not None) when a reattach failed to reload -- the resolver then
+            # reloads from `grid_file["location"]` itself and raises the same
+            # "file not found", surfacing loudly via _rebuild()'s Invalid status.
+            if self._grid_file_grid is not None:
+                kw["grid"] = self._grid_file_grid
+        # Nesting is unsupported alongside a user-provided grid file (see
+        # Domain._grid_file_excludes_generation_geometry) -- omit both blocks
+        # while attached even if the (now-disabled) checkboxes are still checked.
+        if self.nest_enable.value and self._grid_file is None:
             ck: dict[str, Any] = {}
             for k in _GRID_INT:
                 ck[k] = int(self.child_w[k].value)
@@ -3676,7 +4746,7 @@ class ForgeBlueprintWizard:
             kw["metadata_child"] = {"period": float(self.nest_period.value)}
             if self.nest_pressure_fluxes.value:
                 kw["nesting_include_pressure_fluxes"] = True
-        if self.parent_enable.value:
+        if self.parent_enable.value and self._grid_file is None:
             pk: dict[str, Any] = {}
             for k in _GRID_INT:
                 pk[k] = int(self.parent_w[k].value)
@@ -3685,7 +4755,7 @@ class ForgeBlueprintWizard:
             kw["grid_kwargs_parent"] = pk
         # forcing/output are always required now (no more model-default fallback).
         kw["forcing_inputs"] = self._forcing_editor.gather()
-        if self.parent_enable.value:
+        if self.parent_enable.value and self._grid_file is None:
             # Durable guarantee (authoritative, independent of forcing-editor UI
             # state): a child grid (has a parent) receives its boundary values
             # from the parent's nesting.nc extraction, not reanalysis boundary
@@ -3697,6 +4767,8 @@ class ForgeBlueprintWizard:
         kw["composition"] = self._composition()
         if self._cdr_forcing:
             kw["cdr_forcing"] = self._cdr_forcing
+        if self._cdr_forcing_file:
+            kw["cdr_forcing_file"] = self._cdr_forcing_file
         return kw
 
     def _populate_nesting(self, cfg: ForgeBlueprint):
@@ -3750,15 +4822,30 @@ class ForgeBlueprintWizard:
                 self.v_sponge.value = float(cfg.domain.v_sponge)
 
         # Advanced settings editor: every section is editable. The resolver composes
-        # a baseline from the pieces; the user's manual edits are a sparse overrides
+        # a baseline from the specs; the user's manual edits are a sparse overrides
         # layer applied on top (effective = composed ⊕ overrides). The editor is
-        # rebuilt only when the *model* changes (its field set depends on the model).
+        # rebuilt when the *model* changes (its field set depends on the model) or
+        # when the effective ucla-roms ref crosses a schema boundary (e.g. editing
+        # the roms_ref override across the 0.5.0 line with the same model selected)
+        # -- see run_time_settings_for_ref / RunTimeSettingsV0_5_0.
         composed = cfg.model_settings
-        if self.editor is None or self._editor_model != self.model_dd.value:
+        # Computed once per rebuild (each call re-reads the ModelSpec YAML) and
+        # reused for the validation call below.
+        effective_roms_ref = self._effective_roms_ref()
+        settings_cls = _wizard_settings_cls_for_ref(effective_roms_ref)
+        if (
+            self.editor is None
+            or self._editor_model != self.model_dd.value
+            or self._editor_settings_cls is not settings_cls
+        ):
             self.editor = _SettingsEditor(
-                self.W, composed, on_edit=self._on_editor_edit
+                self.W,
+                composed,
+                on_edit=self._on_editor_edit,
+                settings_cls=settings_cls,
             )
             self._editor_model = self.model_dd.value
+            self._editor_settings_cls = settings_cls
             self.editor_box.children = [self.editor.accordion]
 
         effective = _apply_overrides(composed, self._overrides)
@@ -3768,10 +4855,10 @@ class ForgeBlueprintWizard:
         finally:
             self._syncing = False
 
-        # composition.*.modified: "did the user deviate from what the catalog piece
+        # composition.*.modified: "did the user deviate from what the catalog spec
         # seeded" -- editing then reverting clears the flag. Model/output share the
         # accordion overrides layer (a true value-diff via _diff_overrides, so a
-        # no-op edit never counts); domain/forcing are widget-based pieces compared
+        # no-op edit never counts); domain/forcing are widget-based specs compared
         # against a snapshot captured at the moment of the last catalog pick.
         deviations = _diff_overrides(effective, composed)
         # model_settings-level deviations (accordion overrides) plus the three
@@ -3787,6 +4874,9 @@ class ForgeBlueprintWizard:
             or self.bgc_dd.value != declared["bgc_mode"]
             or bool(
                 (ref := self.roms_ref.value.strip()) and ref != declared["roms_ref"]
+            )
+            or bool(
+                (mref := self.marbl_ref.value.strip()) and mref != declared["marbl_ref"]
             )
         )
         model_modified = (
@@ -3850,7 +4940,14 @@ class ForgeBlueprintWizard:
                 "<span style='color:#b58900'>⚠ boundaries not derived yet — "
                 'click "Derive from grid" (Save/Run derive automatically)</span>'
             )
-        problems = validate_run_time_sections(cfg.model_settings)
+        # Suppressed for the same reason as _wizard_settings_cls_for_ref above --
+        # _rebuild runs on every keystroke, including typing into the roms_ref
+        # override box, so a non-semver ref's UserWarning would otherwise spam.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            problems = validate_run_time_sections(
+                cfg.model_settings, roms_ref=effective_roms_ref
+            )
         if problems:
             self.validation.value = (
                 "<b style='color:#b00'>⚠ settings validation:</b><br>"
@@ -3899,13 +4996,29 @@ class ForgeBlueprintWizard:
             )
 
     def _build_grid_from_widgets(self) -> Any:
-        """Build a ``roms_tools.Grid`` from the current (main-domain) grid kwargs.
+        """Build a ``roms_tools.Grid`` from the current (main-domain) grid kwargs
+        -- or return the already-loaded grid file's grid, when one is attached.
 
         Shared by the plot button, "Derive from grid", and the export-time
         safety net -- the only three places that pay the cost of an actual
         grid build (the live preview / ``_rebuild`` never does, so typing in
         the grid fields stays instant).
         """
+        if self._grid_file_grid is not None:
+            return self._grid_file_grid
+        if self._grid_file is not None:
+            # Attached but not currently loaded (a reattach failed -- e.g. the
+            # file went missing since it was recorded -- see _reattach_grid_file).
+            # Must not silently fall through to building a grid from whatever
+            # stale/default values happen to be sitting in the (locked, but
+            # still holding old values) grid_w widgets -- that would plot/derive
+            # boundaries and v_sponge from a completely different, wrong grid
+            # with no indication anything is amiss.
+            raise RuntimeError(
+                "grid_file is attached but failed to (re)load -- see "
+                "grid_file_status; re-attach a valid file first."
+            )
+
         from roms_tools import Grid
 
         gk: dict[str, Any] = {}
@@ -4156,18 +5269,20 @@ class ForgeBlueprintWizard:
             )
             return
         try:
-            p = self.config.to_yaml(Path(self.save_path.value))
+            save_path = Path(self.save_path.value)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            p = self.config.to_yaml(save_path)
             self.save_status.value = f"<span style='color:#080'>Saved {p}</span>"
         except Exception as exc:
             self.save_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
             )
 
-    # ---- save modified pieces to catalog --------------------------------------
-    # Each handler: validate name -> extract that piece from current state ->
+    # ---- save modified specs to catalog --------------------------------------
+    # Each handler: validate name -> extract that spec from current state ->
     # write it to the catalog (durable) -> side-effect-free round-trip verify ->
     # on match, commit the minimal state change (repoint the dropdown, drop that
-    # piece's overrides / reset its seed) under _suspend() + a single _rebuild();
+    # spec's overrides / reset its seed) under _suspend() + a single _rebuild();
     # on mismatch, the file is still written but nothing else changes (options
     # refreshed so the new name is selectable, but .value/overrides/seed untouched).
     def _on_save_output(self, _):
@@ -4188,23 +5303,26 @@ class ForgeBlueprintWizard:
                 extract_output_settings(self.config.model_settings),
                 description=self.description.value,
             )
-        except FileExistsError:
-            self.save_output_status.value = (
-                f"<span style='color:#b00'>'{name}' already exists.</span>"
-            )
+        except FileExistsError as exc:
+            # str(exc) names the owning layer (e.g. "...already exists in the
+            # 'bundled' catalog layer") -- a plain single-line message, no
+            # traceback, so it's rendered verbatim rather than genericized.
+            self.save_output_status.value = f"<span style='color:#b00'>{exc}</span>"
             return
         except Exception as exc:
             self.save_output_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
             )
             return
-        ok = self._verify_piece_roundtrip("output", name)
+        ok = self._verify_spec_roundtrip("output", name)
         with self._suspend():
             # ipywidgets resets .value to the first option on a bare `.options =`
             # reassignment even when the old value is still present -- restore it
             # explicitly so a mismatch genuinely leaves the selection untouched.
             old_value = self.output_dd.value
-            self.output_dd.options = list(self.catalog.output_names)
+            self.output_dd.options = self._dd_options(
+                list(self.catalog.output_names), "output"
+            )
             self.output_dd.value = name if ok else old_value
             if ok:
                 self._overrides = {
@@ -4218,7 +5336,7 @@ class ForgeBlueprintWizard:
         else:
             self.save_output_status.value = (
                 f"<span style='color:#b58900'>Saved '{name}', but round-trip "
-                "differs — piece kept as modified.</span>"
+                "differs — spec kept as modified.</span>"
             )
 
     def _on_save_model(self, _):
@@ -4240,27 +5358,28 @@ class ForgeBlueprintWizard:
                 self.catalog.model_dir(self.model_dd.value),
                 description=self.description.value,
                 # Live widget values, using _gather()'s exact conventions (use_pio/
-                # bgc_mode unconditional, roms_ref only when non-blank) -- the
-                # round-trip verifier below compares against _gather()'s kw, so any
-                # divergence here would be a spurious mismatch.
+                # bgc_mode unconditional, roms_ref/marbl_ref only when non-blank) --
+                # the round-trip verifier below compares against _gather()'s kw, so
+                # any divergence here would be a spurious mismatch.
                 bgc_mode=self.bgc_dd.value,
                 use_pio=self.use_pio_chk.value,
                 roms_ref=self.roms_ref.value.strip() or None,
+                marbl_ref=self.marbl_ref.value.strip() or None,
             )
-        except FileExistsError:
-            self.save_model_status.value = (
-                f"<span style='color:#b00'>'{name}' already exists.</span>"
-            )
+        except FileExistsError as exc:
+            self.save_model_status.value = f"<span style='color:#b00'>{exc}</span>"
             return
         except Exception as exc:
             self.save_model_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
             )
             return
-        ok = self._verify_piece_roundtrip("model", name)
+        ok = self._verify_spec_roundtrip("model", name)
         with self._suspend():
             old_value = self.model_dd.value
-            self.model_dd.options = list(self.catalog.model_names)
+            self.model_dd.options = self._dd_options(
+                list(self.catalog.model_names), "model"
+            )
             self.model_dd.value = name if ok else old_value
             if ok:
                 self._overrides = {
@@ -4274,7 +5393,7 @@ class ForgeBlueprintWizard:
         else:
             self.save_model_status.value = (
                 f"<span style='color:#b58900'>Saved '{name}', but round-trip "
-                "differs — piece kept as modified.</span>"
+                "differs — spec kept as modified.</span>"
             )
 
     def _on_save_domain(self, _):
@@ -4289,29 +5408,38 @@ class ForgeBlueprintWizard:
                 "<span style='color:#b00'>Config invalid — nothing to save.</span>"
             )
             return
+        if self._grid_file is not None:
+            # DomainSpec (catalog/DomainSpec/*.yaml) has no grid_file field --
+            # saving now would silently produce a geometry-less entry (grid_kwargs
+            # is {} while attached). Detach first.
+            self.save_domain_status.value = (
+                "<span style='color:#b00'>Detach the grid file first — DomainSpec "
+                "has no grid_file field.</span>"
+            )
+            return
         # Unlike _on_save/_on_run (which emit concrete boundaries into the
         # blueprint right now), an untouched open_boundaries is deliberately
-        # OMITTED from a saved DomainSpec (see _domain_piece_data) so it can
+        # OMITTED from a saved DomainSpec (see _domain_spec_data) so it can
         # re-derive fresh on next load -- there's nothing here for a failed
         # derive to protect, and forcing one would block a legitimate
         # checkpoint-save of a domain whose grid can't build yet (e.g.
         # topography not sorted out). No _ensure_boundaries_derived() call.
         try:
-            self.catalog.register_domain_from_dict(name, self._domain_piece_data())
-        except FileExistsError:
-            self.save_domain_status.value = (
-                f"<span style='color:#b00'>'{name}' already exists.</span>"
-            )
+            self.catalog.register_domain_from_dict(name, self._domain_spec_data())
+        except FileExistsError as exc:
+            self.save_domain_status.value = f"<span style='color:#b00'>{exc}</span>"
             return
         except Exception as exc:
             self.save_domain_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
             )
             return
-        ok = self._verify_piece_roundtrip("domain", name)
+        ok = self._verify_spec_roundtrip("domain", name)
         with self._suspend():
             old_value = self.domain_dd.value
-            self.domain_dd.options = ["<custom>", *self.catalog.domain_names]
+            self.domain_dd.options = self._dd_options(
+                list(self.catalog.domain_names), "domain", prefix=["<custom>"]
+            )
             self.domain_dd.value = name if ok else old_value
             if ok:
                 self._domain_seed = self._domain_snapshot()
@@ -4323,7 +5451,7 @@ class ForgeBlueprintWizard:
         else:
             self.save_domain_status.value = (
                 f"<span style='color:#b58900'>Saved '{name}', but round-trip "
-                "differs — piece kept as modified.</span>"
+                "differs — spec kept as modified.</span>"
             )
 
     def _on_save_forcing(self, _):
@@ -4345,20 +5473,20 @@ class ForgeBlueprintWizard:
                 cdr_forcing=self._cdr_forcing,
                 description=self.description.value,
             )
-        except FileExistsError:
-            self.save_forcing_status.value = (
-                f"<span style='color:#b00'>'{name}' already exists.</span>"
-            )
+        except FileExistsError as exc:
+            self.save_forcing_status.value = f"<span style='color:#b00'>{exc}</span>"
             return
         except Exception as exc:
             self.save_forcing_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
             )
             return
-        ok = self._verify_piece_roundtrip("forcing", name)
+        ok = self._verify_spec_roundtrip("forcing", name)
         with self._suspend():
             old_value = self.forcing_dd.value
-            self.forcing_dd.options = list(self.catalog.forcing_names)
+            self.forcing_dd.options = self._dd_options(
+                list(self.catalog.forcing_names), "forcing"
+            )
             self.forcing_dd.value = name if ok else old_value
             if ok:
                 self._forcing_seed = self._forcing_editor.gather()
@@ -4370,7 +5498,7 @@ class ForgeBlueprintWizard:
         else:
             self.save_forcing_status.value = (
                 f"<span style='color:#b58900'>Saved '{name}', but round-trip "
-                "differs — piece kept as modified.</span>"
+                "differs — spec kept as modified.</span>"
             )
 
     def _build_run_command(self, blueprint_path: str) -> list[str]:
@@ -4422,8 +5550,11 @@ class ForgeBlueprintWizard:
         self.run_btn.disabled = True
         self.run_output.clear_output(wait=True)
         self.run_status.value = "<i>saving blueprint…</i>"
+        cmd: list[str] | None = None
         try:
-            path = self.config.to_yaml(Path(self.save_path.value))
+            save_path = Path(self.save_path.value)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            path = self.config.to_yaml(save_path)
             cmd = self._build_run_command(str(path))
             self.run_status.value = f"<i>running: {' '.join(cmd)}</i>"
             proc = await asyncio.create_subprocess_exec(
@@ -4431,12 +5562,24 @@ class ForgeBlueprintWizard:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            # append_stdout (not `with self.run_output: print(...)`) appends
-            # directly to the widget's output list -- it works whether or not a
-            # live Jupyter kernel is routing stdout via iopub messaging, so lines
-            # land in the log both in a real notebook and in tests.
-            async for line in proc.stdout:
-                self.run_output.append_stdout(line.decode(errors="replace"))
+            # Read fixed-size chunks and reassemble lines ourselves rather than
+            # `async for line in proc.stdout` (StreamReader.readline), which raises
+            # ValueError, "Separator is not found, and chunk exceed the limit", when a
+            # child emits 64 KiB without a newline -- e.g. a \r-redrawn progress bar.
+            # append_stdout (not `with self.run_output: print(...)`) appends directly
+            # to the widget's output list, so lines land in the log whether or not a
+            # live Jupyter kernel is routing stdout via iopub messaging.
+            buf = b""
+            while True:
+                chunk = await proc.stdout.read(_STREAM_READ_SIZE)
+                if not chunk:
+                    break
+                lines, buf = _drain_stream_buffer(buf + chunk)
+                for line in lines:
+                    self.run_output.append_stdout(line)
+            lines, buf = _drain_stream_buffer(buf, at_eof=True)
+            for line in lines:
+                self.run_output.append_stdout(line)
             code = await proc.wait()
             # On success the log above names the emitted roms_marbl blueprint (the
             # runner logs where it published it). Point at it rather than restating
@@ -4449,8 +5592,11 @@ class ForgeBlueprintWizard:
                 else f"<span style='color:#b00'>exited with code {code}</span>"
             )
         except Exception as exc:
+            # Name the command in the status so a failure isn't a context-free
+            # error string (cmd is None only if saving the blueprint threw first).
+            where = f" while running: {' '.join(cmd)}" if cmd else ""
             self.run_status.value = (
-                f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
+                f"<span style='color:#b00'>{type(exc).__name__}: {exc}{where}</span>"
             )
         finally:
             self.run_btn.disabled = False
@@ -4475,7 +5621,12 @@ class ForgeBlueprintWizard:
         fname = self._workplan_path(blueprint_path).name
         cat = getattr(self, "catalog", None)
         try:
-            if cat is not None and getattr(cat, "_is_local", False):
+            # Mirror _default_blueprint_path: never offer a read-only catalog.
+            if (
+                cat is not None
+                and getattr(cat, "_is_local", False)
+                and not getattr(cat, "read_only", False)
+            ):
                 return cat.workplans_dir / fname
         except Exception:
             pass
@@ -4546,9 +5697,12 @@ class ForgeBlueprintWizard:
             )
             return
         try:
-            bp_path = self.config.to_yaml(Path(self.save_path.value))
+            save_path = Path(self.save_path.value)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            bp_path = self.config.to_yaml(save_path)
             workplan = self._build_workplan(Path(bp_path))
             wp_path = self._workplan_dest(Path(bp_path))
+            wp_path.parent.mkdir(parents=True, exist_ok=True)
 
             from cstar.orchestration.serialization import serialize
 
@@ -4678,8 +5832,8 @@ class ForgeBlueprintWizard:
                     self.load_status,
                 ),
                 section(
-                    "Pieces",
-                    W.HBox([self.model_dd, self.roms_ref, self.bgc_dd]),
+                    "Specs",
+                    W.HBox([self.model_dd, self.roms_ref, self.bgc_dd, self.marbl_ref]),
                     self.forcing_dd,
                     self.output_dd,
                     self.domain_dd,
@@ -4697,6 +5851,18 @@ class ForgeBlueprintWizard:
                                     self.mask_shapefile,
                                     self.topo_source,
                                     self.topo_path,
+                                    section(
+                                        "Attach a pre-made grid file (optional)",
+                                        W.HBox(
+                                            [
+                                                self.grid_file_path,
+                                                self.grid_file_attach_btn,
+                                                self.grid_file_detach_btn,
+                                            ]
+                                        ),
+                                        self.grid_file_upload,
+                                        self.grid_file_status,
+                                    ),
                                 ]
                             ),
                             W.VBox(
@@ -4721,6 +5887,15 @@ class ForgeBlueprintWizard:
                     "CDR forcing (optional)",
                     W.HBox([self.cdr_upload, self.cdr_clear_btn]),
                     self.cdr_status,
+                    W.HBox(
+                        [
+                            self.cdr_file_path,
+                            self.cdr_file_attach_btn,
+                            self.cdr_file_clear_btn,
+                        ]
+                    ),
+                    self.cdr_file_upload,
+                    self.cdr_file_status,
                 ),
                 section(
                     "Partitioning",
@@ -4744,9 +5919,9 @@ class ForgeBlueprintWizard:
                     self.preview,
                 ),
                 section(
-                    "Save modified pieces to catalog",
+                    "Save modified specs to catalog",
                     W.HTML(
-                        "<i>Promote an edited piece to a new named catalog entry. "
+                        "<i>Promote an edited spec to a new named catalog entry. "
                         "Only marked unmodified if the saved file re-resolves to "
                         "the identical blueprint.</i>"
                     ),
@@ -4810,10 +5985,17 @@ class ForgeBlueprintWizard:
 
 class ForgeBlueprintWizardApp:
     """Thin wrapper around :class:`ForgeBlueprintWizard` that adds a catalog-location
-    bar above it. Defaults to and auto-loads the bundled in-repo catalog; entering a
-    different location (a local path, ``"local"``, a GitHub URL, or an http URL --
-    anything :class:`~cstar_forge.domain_catalog.DomainCatalog` accepts as
-    ``catalog_root``) and clicking Reload rebuilds the wizard against it.
+    bar above it. Blank input loads the default layered stack (your writable
+    ``~/cstar-forge-data/catalog`` -- or ``CSTAR_FORGE_CATALOG`` -- layer over the
+    read-only bundled in-repo catalog, see
+    :func:`~cstar_forge.domain_catalog.default_catalog_stack`). Entering one or more
+    ``os.pathsep``-separated local paths builds a
+    :class:`~cstar_forge.domain_catalog.LayeredCatalog` exactly like the same value
+    in ``CSTAR_FORGE_CATALOG`` would (first = writable top, rest read-only, bundled
+    catalog appended at the bottom). Entering a single GitHub/http URL or the
+    literal ``"local"`` loads exactly that one store, read-only, for browsing
+    (saves then default to CWD-relative filenames, and the status line says so).
+    Clicking Reload rebuilds the wizard against the new catalog.
 
     Usage (in a Jupyter notebook)::
 
@@ -4832,7 +6014,8 @@ class ForgeBlueprintWizardApp:
 
         self._cat_input = W.Text(
             value="",
-            placeholder="catalog path or GitHub URL (blank = bundled in-repo catalog)",
+            placeholder="catalog path(s), ':'-separated top-first, or GitHub URL "
+            "(blank = your catalog over the bundled one)",
             description="Catalog:",
             style={"description_width": "110px"},
             layout=W.Layout(width="520px"),
@@ -4845,25 +6028,76 @@ class ForgeBlueprintWizardApp:
         self._load(catalog_root)
 
     def _load(self, catalog_root_value: str | None) -> None:
-        from cstar_forge.domain_catalog import DomainCatalog
+        import os
 
-        val = (catalog_root_value or "").strip() or None
+        from cstar_forge.domain_catalog import (
+            DomainCatalog,
+            LayeredCatalog,
+            _is_github_catalog_url,
+            build_catalog_stack,
+            default_catalog_stack,
+        )
+
+        val = (catalog_root_value or "").strip()
         try:
-            cat = DomainCatalog(catalog_root=val)
+            if not val:
+                # Blank -> the default layered stack (writable user layer over
+                # the read-only bundled catalog), not the bundled catalog alone.
+                cat = default_catalog_stack()
+            else:
+                entries = [e for e in val.split(os.pathsep) if e]
+                if len(entries) == 1 and (
+                    _is_github_catalog_url(entries[0])
+                    or entries[0].startswith("http")
+                    or entries[0].strip().lower() == "local"
+                ):
+                    # A remote URL or the literal "local" (bundled catalog)
+                    # can never be a writable top layer, so load it as exactly
+                    # one read-only store for browsing.
+                    cat = DomainCatalog(catalog_root=entries[0])
+                else:
+                    # Same builder as the CSTAR_FORGE_CATALOG env handling
+                    # (first entry writable top, rest read-only, bundled
+                    # appended at the bottom) so the two paths cannot drift --
+                    # a single local path gets the bundled layer underneath,
+                    # exactly like the same value in the env var.
+                    cat = build_catalog_stack(entries)
             inner = ForgeBlueprintWizard(catalog=cat)
         except Exception as exc:
             self._cat_status.value = (
                 f"<span style='color:#b00'>Failed to load catalog "
-                f"{val or '(bundled)'!r}: {exc}</span>"
+                f"{val or '(default)'!r}: {exc}</span>"
             )
             return
 
         self.inner = inner
-        self._cat_status.value = (
-            f"<span style='color:#2a2'>Loaded {cat.catalog_root} -- "
-            f"{len(cat.model_names)} models, "
-            f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>"
-        )
+        if isinstance(cat, LayeredCatalog):
+            layers = " over ".join(
+                f"{store.label} {store.catalog_root} ({len(store.domain_names)} domains)"
+                if store is cat.top
+                else f"{store.label} ({len(store.domain_names)} domains)"
+                for store in cat.stores
+            )
+            self._cat_status.value = (
+                f"<span style='color:#2a2'>Loaded {layers} -- "
+                f"{len(cat.model_names)} models, "
+                f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>"
+            )
+        else:
+            # Single stores can be read-only (a remote URL or "local"): the
+            # save-path defaults then silently fall back to CWD-relative
+            # filenames, so say so instead of leaving the fallback invisible.
+            ro_note = (
+                " <span style='color:#b60'>(read-only catalog -- saves default "
+                "to the current directory)</span>"
+                if getattr(cat, "read_only", False)
+                else ""
+            )
+            self._cat_status.value = (
+                f"<span style='color:#2a2'>Loaded {cat.catalog_root} -- "
+                f"{len(cat.model_names)} models, "
+                f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>{ro_note}"
+            )
         self._outer.children = [
             self.W.VBox(
                 [

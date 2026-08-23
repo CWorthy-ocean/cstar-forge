@@ -1,4 +1,4 @@
-# Machine configuration
+# System detection and data paths
 
 C-Star Forge uses a configuration system to manage paths and system-specific settings.
 
@@ -18,14 +18,25 @@ Data paths are automatically configured based on the detected system. The `confi
 - **Source data** (`config.paths.source_data`): External datasets (GLORYS, UNIFIED_BGC, SRTM15, etc.)
 - **Input data** (`config.paths.input_data`): Generated ROMS-MARBL input files
 - **Scratch directory** (`config.paths.scratch`): Model execution directories
-- **Catalog root** (`config.paths.catalog`): Inner directory that directly contains ``blueprints/`` (default: ``<data base>/catalog``, the sibling of ``input-data`` — e.g. ``~/cstar-forge-data/catalog`` on macOS (`config.default_catalog_inner_dir`))
+- **Catalog root** (`config.paths.catalog`): Inner directory that directly contains ``blueprints/`` — equal to `user_catalog_root()` (default: `~/cstar-forge-data/catalog`), deliberately home-anchored rather than rebased onto `$SCRATCH`/`$WORK` like `source_data`/`input_data`/`scratch` above: catalog entries are durable, user-registered content that must survive HPC scratch purges. Override with the `CSTAR_FORGE_CATALOG` environment variable (an `os.pathsep`-separated list of catalog roots; the first entry is this writable layer).
 - **Blueprints** (`config.paths.blueprints`): Generated blueprint YAML files (default: `config.paths.catalog / "blueprints"`)
 - **Builds**: rendered compile-time/run-time code directories under the per-run `HostPaths.working_dir / "builds"/{compile-time,run-time}` — not under the catalog.
-- **YAML files** (`config.paths.models_yaml`, `config.paths.builds_yaml`, `config.paths.machines_yaml`): *(vestigial: these three `DataPaths` fields survive but the files no longer ship and nothing reads them — model/machine data comes from the bundled catalog.)*
+- **YAML files** (`config.paths.models_yaml`, `config.paths.builds_yaml`): *(vestigial: these two `DataPaths` fields survive but the files no longer ship and nothing reads them — model data comes from the layered default catalog instead.)*
 
 ### Relocating the catalog
 
-To point blueprints and builds at another directory (for example scratch or a shared drive), build a new `DataPaths` with `config.with_catalog` and assign it to `config.paths`:
+The catalog the wizard and `domain_catalog.default_catalog` actually read from and
+save into is controlled independently of `config.paths`, via the
+`CSTAR_FORGE_CATALOG` environment variable (see the **Catalog root** bullet
+above) — set it in your environment before launching the wizard (or before
+importing `cstar_forge` at all) to relocate the writable layer, for example
+onto a shared drive.
+
+`config.with_catalog` is a narrower, in-process utility: it returns a new
+`DataPaths` with `.catalog`/`.blueprints` overridden, for code that reads
+`config.paths.catalog` directly. It does **not** reroute
+`domain_catalog.default_catalog`, so it will not change where the wizard
+saves:
 
 ```python
 from pathlib import Path
@@ -34,12 +45,12 @@ from cstar_forge import config
 config.paths = config.with_catalog(config.paths, Path("/scratch/me/cstar-catalog"))
 ```
 
-Create the new `blueprints` and `builds` directories if needed before running workflows.
+Create the new `blueprints` directory if needed before running workflows that read `config.paths.blueprints` directly.
 
 At processing time, `cstar_forge.config.resolve_host(working_dir)` builds the forge
 application's `HostPaths` (`cstar_forge.forge.host.HostPaths`) from this auto-detected
 config: `source_data_cache` comes from `config.paths.source_data`, plus the detected
-`system` tag and `machine_config`. `working_dir` (the per-run artifact root that
+`system` tag. `working_dir` (the per-run artifact root that
 `ForgeExecutor` writes everything under) is supplied separately — see
 `docs/architecture-details.md` §2–4 for the full authoring/execution split. This is Forge's
 own *disposable* host provider; when the forge application relocates into C-Star,
@@ -57,9 +68,6 @@ input_data_path = config.paths.input_data
 # Access system information
 system_tag = config.system  # e.g., "MacOS", "RCAC_anvil", "NERSC_perlmutter"
 system_tag_alias = config.system_id  # alias for config.system (a tag like "MacOS", not a hostname)
-
-# Access machine configuration
-machine_config = config.machine_config  # MachineConfig object with account, pes_per_node, queues
 cluster_type = config.cluster_type  # "LocalCluster" or "SLURMCluster"
 ```
 
@@ -82,22 +90,7 @@ To output the paths in JSON format:
 python -m cstar_forge.config show-paths --json
 ```
 
-## Machine Configuration
-
-Machine-specific settings (account, processing elements per node, queue names) are loaded from `cstar_forge/catalog/Machines/{system_tag}.yaml` via `DomainCatalog.machine_data()`. The `config.machine_config` object provides access to these settings:
-
-```python
-from cstar_forge import config
-
-# Access machine configuration
-account = config.machine_config.account  # Account/project name for job submission
-pes_per_node = config.machine_config.pes_per_node  # Cores per node
-default_queue = config.machine_config.queues.get("default")  # Default queue name
-```
-
-If the machine has no catalog entry (or its YAML is unreadable), a warning is logged and an empty `MachineConfig` is returned (`config._load_machine_config_from_catalog`).
-
-### Cluster Types
+## Cluster Types
 
 The system automatically determines the cluster type based on the detected system:
 
@@ -145,8 +138,7 @@ The `get_data_paths()` function builds `Path` objects only; pass `create=True`, 
 ## Reference
 
 For further reference, see:
-- [Architecture Details](architecture-details.md) - module map, including `config.py` (`DataPaths`/`MachineConfig`/`resolve_host()`)
-- [Machines (machines.yaml)](reference-machines.md) - Machine-specific settings
+- [Architecture Details](architecture-details.md) - module map, including `config.py` (`DataPaths`/`resolve_host()`)
 
 
 
