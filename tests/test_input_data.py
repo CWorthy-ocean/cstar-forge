@@ -3407,7 +3407,13 @@ class TestGlorysSubchunkIntegration:
             },
             use_dask=True,
         )
-        assert "temp_north" in bf.ds.data_vars
+        # rt.BoundaryForcing is a container, not a dataset holder: it builds one
+        # type="physics" BoundaryForcingSource plus one type="bgc" companion per
+        # bgc_sources item, so the physics dataset lives at .physics.ds (and each
+        # companion at .bgc[i].ds). Kept as the rt.BoundaryForcing wrapper rather
+        # than constructing a bare BoundaryForcingSource, because the wrapper is
+        # what input_data.py actually calls.
+        assert "temp_north" in bf.physics.ds.data_vars
 
 
 class TestSubchunkDefaults:
