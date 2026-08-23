@@ -944,6 +944,24 @@ class BgcSourceItem(_Section):
     ``build_bgc_companions()`` only applies a per-source override when one is
     actually given, so ``None`` here correctly falls through to the section's
     own setting."""
+    serialize_dask: bool | None = None
+    """Force *this source's own* NetCDF write onto dask's synchronous scheduler
+    (one task at a time, BLAS/numba boosted to every core), bounding that write's
+    peak memory to a single task's footprint. Required for large domains: a
+    12-month ESPER boundary on a 1858x962x100 grid exhausted swap and was killed
+    by ``systemd-oomd`` under the ordinary concurrent write.
+
+    Unlike the ``--serialize-dask-write`` CLI flag -- which serializes *every*
+    IC/boundary write, including the physics boundary write that needs no such
+    protection and runs ~3x slower for it -- this is per source. For boundary
+    forcing each bgc source is written by its own ``.save()`` call, so setting it
+    on the ESPER source leaves the physics write and any other bgc companion
+    (e.g. a small UNIFIED climatology) on the ordinary concurrent path.
+
+    ``None`` means "inherit": the CLI flag applies if given, else the ordinary
+    concurrent write. Initial conditions merge every bgc source into ONE dataset
+    and so cannot be split -- there, any source setting this serializes the whole
+    initial-conditions write."""
 
 
 class InitialConditions(_Section):

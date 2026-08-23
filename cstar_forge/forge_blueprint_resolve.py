@@ -1030,11 +1030,16 @@ def _build_forcing(
         but `bgc_sources` needs its own nested construction the generic loop
         can't do.
         """
+        # Introspect BgcSourceItem's own fields rather than hand-listing them:
+        # a hand-written list silently DROPS any field added to the model later
+        # (that is how `serialize_dask` first went missing here), which for a
+        # write-behaviour flag means the blueprint quietly loses the setting that
+        # makes a large domain generate at all.
+        bgc_item_fields = set(BgcSourceItem.model_fields) - {"source"}
         bgc_sources = [
             BgcSourceItem(
                 source=_parse_source(bs.get("source")),
-                use_vars=bs.get("use_vars"),
-                bgc_interpolation_method=bs.get("bgc_interpolation_method"),
+                **{f: bs[f] for f in bgc_item_fields if f in bs},
             )
             for bs in (block.get("bgc_sources") or [])
         ]

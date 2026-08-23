@@ -2218,6 +2218,32 @@ def test_rst_period_not_divisible_accepted_with_rst_writing_off():
     assert cfg.model_settings["ocean_vars"]["output_period_rst"] == 150.0
 
 
+def test_bgc_source_item_serialize_dask_roundtrips():
+    """`serialize_dask` is a per-source write option, not a roms-tools source
+    parameter: it must survive a blueprint round-trip, default to None (inherit
+    the --serialize-dask-write CLI flag), and not loosen `extra="forbid"`.
+    """
+    from pydantic import ValidationError
+
+    from cstar_forge.forge.forge_blueprint import BgcSourceItem
+
+    item = BgcSourceItem(
+        source={"name": "ESPER"}, use_vars=["ALK", "DIC"], serialize_dask=True
+    )
+    assert item.serialize_dask is True
+    assert item.model_dump()["serialize_dask"] is True
+    assert BgcSourceItem(**item.model_dump()).serialize_dask is True
+
+    # Omitted means "inherit", which must stay distinguishable from an explicit
+    # False -- the CLI flag can only take over when the source said nothing.
+    assert BgcSourceItem(source={"name": "ESPER"}).serialize_dask is None
+    assert BgcSourceItem(source={"name": "ESPER"}, serialize_dask=False).serialize_dask is False
+
+    with pytest.raises(ValidationError):
+        BgcSourceItem(source={"name": "ESPER"}, serialize_dsk=True)
+
+
+
 class TestEnsureCdrOutputMarblDiagnostics:
     def test_none_input_returns_all_required(self):
         from cstar_forge.forge.namelist_model import (
@@ -4695,6 +4721,50 @@ class TestSaveModifiedSpecsToCatalog:
         assert wiz.config.composition.forcing.modified is False
         saved = isolated_catalog.forcing_data("child-no-ic-forcing")
         assert "initial_conditions" not in saved
+
+    def test_save_forcing_spec_preserves_per_source_serialize_dask(
+        self, isolated_catalog
+    ):
+        """A per-source `serialize_dask` must survive save -> reload.
+
+        `_verify_spec_roundtrip` compares `content_hash()`, which covers all
+        results-affecting blueprint data -- so if the wizard's seed
+        reconstruction dropped this field, saving a forcing spec for a large
+        domain would fail to round-trip and, worse, a reload would silently hand
+        the domain back the concurrent write that gets it OOM-killed.
+        """
+        wiz = self._wizard(isolated_catalog)
+        rows = wiz._forcing_editor._rows["boundary_bgc"]
+        if not rows:
+            pytest.skip("bundled forcing spec has no boundary bgc source to flag")
+        row = rows[0]
+        row["name"].value = "ESPER"
+        row["serialize_dask"].value = True
+        wiz._rebuild()
+
+        bgc = wiz.config.forcing.boundary.bgc_sources
+        assert any(bs.serialize_dask for bs in bgc), (
+            "editor state did not reach the resolved blueprint"
+        )
+
+        wiz.save_forcing_name.value = "serialized-esper-forcing"
+        wiz._on_save_forcing(None)
+        # modified=False is the round-trip verdict: the saved spec reproduces the
+        # live config content-hash-exactly, serialize_dask included.
+        assert wiz.config.composition.forcing.modified is False
+
+        saved = isolated_catalog.forcing_data("serialized-esper-forcing")
+        saved_bgc = saved["forcing"]["boundary"]["bgc_sources"]
+        assert any(bs.get("serialize_dask") for bs in saved_bgc), (
+            f"serialize_dask missing from the written spec: {saved_bgc}"
+        )
+
+        # And a fresh wizard picking that spec back up still has it ticked.
+        wiz2 = self._wizard(isolated_catalog)
+        wiz2.forcing_dd.value = "serialized-esper-forcing"
+        assert any(
+            bs.serialize_dask for bs in wiz2.config.forcing.boundary.bgc_sources
+        )
 
     def test_save_forcing_spec_embeds_and_reloads_cdr(self, isolated_catalog):
         wiz = self._wizard(isolated_catalog)

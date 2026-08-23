@@ -1559,7 +1559,7 @@ class TestRomsMarblInputDataGeneration:
         boundary_path.touch()  # Ensure file exists for Pydantic validation
         # rt.BoundaryForcing.save() returns (physics_paths, bgc_paths) -- see
         # _generate_boundary_forcing.
-        mock_bf.save.return_value = ([boundary_path], [])
+        mock_bf.physics.save.return_value = [boundary_path]
         mock_bf_class.return_value = mock_bf
 
         sample_roms_marbl_input_data._generate_boundary_forcing(
@@ -1567,7 +1567,7 @@ class TestRomsMarblInputDataGeneration:
         )
 
         mock_bf_class.assert_called_once()
-        mock_bf.save.assert_called_once()
+        mock_bf.physics.save.assert_called_once()
         mock_bf.to_yaml.assert_called_once()
 
         # Check that resource was added to forcing.boundary
@@ -2674,12 +2674,15 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None, serialize_dask=None):
+        def boundary_save(path, *args, **kwargs):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return [path], bgc_paths or []
+            return [path]
 
-        mock_boundary_instance.save.side_effect = boundary_save
+        # sample_forcing_override's boundary carries one bgc source, and
+        # _generate_boundary_forcing saves each one via its own object.
+        mock_boundary_instance.bgc = [MagicMock()]
+        mock_boundary_instance.physics.save.side_effect = boundary_save
         mock_boundary_instance.to_yaml = MagicMock()
         mock_boundary.return_value = mock_boundary_instance
 
@@ -2749,12 +2752,15 @@ class TestRomsMarblInputDataGenerateAll:
         # Mock BoundaryForcing to prevent file operations
         mock_boundary = MagicMock()
 
-        def boundary_save(path, bgc_paths=None, serialize_dask=None):
+        def boundary_save(path, *args, **kwargs):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return [path], bgc_paths or []
+            return [path]
 
-        mock_boundary.save.side_effect = boundary_save
+        # sample_forcing_override's boundary carries one bgc source, and
+        # _generate_boundary_forcing saves each one via its own object.
+        mock_boundary.bgc = [MagicMock()]
+        mock_boundary.physics.save.side_effect = boundary_save
         mock_boundary.to_yaml = MagicMock()
         mock_boundary_class.return_value = mock_boundary
 
@@ -2818,12 +2824,15 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None, serialize_dask=None):
+        def boundary_save(path, *args, **kwargs):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return [path], bgc_paths or []
+            return [path]
 
-        mock_boundary_instance.save.side_effect = boundary_save
+        # sample_forcing_override's boundary carries one bgc source, and
+        # _generate_boundary_forcing saves each one via its own object.
+        mock_boundary_instance.bgc = [MagicMock()]
+        mock_boundary_instance.physics.save.side_effect = boundary_save
         mock_boundary_instance.to_yaml = MagicMock()
         mock_boundary_class.return_value = mock_boundary_instance
 
@@ -2913,12 +2922,15 @@ class TestRomsMarblInputDataGenerateAll:
 
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None, serialize_dask=None):
+        def boundary_save(path, *args, **kwargs):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return [path], bgc_paths or []
+            return [path]
 
-        mock_boundary_instance.save.side_effect = boundary_save
+        # sample_forcing_override's boundary carries one bgc source, and
+        # _generate_boundary_forcing saves each one via its own object.
+        mock_boundary_instance.bgc = [MagicMock()]
+        mock_boundary_instance.physics.save.side_effect = boundary_save
         mock_boundary_instance.to_yaml = MagicMock()
         mock_boundary.return_value = mock_boundary_instance
 
@@ -3041,12 +3053,15 @@ class TestRomsMarblInputDataGenerateAll:
         # (physics_paths, bgc_paths) out.
         mock_boundary_instance = MagicMock()
 
-        def boundary_save(path, bgc_paths=None, serialize_dask=None):
+        def boundary_save(path, *args, **kwargs):
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             Path(path).touch()
-            return [path], bgc_paths or []
+            return [path]
 
-        mock_boundary_instance.save.side_effect = boundary_save
+        # sample_forcing_override's boundary carries one bgc source, and
+        # _generate_boundary_forcing saves each one via its own object.
+        mock_boundary_instance.bgc = [MagicMock()]
+        mock_boundary_instance.physics.save.side_effect = boundary_save
         mock_boundary_instance.to_yaml = MagicMock()
         mock_boundary_class.return_value = mock_boundary_instance
 
@@ -3547,10 +3562,7 @@ class TestBoundaryBgcSources:
         mock_bf.bgc = [MagicMock(), MagicMock()]
         physics_path = tmp_path / "boundary-physics.nc"
         physics_path.touch()
-        mock_bf.save.return_value = (
-            [physics_path],
-            ["boundary-bgc-unified.nc", "boundary-bgc-glodap.nc"],
-        )
+        mock_bf.physics.save.return_value = [physics_path]
         mock_bf_class.return_value = mock_bf
 
         data = multi_bgc_boundary_input_data
@@ -3574,15 +3586,96 @@ class TestBoundaryBgcSources:
         assert mock_bf.bgc[0].to_yaml.call_count == 1
         assert mock_bf.bgc[1].to_yaml.call_count == 1
 
-        # Distinct, non-colliding save paths disambiguated by source name.
-        mock_bf.save.assert_called_once()
-        _physics_arg, bgc_paths_arg = mock_bf.save.call_args.args
+        # Distinct, non-colliding save paths disambiguated by source name. Each
+        # bgc source is written by its own `.save()`, so the paths come off those
+        # calls (see `_generate_boundary_forcing`).
+        mock_bf.physics.save.assert_called_once()
+        bgc_paths_arg = [obj.save.call_args.args[0] for obj in mock_bf.bgc]
         stems = {Path(p).stem.lower() for p in bgc_paths_arg}
         assert len(stems) == 2
         assert any("unified" in s for s in stems)
         assert any("glodap" in s for s in stems)
 
         assert len(data.roms_marbl_blueprint_elements.forcing.boundary.data) == 3
+
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    def test_per_source_serialize_dask_reaches_only_that_bgc_write(
+        self, mock_bf_class, multi_bgc_boundary_input_data, tmp_path
+    ):
+        """A per-source `serialize_dask` must serialize ONLY that source's own
+        write. The physics boundary write has never been the memory problem and
+        runs ~3x slower serialized (~4.2h vs 70-77min on a 12-month domain), so
+        the global flag being off must leave it -- and any other bgc companion --
+        on the ordinary concurrent path.
+        """
+        mock_bf = MagicMock()
+        mock_bf.bgc = [MagicMock(), MagicMock()]
+        physics_path = tmp_path / "boundary-physics.nc"
+        physics_path.touch()
+        mock_bf.physics.save.return_value = [physics_path]
+        mock_bf_class.return_value = mock_bf
+
+        data = multi_bgc_boundary_input_data
+        assert data.serialize_dask_write is None  # global flag not given
+        data._generate_boundary_forcing(
+            key="forcing.boundary",
+            source={"name": "GLORYS"},
+            bgc_sources=[
+                {
+                    "source": {"name": "UNIFIED", "climatology": True},
+                    "serialize_dask": True,
+                },
+                {"source": {"name": "GLODAP"}},
+            ],
+        )
+
+        # Physics inherits the (unset) global flag, not the per-source one.
+        assert mock_bf.physics.save.call_args.kwargs["serialize_dask"] is None
+        # First source asked for serialization; the second inherits -> False.
+        assert mock_bf.bgc[0].save.call_args.kwargs["serialize_dask"] is True
+        assert mock_bf.bgc[1].save.call_args.kwargs["serialize_dask"] is False
+
+        # Tracer derivation still runs across every source, but must NOT save --
+        # each object is saved above with its own serialize_dask.
+        mock_bf.bgc_model.return_value.process_bgc_fields.assert_called_once()
+        pbf_kwargs = mock_bf.bgc_model.return_value.process_bgc_fields.call_args.kwargs
+        assert pbf_kwargs["filepath"] is None
+
+        # `serialize_dask` is a Forge-only write option: roms-tools must never see
+        # it among the source items it validates.
+        for item in mock_bf_class.call_args.kwargs["bgc_sources"]:
+            assert "serialize_dask" not in item
+            assert "serialize_dask" not in item["source"]
+
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    def test_global_serialize_flag_is_the_fallback_for_unset_sources(
+        self, mock_bf_class, multi_bgc_boundary_input_data, tmp_path
+    ):
+        """`--serialize-dask-write` keeps its old meaning -- serialize everything
+        -- for any source that does not state its own preference, and an explicit
+        per-source False still opts that one source back out.
+        """
+        mock_bf = MagicMock()
+        mock_bf.bgc = [MagicMock(), MagicMock()]
+        physics_path = tmp_path / "boundary-physics.nc"
+        physics_path.touch()
+        mock_bf.physics.save.return_value = [physics_path]
+        mock_bf_class.return_value = mock_bf
+
+        data = multi_bgc_boundary_input_data
+        data.serialize_dask_write = True
+        data._generate_boundary_forcing(
+            key="forcing.boundary",
+            source={"name": "GLORYS"},
+            bgc_sources=[
+                {"source": {"name": "UNIFIED", "climatology": True}},
+                {"source": {"name": "GLODAP"}, "serialize_dask": False},
+            ],
+        )
+
+        assert mock_bf.physics.save.call_args.kwargs["serialize_dask"] is True
+        assert mock_bf.bgc[0].save.call_args.kwargs["serialize_dask"] is True
+        assert mock_bf.bgc[1].save.call_args.kwargs["serialize_dask"] is False
 
     @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
     def test_no_bgc_sources_builds_physics_only(
@@ -3593,7 +3686,7 @@ class TestBoundaryBgcSources:
         mock_bf.bgc = []
         physics_path = tmp_path / "boundary-physics.nc"
         physics_path.touch()
-        mock_bf.save.return_value = ([physics_path], [])
+        mock_bf.physics.save.return_value = [physics_path]
         mock_bf_class.return_value = mock_bf
 
         sample_roms_marbl_input_data._generate_boundary_forcing(
@@ -3603,8 +3696,10 @@ class TestBoundaryBgcSources:
         call_kwargs = mock_bf_class.call_args.kwargs
         assert call_kwargs["bgc_sources"] == []
         assert call_kwargs["bgc_model"] is None
-        mock_bf.save.assert_called_once_with(
-            mock_bf.save.call_args.args[0], None, serialize_dask=None
+        # Physics is saved by its own object; with no bgc sources nothing else
+        # is written and serialize_dask stays at the (unset) global default.
+        mock_bf.physics.save.assert_called_once_with(
+            mock_bf.physics.save.call_args.args[0], serialize_dask=None
         )
 
     @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
@@ -3681,10 +3776,7 @@ class TestBoundaryBgcSources:
         mock_bf.bgc = [MagicMock(), MagicMock()]
         physics_path = tmp_path / "boundary-physics.nc"
         physics_path.touch()
-        mock_bf.save.return_value = (
-            [physics_path],
-            ["boundary-bgc-unified-alkdic.nc", "boundary-bgc-unified-fesio3.nc"],
-        )
+        mock_bf.physics.save.return_value = [physics_path]
         mock_bf_class.return_value = mock_bf
 
         sample_roms_marbl_input_data._generate_boundary_forcing(
@@ -3702,8 +3794,10 @@ class TestBoundaryBgcSources:
             ],
         )
 
-        mock_bf.save.assert_called_once()
-        _physics_arg, bgc_paths_arg = mock_bf.save.call_args.args
+        mock_bf.physics.save.assert_called_once()
+        # Each bgc source is written by its own `.save()` now, so the per-source
+        # paths come off those calls rather than one merged save.
+        bgc_paths_arg = [obj.save.call_args.args[0] for obj in mock_bf.bgc]
         assert len(bgc_paths_arg) == 2
         assert len({Path(p).stem for p in bgc_paths_arg}) == 2, (
             f"expected distinct filenames, got {bgc_paths_arg}"

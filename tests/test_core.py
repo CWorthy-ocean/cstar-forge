@@ -2107,22 +2107,6 @@ class TestGoldenNamelist:
         return [path]
 
     @staticmethod
-    def _touch_save_boundary(path, bgc_paths=None, **_kw):
-        """rt.BoundaryForcing.save()'s contract differs from every other rt
-        class's (see RomsMarblInputData._generate_boundary_forcing):
-        (physics_path, bgc_paths_or_none) in, (physics_paths, bgc_paths) out.
-        Touches every bgc path too, not just the physics one -- each bgc source
-        is its own separate NetCDF file (never merged, unlike initial_conditions).
-        """
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).touch()
-        bgc_paths = bgc_paths or []
-        for bp in bgc_paths:
-            Path(bp).parent.mkdir(parents=True, exist_ok=True)
-            Path(bp).touch()
-        return [path], bgc_paths
-
-    @staticmethod
     def _mock_source_data(tmp_path):
         """A SourceData stand-in covering every source name the glorys-era5-unified
         ForcingSpec references (GLORYS/UNIFIED/ERA5/TPXO/DAI/MBL_co2/WOA); mirrors
@@ -2240,8 +2224,16 @@ class TestGoldenNamelist:
             mock_surface_instance.use_coarse_grid = False
             mock_surface.return_value = mock_surface_instance
 
+            # rt.BoundaryForcing is a container, not one merged save: `.physics`
+            # plus one `.bgc` entry per bgc source, each written by its OWN
+            # `.save()` call -- _generate_boundary_forcing drives them separately
+            # so serialization can be set per source (BgcSourceItem.serialize_dask).
+            # The bundled glorys-era5-unified ForcingSpec has one boundary bgc source.
             mock_boundary_instance = MagicMock()
-            mock_boundary_instance.save.side_effect = self._touch_save_boundary
+            mock_boundary_instance.physics.save.side_effect = self._touch_save_list
+            mock_boundary_bgc = MagicMock()
+            mock_boundary_bgc.save.side_effect = self._touch_save_list
+            mock_boundary_instance.bgc = [mock_boundary_bgc]
             mock_boundary.return_value = mock_boundary_instance
 
             mock_tidal_instance = MagicMock()
@@ -2636,10 +2628,18 @@ class TestForgeRunnerEndToEnd:
             mock_surface_instance.use_coarse_grid = False
             mock_surface.return_value = mock_surface_instance
 
+            # rt.BoundaryForcing is a container, not one merged save: `.physics`
+            # plus one `.bgc` entry per bgc source, each written by its OWN
+            # `.save()` call -- _generate_boundary_forcing drives them separately
+            # so serialization can be set per source (BgcSourceItem.serialize_dask).
+            # The bundled glorys-era5-unified ForcingSpec has one boundary bgc source.
             mock_boundary_instance = MagicMock()
-            mock_boundary_instance.save.side_effect = (
-                TestGoldenNamelist._touch_save_boundary
+            mock_boundary_instance.physics.save.side_effect = (
+                TestGoldenNamelist._touch_save_list
             )
+            mock_boundary_bgc = MagicMock()
+            mock_boundary_bgc.save.side_effect = TestGoldenNamelist._touch_save_list
+            mock_boundary_instance.bgc = [mock_boundary_bgc]
             mock_boundary.return_value = mock_boundary_instance
 
             mock_tidal_instance = MagicMock()
@@ -2775,22 +2775,6 @@ class TestOnlyInputsReuseIsIdempotent:
         return [path]
 
     @staticmethod
-    def _touch_save_boundary(path, bgc_paths=None, **_kw):
-        """rt.BoundaryForcing.save()'s contract differs from every other rt
-        class's (see RomsMarblInputData._generate_boundary_forcing):
-        (physics_path, bgc_paths_or_none) in, (physics_paths, bgc_paths) out.
-        Touches every bgc path too, not just the physics one -- each bgc source
-        is its own separate NetCDF file (never merged, unlike initial_conditions).
-        """
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        Path(path).touch()
-        bgc_paths = bgc_paths or []
-        for bp in bgc_paths:
-            Path(bp).parent.mkdir(parents=True, exist_ok=True)
-            Path(bp).touch()
-        return [path], bgc_paths
-
-    @staticmethod
     def _touch_yaml(path, **_kw):
         """A real (empty-content) sidecar write -- enough to satisfy the
         ``yaml_path.exists()`` gate that routes reuse to the cheap branch.
@@ -2908,7 +2892,7 @@ class TestOnlyInputsReuseIsIdempotent:
             mock_surface.return_value = mock_surface_instance
 
             mock_boundary_instance = MagicMock()
-            mock_boundary_instance.save.side_effect = self._touch_save_boundary
+            mock_boundary_instance.physics.save.side_effect = self._touch_save_list
             mock_boundary_instance.to_yaml.side_effect = self._touch_yaml
             # The bundled glorys-era5-unified ForcingSpec has one boundary bgc
             # source (UNIFIED) -- its own yaml sidecar must be real too (see
@@ -2916,6 +2900,7 @@ class TestOnlyInputsReuseIsIdempotent:
             # 2's reuse check treats it as missing and rebuilds unnecessarily.
             mock_boundary_bgc_instance = MagicMock()
             mock_boundary_bgc_instance.to_yaml.side_effect = self._touch_yaml
+            mock_boundary_bgc_instance.save.side_effect = self._touch_save_list
             mock_boundary_instance.bgc = [mock_boundary_bgc_instance]
             mock_boundary.return_value = mock_boundary_instance
 

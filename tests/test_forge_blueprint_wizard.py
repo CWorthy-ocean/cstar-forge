@@ -95,6 +95,50 @@ def test_boundary_row_layout_visibility_by_source_name(editor):
     assert "glorys_layout" not in bgc_w
 
 
+@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
+def test_serialize_dask_checkbox_is_esper_only_and_emitted_at_item_level(editor, cat):
+    """`serialize_dask` is a per-source WRITE option (BgcSourceItem.serialize_dask),
+    not a roms-tools source parameter, so it must land at item level -- never inside
+    `source`, where roms-tools' own validation would see an unknown key. It is only
+    offered for ESPER, the one bgc source whose write needs it.
+    """
+    w = editor._make_row(cat, {"source": {"name": "ESPER"}})
+    assert "serialize_dask" in w
+    assert _display(w["serialize_dask"]) == ""  # shown for ESPER
+
+    # Unticked -> absent entirely, so the source stays "inherit the CLI flag"
+    # rather than a hard False that would override --serialize-dask-write.
+    item = editor._gather_item(cat, w)
+    assert "serialize_dask" not in item
+    assert "serialize_dask" not in item["source"]
+
+    w["serialize_dask"].value = True
+    item = editor._gather_item(cat, w)
+    assert item["serialize_dask"] is True
+    assert "serialize_dask" not in item["source"], (
+        "must not leak into the roms-tools source block"
+    )
+
+
+@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
+def test_serialize_dask_checkbox_hidden_for_non_esper_sources(editor, cat):
+    """A gridded bgc source is regridded, not derived per-point, so its write does
+    not need serializing -- the checkbox stays hidden the same way esper_method does.
+    """
+    w = editor._make_row(cat, {"source": {"name": "UNIFIED"}})
+    assert _display(w["serialize_dask"]) == "none"
+    assert _display(w["esper_method"]) == "none"  # same gate
+
+
+def test_serialize_dask_not_offered_on_surface_rows(editor):
+    """Surface bgc is not a BgcSourceItem -- its schema has no `serialize_dask`, and
+    `_Section` is extra="forbid", so emitting one there would fail validation.
+    """
+    w = editor._make_row("surface", {"type": "bgc", "source": {"name": "UNIFIED"}})
+    assert "serialize_dask" not in w
+    assert "serialize_dask" not in editor._gather_item("surface", w)
+
+
 def test_surface_row_never_shows_layout(editor):
     """Surface sources never include GLORYS, so the layout box is always hidden."""
     w = editor._make_row("surface", {"type": "physics", "source": {"name": "ERA5"}})
