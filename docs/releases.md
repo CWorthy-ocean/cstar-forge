@@ -1,5 +1,20 @@
 # Release notes
 
+## Unreleased
+
+### Breaking Changes
+
+### New Features
+
+### Bug Fixes
+
+### Improvements
+
+### Miscellaneous
+
+* The tagged GitHub release is now created automatically when the "Finalize release notes for `<tag>`" PR is merged, using the release notes just finalized in the docs as the release body — instead of the manual tag-and-publish step with GitHub's weaker auto-generated summary. ([#139](https://github.com/CWorthy-ocean/cstar-forge/pull/139))
+* Merging the release-notes finalization PR no longer causes the release-notes updater to re-open a spurious "Unreleased" section. ([#139](https://github.com/CWorthy-ocean/cstar-forge/pull/139))
+
 ## 0.5.0
 
 ### Breaking Changes
