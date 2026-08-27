@@ -17,9 +17,14 @@
 
 ### Bug Fixes
 
+* Nested (child) domains with MARBL now get BGC variables in `nesting.nc`: `include_bgc` was never being enabled on `make_nesting_info` because the `cppdefs.marbl` flag was invisible to input generation. An explicit `include_bgc` in `metadata_child` still takes precedence. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
+* The run-time `bgc` namelist section (`bgc.interp_frc`) is now populated during surface-forcing generation for MARBL domains; previously it was silently skipped for the same reason. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
+
 ### Improvements
 
 * The wizard settings editor now skips sections that are version-gated behind a newer namelist schema than the active ucla-roms ref (e.g. `pio_settings` with a pre-0.6.0 `roms_ref` override), instead of rendering a widget whose edits would be silently discarded downstream; never-modeled sections like `cppdefs` still render as before ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
+* Input generation (`RomsMarblInputData`) is seeded with a deep copy of the executor's resolved compile-time settings (`settings_compile_time_base`) instead of starting empty, so generation steps can read resolved `cppdefs` flags. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
+* Hardened an unguarded `cppdefs` write in the surface-forcing step (`sal_restore`) that could `KeyError` if the step ran without the grid step. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
 
 ### Miscellaneous
 
