@@ -577,6 +577,31 @@ def test_auto_tiling_chk_toggles_dependent_widget_state():
     assert wiz.use_pio_chk.value is True  # left as-is, not reset
 
 
+def test_auto_tiling_toggle_seeds_n_cores_from_n_procs():
+    """Checking the auto_tiling box seeds n_cores = npx * npy from the grid
+    already entered (or loaded), so the user doesn't multiply by hand; the
+    seed only happens on the off->on toggle, so a later manual n_cores edit
+    survives unrelated _sync_auto_tiling() calls.
+    """
+    wiz = ForgeBlueprintWizard()
+    wiz.npx.value = 4
+    wiz.npy.value = 6
+
+    wiz.auto_tiling_chk.value = True
+    assert wiz.n_cores.value == 24
+
+    # A manual n_cores edit is not clobbered by direct sync calls.
+    wiz.n_cores.value = 30
+    wiz._sync_auto_tiling()
+    assert wiz.n_cores.value == 30
+
+    # Re-toggling recomputes from the (re-enabled, possibly edited) grid.
+    wiz.auto_tiling_chk.value = False
+    wiz.npx.value = 2
+    wiz.auto_tiling_chk.value = True
+    assert wiz.n_cores.value == 12
+
+
 def test_auto_tiling_gathers_n_cores_partitioning():
     """_gather() (and so the resolved config) swaps to auto_tiling/n_cores
     partitioning when checked, and back to n_procs_x/y when unchecked.

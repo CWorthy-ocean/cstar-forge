@@ -3191,6 +3191,13 @@ class ForgeBlueprintWizard:
         # boxes become meaningless (disabled) and n_cores takes over; it also
         # requires PIO, so use_pio is forced on and locked while it's active.
         on = self.auto_tiling_chk.value
+        if on and _change is not None and _change.get("old") is False:
+            # Real off->on toggle (user click, or a load path flipping the
+            # checkbox): seed n_cores from the explicit grid already entered,
+            # so the user doesn't multiply by hand. Load paths restore a saved
+            # n_cores AFTER setting the checkbox, so this seed never clobbers
+            # it; direct _sync_auto_tiling() calls (_change=None) never seed.
+            self.n_cores.value = int(self.npx.value) * int(self.npy.value)
         self.npx.disabled = on
         self.npy.disabled = on
         self.n_cores.layout.display = "" if on else "none"

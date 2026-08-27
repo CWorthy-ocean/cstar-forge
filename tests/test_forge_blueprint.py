@@ -135,12 +135,41 @@ def test_partitioning_rejects_auto_tiling_combined_with_n_procs():
         Partitioning(auto_tiling=True, n_cores=8, n_procs_x=4, n_procs_y=2)
 
 
-def test_build_forge_blueprint_rejects_auto_tiling_combined_with_n_procs():
-    with pytest.raises(ValueError, match="must not be set when"):
+def test_build_forge_blueprint_auto_tiling_derives_n_cores_from_n_procs():
+    """Switching auto_tiling on over an existing explicit grid (e.g. a loaded
+    blueprint's n_procs_x/n_procs_y) derives n_cores from the product; the
+    resolved Partitioning still carries only n_cores.
+    """
+    cfg = _build(
+        partitioning={"auto_tiling": True, "n_procs_x": 2, "n_procs_y": 2},
+        use_pio=True,
+    )
+    assert cfg.domain.partitioning.n_cores == 4
+    assert cfg.domain.partitioning.n_procs_x is None
+    assert cfg.domain.partitioning.n_procs_y is None
+    assert cfg.n_procs == 4
+
+
+def test_build_forge_blueprint_auto_tiling_accepts_consistent_n_procs_and_n_cores():
+    cfg = _build(
+        partitioning={
+            "auto_tiling": True,
+            "n_cores": 4,
+            "n_procs_x": 2,
+            "n_procs_y": 2,
+        },
+        use_pio=True,
+    )
+    assert cfg.domain.partitioning.n_cores == 4
+    assert cfg.domain.partitioning.n_procs_x is None
+
+
+def test_build_forge_blueprint_auto_tiling_rejects_inconsistent_n_cores():
+    with pytest.raises(ValueError, match="inconsistent with"):
         _build(
             partitioning={
                 "auto_tiling": True,
-                "n_cores": 4,
+                "n_cores": 8,
                 "n_procs_x": 2,
                 "n_procs_y": 2,
             },
@@ -188,8 +217,11 @@ def test_build_forge_blueprint_auto_tiling_requires_use_pio():
 
 
 def test_build_forge_blueprint_auto_tiling_requires_n_cores():
+    """Only raises when there is no explicit grid to derive n_cores from."""
     with pytest.raises(ValueError, match="auto_tiling requires partitioning.n_cores"):
         _build(partitioning={"auto_tiling": True}, use_pio=True)
+    with pytest.raises(ValueError, match="auto_tiling requires partitioning.n_cores"):
+        _build(partitioning={"auto_tiling": True, "n_procs_x": 2}, use_pio=True)
 
 
 def test_build_forge_blueprint_auto_tiling_partitioning_round_trips():
