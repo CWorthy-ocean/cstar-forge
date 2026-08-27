@@ -11,10 +11,15 @@
 
 * **Auto-tiling**: set `partitioning.auto_tiling: true` with `n_cores` (total MPI ranks) and ROMS chooses the tiling at runtime from the land mask, skipping fully-masked tiles. Requires PIO. ([#140](https://github.com/CWorthy-ocean/cstar-forge/pull/140))
 * The wizard has an "auto tiling" checkbox: it disables the `n_procs_x`/`n_procs_y` boxes, shows an `n_cores` field pre-filled with `n_procs_x × n_procs_y` from the grid already entered (still editable), and forces PIO on; the choice survives save/load. ([#140](https://github.com/CWorthy-ocean/cstar-forge/pull/140))
+* `namelist.nml` now includes a `&PIO_SETTINGS` group (`pio_stride`, default 1) when the model pins ucla-roms 0.6.0 or later ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
+* New `roms-marbl-0.6-default` ModelSpec pinning ucla-roms 0.6.0, carrying the `pio_settings` block; the `pio-dev` spec (ucla-roms `main`) also emits the group via the existing latest-schema fallback ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
+* `pio_settings` is editable in the wizard's advanced model-settings pane (ModelSpec-owned — edits save via "Save Model spec", not the output blueprint) ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
 
 ### Bug Fixes
 
 ### Improvements
+
+* The wizard settings editor now skips sections that are version-gated behind a newer namelist schema than the active ucla-roms ref (e.g. `pio_settings` with a pre-0.6.0 `roms_ref` override), instead of rendering a widget whose edits would be silently discarded downstream; never-modeled sections like `cppdefs` still render as before ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
 
 ### Miscellaneous
 
@@ -22,6 +27,8 @@
 * Merging the release-notes finalization PR no longer causes the release-notes updater to re-open a spurious "Unreleased" section. ([#139](https://github.com/CWorthy-ocean/cstar-forge/pull/139))
 * Shipped example blueprints re-stamped with fresh `content_hash`es; golden fixtures updated for the new `auto_tiling` default. ([#140](https://github.com/CWorthy-ocean/cstar-forge/pull/140))
 * Blueprint reference docs updated for schema 3.0.0. ([#140](https://github.com/CWorthy-ocean/cstar-forge/pull/140))
+* New golden fixtures for the 0.6.0 tier (`golden_namelist_test-tiny-roms060.nml`, `golden_model_settings_test-tiny-roms060.json`) with the same `UPDATE_GOLDEN=1` regeneration flow as the 0.5.0 siblings ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
+* `docs/architecture-details.md` updated for the new schema tier; release-notes entry added to `docs/releases.md` ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
 
 ## 0.5.0
 
