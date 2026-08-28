@@ -19,6 +19,7 @@
 
 * Nested (child) domains with MARBL now get BGC variables in `nesting.nc`: `include_bgc` was never being enabled on `make_nesting_info` because the `cppdefs.marbl` flag was invisible to input generation. An explicit `include_bgc` in `metadata_child` still takes precedence. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
 * The run-time `bgc` namelist section (`bgc.interp_frc`) is now populated during surface-forcing generation for MARBL domains; previously it was silently skipped for the same reason. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
+* Input generation no longer deadlocks intermittently during NetCDF saves (progress bar frozen at a fixed percentage until the run was killed) — caused by an upstream xarray lock leak, now patched at runtime until fixed in xarray. ([#144](https://github.com/CWorthy-ocean/cstar-forge/pull/144))
 
 ### Improvements
 
