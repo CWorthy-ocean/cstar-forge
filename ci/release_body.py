@@ -51,18 +51,20 @@ def iter_sections(lines: list[str]) -> list[tuple[str, int, int]]:
     or end of file. A ``## `` inside a fenced code block (```` ``` ````) is a
     code sample, not a heading, and is ignored.
     """
-    heads: list[int] = []
+    heads: list[tuple[int, str]] = []
     in_fence = False
     for i, ln in enumerate(lines):
         if ln.lstrip().startswith("```"):
             in_fence = not in_fence
             continue
-        if not in_fence and _H2_RE.match(ln):
-            heads.append(i)
+        if in_fence:
+            continue
+        m = _H2_RE.match(ln)
+        if m:
+            heads.append((i, m.group(1).strip()))
     out: list[tuple[str, int, int]] = []
-    for n, i in enumerate(heads):
-        end = heads[n + 1] if n + 1 < len(heads) else len(lines)
-        title = _H2_RE.match(lines[i]).group(1).strip()
+    for n, (i, title) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
         out.append((title, i, end))
     return out
 

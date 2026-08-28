@@ -628,8 +628,23 @@ class ForgeExecutor(BaseModel):
 
     @property
     def n_procs(self) -> int:
-        """Return the number of processors."""
-        return self.partitioning.n_procs_x * self.partitioning.n_procs_y
+        """Return the number of processors.
+
+        Mirrors ``RomsMarblBlueprint.cpus_needed``: ``n_cores`` (set under
+        ``auto_tiling``) is authoritative when present, else the explicit
+        ``n_procs_x * n_procs_y`` product.
+        """
+        if self.partitioning.n_cores is not None:
+            return self.partitioning.n_cores
+        if (
+            self.partitioning.n_procs_x is not None
+            and self.partitioning.n_procs_y is not None
+        ):
+            return self.partitioning.n_procs_x * self.partitioning.n_procs_y
+        raise ValueError(
+            "Cannot determine n_procs: partitioning has neither n_cores nor "
+            "both n_procs_x/n_procs_y set."
+        )
 
     @property
     def datestr(self) -> str:
@@ -654,15 +669,28 @@ class ForgeExecutor(BaseModel):
     def roms_blueprint_working_dir(self) -> Path:
         """Working dir for the emitted ROMS blueprint.
 
-        Mirrors ``run_output_dir`` but under a ``cstar-roms-run`` root instead of
-        the forge run's ``cstar-forge-run`` root, so the two stages don't share a dir.
+        Mirrors ``run_output_dir`` but under a ``_roms_bp_runs`` root instead of
+        the forge run's ``_forge_bp_runs`` root, so the two stages don't share a dir.
         """
-        forge_seg = Path(DEFAULT_WORKING_ROOT).name  # "cstar-forge-run"
+        forge_parent = Path(DEFAULT_WORKING_ROOT).parent.name  # "cstar"
+        forge_seg = Path(DEFAULT_WORKING_ROOT).name  # "_forge_bp_runs"
         blueprint_seg = ROMS_RUN_SEGMENT
         run_dir = self.run_output_dir
-        if forge_seg in run_dir.parts:
+        parts = run_dir.parts
+        # Anchor on the full two-segment default root ("cstar/_forge_bp_runs"),
+        # matching config.relocate_working_dir -- a lone "_forge_bp_runs" segment
+        # elsewhere in a custom path is not the default root.
+        for i in range(1, len(parts)):
+            if parts[i] == forge_seg and parts[i - 1] == forge_parent:
+                return Path(*parts[:i], blueprint_seg, *parts[i + 1 :])
+        # Legacy sibling swap for explicit old-form paths (pre-rename default) on
+        # non-HPC hosts, where relocate_working_dir leaves them untouched.
+        if "cstar-forge-run" in run_dir.parts:
             return Path(
-                *(blueprint_seg if p == forge_seg else p for p in run_dir.parts)
+                *(
+                    "cstar-roms-run" if p == "cstar-forge-run" else p
+                    for p in run_dir.parts
+                )
             )
         return run_dir / blueprint_seg
 
@@ -704,13 +732,20 @@ class ForgeExecutor(BaseModel):
             (self._settings_compile_time.get("cppdefs") or {}).get("use_pio", False)
         )
 
+    @property
+    def _has_bgc(self) -> bool:
+        """Whether the model build includes MARBL BGC, read from compile-time cppdefs."""
+        return bool(
+            (self._settings_compile_time.get("cppdefs") or {}).get("marbl", False)
+        )
+
     def _validated_roms_marbl_blueprint(self) -> cstar_models.RomsMarblBlueprint:
         """Re-validate the assembled blueprint against the installed C-Star models.
 
         The blueprint is assembled with ``model_construct`` because the
         pre-generation stages are deliberately partial (placeholder resources;
-        ``model_params``/``runtime_params`` live in the sidecar until
-        ``configure_build``), so nothing checks it against the cstar models --
+        ``runtime_params`` lives in the sidecar until ``configure_build``), so
+        nothing checks it against the cstar models --
         which are ``extra="forbid"`` -- until C-Star loads the persisted file.
         Round-tripping the exact serialized form (the same ``model_dump`` that
         ``persist`` writes, minus the ``$schema`` key that ``deserialize``
@@ -1148,7 +1183,6 @@ class ForgeExecutor(BaseModel):
             valid_start_date=self.start_date,
             valid_end_date=self.end_date,
             partitioning=self.partitioning,
-            model_params=None,  # stored in sidecar files
             runtime_params=None,  # stored in sidecar files
             code=self._cstar_code_repository(),
             grid=empty_dataset,
@@ -1476,43 +1510,38 @@ class ForgeExecutor(BaseModel):
         if self.src_data is None:
             self.ensure_source_data(include_streamable=False)
 
-        roms_marbl_blueprint_elements, settings_compile_time, settings_run_time = (
-            input_data.RomsMarblInputData(
-                domain_name=self.name,
-                start_date=self.start_date,
-                end_date=self.end_date,
-                input_data_dir=self.input_data_dir,
-                grid=self.grid,
-                grid_parent=self.grid_parent,
-                grid_child=self.grid_child,
-                metadata_child=self.metadata_child,
-                boundaries=self.open_boundaries,
-                source_data=self.src_data,
-                forcing_override=self.forcing_override,
-                model_reference_date=self.model_reference_date,
-                roms_marbl_blueprint_dir=self.roms_marbl_blueprint_dir,
-                partitioning=self.partitioning,
-                cdr_forcing=self.cdr_forcing,
-                cdr_forcing_file=self.cdr_forcing_file,
-                use_dask=use_dask,
-                dask_num_workers=dask_num_workers,
-                subchunk=subchunk,
-                use_pio=self._use_pio,
-                verbose=self.verbose,
-            ).generate_all(clobber=clobber, test=test, only=only)
-        )
+        roms_marbl_blueprint_elements = input_data.RomsMarblInputData(
+            domain_name=self.name,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            input_data_dir=self.input_data_dir,
+            grid=self.grid,
+            grid_parent=self.grid_parent,
+            grid_child=self.grid_child,
+            metadata_child=self.metadata_child,
+            settings_compile_time=self._settings_compile_time,
+            settings_run_time=self._settings_run_time,
+            has_bgc=self._has_bgc,
+            boundaries=self.open_boundaries,
+            source_data=self.src_data,
+            forcing_override=self.forcing_override,
+            model_reference_date=self.model_reference_date,
+            roms_marbl_blueprint_dir=self.roms_marbl_blueprint_dir,
+            partitioning=self.partitioning,
+            cdr_forcing=self.cdr_forcing,
+            cdr_forcing_file=self.cdr_forcing_file,
+            use_dask=use_dask,
+            dask_num_workers=dask_num_workers,
+            subchunk=subchunk,
+            use_pio=self._use_pio,
+            verbose=self.verbose,
+        ).generate_all(clobber=clobber, test=test, only=only)
 
         if roms_marbl_blueprint_elements is None:
             raise RuntimeError(
                 "Blueprint mismatch detected, but input files exist. "
                 "Set clobber=True to overwrite existing input files."
             )
-
-        # Apply settings from input data generation (deep merge to preserve existing
-        # settings). allow_new=True: the ForgeBlueprint base omits the sections that input
-        # generation fills (grid/initial/forcing/s_coord), so they arrive as new keys.
-        self._update_settings_compile_time(settings_compile_time, allow_new=True)
-        self._update_settings_run_time(settings_run_time, allow_new=True)
 
         if test:
             return
@@ -1546,7 +1575,6 @@ class ForgeExecutor(BaseModel):
         )
 
         # Settings are stored in a sidecar YAML, not in the blueprint itself.
-        roms_marbl_blueprint_dict["model_params"] = None
         roms_marbl_blueprint_dict["runtime_params"] = None
 
         self.roms_marbl_blueprint = cstar_models.RomsMarblBlueprint.model_construct(
@@ -1615,7 +1643,7 @@ class ForgeExecutor(BaseModel):
         )
 
     def _update_settings_compile_time(
-        self, settings_compile_time: dict[str, Any], allow_new: bool = False
+        self, settings_compile_time: dict[str, Any]
     ) -> None:
         """
         Update compile-time settings by recursively merging nested dictionaries.
@@ -1659,19 +1687,13 @@ class ForgeExecutor(BaseModel):
                         if not isinstance(value, (str, int, float, bool, type(None)))
                         else value
                     )
-            elif allow_new:
-                # Generation-overlay path: the ForgeBlueprint base omits sections that are
-                # filled at processing time, so accept new top-level keys.
-                self._settings_compile_time[key] = copy.deepcopy(value)
             else:
                 raise ValueError(
                     f"Unknown compile-time setting key: '{key}'. "
                     f"Valid keys are: {sorted(self._settings_compile_time.keys())}"
                 )
 
-    def _update_settings_run_time(
-        self, settings_run_time: dict[str, Any], allow_new: bool = False
-    ) -> None:
+    def _update_settings_run_time(self, settings_run_time: dict[str, Any]) -> None:
         """
         Update run-time settings by recursively merging nested dictionaries.
 
@@ -1717,11 +1739,6 @@ class ForgeExecutor(BaseModel):
                         if not isinstance(value, (str, int, float, bool, type(None)))
                         else value
                     )
-            elif allow_new:
-                # Generation-overlay path: the ForgeBlueprint base omits sections that are
-                # filled at processing time (grid/initial/forcing/s_coord), so accept
-                # new top-level keys instead of raising.
-                self._settings_run_time[key] = copy.deepcopy(value)
             else:
                 # Unknown key - raise error
                 raise ValueError(
@@ -1774,7 +1791,7 @@ class ForgeExecutor(BaseModel):
            - Run-time: writes namelist.nml (write_roms_namelist) and copies
              static run-time files (e.g., marbl_in)
         5. Updates blueprint with rendered code locations and file lists
-        6. Sets blueprint model_params and runtime_params
+        6. Sets blueprint partitioning.use_pio and runtime_params
         7. Re-validates the final blueprint against the installed C-Star models
            (only when `generate_inputs()` has run -- the placeholder blueprint
            cannot validate), so an extra="forbid" mismatch fails at emit time
@@ -2001,11 +2018,14 @@ class ForgeExecutor(BaseModel):
                 cstar_models.ROMSCompositeCodeRepository.model_construct(**code_dict)
             )
 
-            roms_marbl_blueprint_dict["model_params"] = {
-                "time_step": self._settings_run_time["time_stepping"]["dt"],
-            }
-            if self._use_pio:
-                roms_marbl_blueprint_dict["model_params"]["use_pio"] = True
+            # model_params (and its time_step/use_pio fields) is gone in schema
+            # 3.0.0+: time_step now comes solely from the namelist's
+            # time_stepping.dt (already written above), and use_pio moves onto
+            # partitioning. model_dump() serialized partitioning as a plain
+            # dict here (mode="json"), so stamp use_pio directly on it -- this
+            # is the authoritative write for direct ForgeExecutor constructions
+            # whose supplied partitioning didn't already carry use_pio.
+            roms_marbl_blueprint_dict["partitioning"]["use_pio"] = self._use_pio
             # No output_dir here: it is a pre-2.0.0 field superseded by the
             # blueprint working_dir (set just below).
             roms_marbl_blueprint_dict["runtime_params"] = {

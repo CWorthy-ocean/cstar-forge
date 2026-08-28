@@ -4,7 +4,7 @@ description: Generated blueprint
 application: forge
 state: notset
 schema_version: 1.0.0
-working_dir: ~/cstar-forge-run/cson_roms-marbl_v0.1_wio-toy_10procs
+working_dir: ~/cstar/_forge_bp_runs/cson_roms-marbl_v0.1_wio-toy_10procs
 forge_blueprint_version: 5
 run:
   start_date: '2012-01-01T00:00:00'
@@ -550,5 +550,5 @@ provenance:
   forge_version: null
   roms_tools_version: null
   override_files_applied: []
-  content_hash: 953f6db241cb92433d436995003d311f035607fffd07e5e8addc82bb2d6cc25f
+  content_hash: b987773757d2928ec70061acc8527d6f8bd06ebb1bf56c87b47b19e187786b6c
   notes: null

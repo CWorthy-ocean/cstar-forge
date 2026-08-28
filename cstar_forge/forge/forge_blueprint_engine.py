@@ -94,8 +94,8 @@ PROCESSING_FILLED_SECTIONS = (
 # whatever the ModelSpec's disabled placeholder says (``river_frc``/``cdr_frc``/
 # ``cdr_output``) or at a merely *declared*, not actually-generated, value (``tides``'
 # ``ntides`` from a tidal item, if the item set one). Unlike ``PROCESSING_FILLED_SECTIONS``,
-# these sections DO exist in ``model_settings`` (so ``configure_build``'s ``allow_new=False``
-# path finds them and deep-merges into them) and carry some fields with real, reviewable
+# these sections DO exist in ``model_settings`` (so ``configure_build``'s strict merge
+# finds them and deep-merges into them) and carry some fields with real, reviewable
 # ModelSpec defaults (e.g. ``cdr_frc.relocate_to_wet_pts``) — so only the specific
 # generation-derived leaves are excluded from the overlay, not the whole section.
 #
@@ -216,7 +216,16 @@ def forge_blueprint_to_builder_kwargs(cfg: ForgeBlueprint) -> dict[str, Any]:
         ),
         topography_path=cfg.domain.topography_path,
         open_boundaries=cfg.domain.open_boundaries.model_dump(),
-        partitioning=cfg.domain.partitioning.model_dump(),
+        # PartitioningParameterSet.use_pio is validated against cppdefs at
+        # ForgeExecutor construction time (auto_tiling requires use_pio) --
+        # forge's own Partitioning model doesn't carry use_pio, so inject it
+        # here from the reviewed model_settings' cppdefs section.
+        partitioning={
+            **cfg.domain.partitioning.model_dump(),
+            "use_pio": bool(
+                (cfg.model_settings.get("cppdefs") or {}).get("use_pio", False)
+            ),
+        },
         start_time=cfg.run.start_date,
         end_time=cfg.run.end_date,
         cdr_forcing=cfg.forcing.cdr_forcing,

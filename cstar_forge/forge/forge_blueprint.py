@@ -351,11 +351,12 @@ DEFAULT_APPLICATION = "forge"
 # spec-default sentinel: ForgeBlueprint expands it to ``<root>/<name>`` on validation,
 # and host providers (Forge's ``config.resolve_host``; eventually C-Star) may rebase
 # default-form paths onto host scratch at run time.
-DEFAULT_WORKING_ROOT = "~/cstar-forge-run"
+DEFAULT_WORKING_ROOT = "~/cstar/_forge_bp_runs"
 
-# Sibling root segment (alongside DEFAULT_WORKING_ROOT's) for the emitted roms-marbl
-# blueprint's working_dir; see ForgeExecutor.roms_blueprint_working_dir in executor.py.
-ROMS_RUN_SEGMENT = "cstar-roms-run"
+# Sibling root segment under the shared ``cstar/`` root (alongside
+# DEFAULT_WORKING_ROOT's) for the emitted roms-marbl blueprint's working_dir; see
+# ForgeExecutor.roms_blueprint_working_dir in executor.py.
+ROMS_RUN_SEGMENT = "_roms_bp_runs"
 
 _NAME_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _NAME_RUN_RE = re.compile(r"[_.-]{2,}")
@@ -557,8 +558,43 @@ class OpenBoundaries(_Section):
 
 
 class Partitioning(_Section):
-    n_procs_x: int
-    n_procs_y: int
+    n_procs_x: int | None = None
+    n_procs_y: int | None = None
+    auto_tiling: bool = False
+    """Let ROMS pick NP_XI/NP_ETA at runtime from the land mask (ucla-roms 0.5.0's
+    MPI_MASKING cppdef), instead of the fixed n_procs_x/n_procs_y decomposition.
+    Requires PARALLEL_IO (use_pio)."""
+    n_cores: int | None = None
+    """Total number of cores to use when ``auto_tiling`` selects the tiling layout.
+    Forge policy (stricter than C-Star's): always required alongside
+    ``auto_tiling`` -- n_procs_x/n_procs_y are never combined with auto_tiling."""
+
+    @model_validator(mode="after")
+    def _validate_partitioning(self) -> Partitioning:
+        violations: list[str] = []
+
+        if not self.auto_tiling and (self.n_procs_x is None or self.n_procs_y is None):
+            violations.append(
+                "n_procs_x and n_procs_y are required unless auto_tiling is enabled"
+            )
+
+        if self.n_cores is not None and not self.auto_tiling:
+            violations.append("n_cores is only accepted with auto_tiling")
+
+        if self.auto_tiling and self.n_cores is None:
+            violations.append("auto_tiling requires n_cores")
+
+        if self.auto_tiling and (
+            self.n_procs_x is not None or self.n_procs_y is not None
+        ):
+            violations.append(
+                "n_procs_x/n_procs_y must not be set when auto_tiling is enabled"
+            )
+
+        if violations:
+            raise ValueError("; ".join(violations))
+
+        return self
 
 
 class Domain(_Section):
@@ -1078,7 +1114,15 @@ class ForgeBlueprint(Blueprint):
     # ---- derived naming (single source of truth: name + dates) ----
     @property
     def n_procs(self) -> int:
-        return self.domain.partitioning.n_procs_x * self.domain.partitioning.n_procs_y
+        partitioning = self.domain.partitioning
+        if partitioning.n_cores is not None:
+            return partitioning.n_cores
+        if partitioning.n_procs_x is not None and partitioning.n_procs_y is not None:
+            return partitioning.n_procs_x * partitioning.n_procs_y
+        raise ValueError(
+            "cannot determine n_procs: partitioning has neither n_cores nor both "
+            "n_procs_x/n_procs_y set"
+        )
 
     @property
     def cpus_needed(self) -> int:

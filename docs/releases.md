@@ -45,6 +45,7 @@
 * Shipped catalog blueprints and example YAML updated to the new default paths (`working_dir` is excluded from `content_hash`, so no restamping) ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
 * Docs updated to the new paths (getting-started, source-data guides, architecture details, roms-marbl blueprint reference) ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
 
+
 ## 0.5.0
 
 ### Breaking Changes
