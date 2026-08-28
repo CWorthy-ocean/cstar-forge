@@ -1,5 +1,21 @@
 # Release notes
 
+## Unreleased
+
+### Breaking Changes
+
+### New Features
+
+### Bug Fixes
+
+* Shipped model specs and example blueprints pinned their compile-/run-time templates to a forge commit predating auto-tiling support, so enabling `auto_tiling` staged a `cppdefs.opt` without `MPI_MASKING` and the run failed late in C-Star instead of in forge. All `templates_commit` pins now point at current `main`, and the example blueprints' `content_hash` values are restamped. ([#149](https://github.com/CWorthy-ocean/cstar-forge/pull/149))
+
+### Improvements
+
+* Template rendering now fails fast with a clear error when the settings contain a key the staged template never references (e.g. a new cppdefs flag against templates pinned to an older forge commit), pointing at the blueprint's templates commit pin instead of silently rendering without the setting. ([#149](https://github.com/CWorthy-ocean/cstar-forge/pull/149))
+
+### Miscellaneous
+
 ## 0.6.0
 
 ### Breaking Changes
