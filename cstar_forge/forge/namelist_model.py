@@ -339,6 +339,72 @@ def check_extract_divides_rst(
         )
 
 
+def cppdefs_for_precheck(
+    cppdefs: dict[str, Any] | None, upscale_output: Any
+) -> dict[str, Any]:
+    """Build the cppdef-activity mapping :func:`cstar.roms.precheck.check_output_streams_divide_rst`
+    expects, from forge's resolved ``cppdefs`` section plus ``upscale_output``.
+
+    Two of that function's guard names aren't literal ``cppdefs.*`` keys in
+    forge's settings, but are still real, derivable, compile-time-active flags
+    (see ``templates/compile-time/cppdefs.opt.j2``):
+
+    * ``marbl_diags`` -- the template ``#define``s ``MARBL_DIAGS`` exactly
+      when it ``#define``s ``MARBL`` (forge has no separate MARBL_DIAGS
+      toggle), so this mirrors ``cppdefs["marbl"]``.
+    * ``upscaling`` -- the template ``#define``s ``UPSCALING`` exactly when
+      ``upscale_output.do_upscale`` is true; there is no ``cppdefs.upscaling``
+      key at all, so it's read off the run-time section instead.
+
+    ``diagnostics`` and ``biology_bec2`` need no such derivation: forge's
+    template hardcodes ``#undef DIAGNOSTICS``/``#undef BIOLOGY_BEC2`` (no BEC2
+    or ROMS term-budget diagnostics support yet), so their absence from
+    ``cppdefs`` already correctly reads as "inactive" to the checker.
+
+    Both derived keys are always OVERWRITTEN (not just filled in when absent):
+    ``cppdefs`` is an unvalidated dict, so a hand-edited/legacy blueprint could
+    carry a stale ``"upscaling"``/``"marbl_diags"`` key that must never mask
+    the real, template-derived value.
+    """
+
+    def _get(section: Any, key: str) -> Any:
+        if section is None:
+            return None
+        return (
+            section.get(key)
+            if isinstance(section, dict)
+            else getattr(section, key, None)
+        )
+
+    result = dict(cppdefs or {})
+    result["marbl_diags"] = bool(result.get("marbl", False))
+    result["upscaling"] = bool(_get(upscale_output, "do_upscale"))
+    return result
+
+
+try:  # cstar >= the release that ships cstar.roms.precheck
+    from cstar.roms.precheck import (
+        check_output_streams_divide_rst as _check_output_streams_divide_rst,
+    )
+except ImportError:  # older cstar without the module -- degrade gracefully
+    _check_output_streams_divide_rst = None
+
+
+def check_output_streams_divide_rst(settings: Any, cppdefs: Any = None) -> None:
+    """Guarded shim around ``cstar.roms.precheck.check_output_streams_divide_rst``.
+
+    The general ucla-roms output-stream / restart-rollover precheck lives in
+    C-Star. Forge installed against a ``cstar`` release predating that module
+    (no ``cstar.roms.precheck``) silently skips this authoring-time check rather
+    than failing to import -- ROMS still enforces the same rule at run start via
+    ``precheck.F90``. Once forge's ``cstar-ocean`` floor is raised to the release
+    that ships it, this shim always delegates and the fallback is dead code.
+    """
+    if _check_output_streams_divide_rst is None:
+        return
+    _check_output_streams_divide_rst(settings, cppdefs)
+
+
 class TsOutputCfg(_SettingsSection):
     wrt_temp: bool
     wrt_salt: bool

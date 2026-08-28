@@ -42,8 +42,12 @@ from cstar_forge.forge.forge_blueprint import (
 )
 from cstar_forge.forge.host import HostPaths
 from cstar_forge.forge.namelist_model import (
+    RunTimeSettings,
+    check_output_streams_divide_rst,
     check_rst_period_divisible,
+    cppdefs_for_precheck,
     ensure_cdr_output_marbl_diagnostics,
+    run_time_settings_for_ref,
 )
 from cstar_forge.forge.settings import render_roms_settings, write_roms_namelist
 from cstar_forge.forge.user_files import verify_user_file
@@ -1916,6 +1920,35 @@ class ForgeExecutor(BaseModel):
                     "diagnostics to marbl_bgc.marbl_diagnostics_to_write (%s).",
                     sorted(set(after) - set(before)),
                 )
+
+        # Output-stream / restart-rollover consistency net (ucla-roms >= 0.5.0's
+        # check_output_divides_rst, precheck.F90), mirroring the resolver's guard
+        # (build_forge_blueprint): stored blueprints reach configure_build without
+        # re-resolving, and the CDR-output net above and wizard accordion overrides
+        # can both still change do_cdr_output/cppdefs after the resolver ran, so
+        # this is the enforcement point of record for that path. Unlike the
+        # resolver, there's no separate check_extract_divides_rst call here to
+        # de-duplicate against, so `extract` is covered by this general check too.
+        effective_roms_ref = (
+            self.code_spec.roms.commit or self.code_spec.roms.branch
+            if self.code_spec is not None
+            else None
+        )
+        with warnings.catch_warnings():
+            # See the matching resolver guard: an internal version probe
+            # shouldn't repeat the non-semver-pin warning surfaced elsewhere.
+            warnings.simplefilter("ignore", UserWarning)
+            settings_cls = run_time_settings_for_ref(
+                str(effective_roms_ref) if effective_roms_ref is not None else None
+            )
+        if settings_cls is not RunTimeSettings:
+            check_output_streams_divide_rst(
+                self._settings_run_time,
+                cppdefs_for_precheck(
+                    self._settings_compile_time.get("cppdefs", {}),
+                    self._settings_run_time.get("upscale_output", {}),
+                ),
+            )
 
         # Derive n_tracers: prefer the value passed by the processing engine; otherwise
         # derive it from the resolved settings (T + S + BGC ntrc_bio + passive).

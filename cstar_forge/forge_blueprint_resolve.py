@@ -107,7 +107,9 @@ try:  # pragma: no cover - exercised both ways
     from cstar_forge.forge.namelist_model import (
         RunTimeSettings,
         check_extract_divides_rst,
+        check_output_streams_divide_rst,
         check_rst_period_divisible,
+        cppdefs_for_precheck,
         ensure_cdr_output_marbl_diagnostics,
         run_time_settings_for_ref,
     )
@@ -842,6 +844,19 @@ def build_forge_blueprint(
     if settings_cls is not RunTimeSettings:
         check_extract_divides_rst(
             settings.get("ocean_vars", {}), settings.get("extract_data", {})
+        )
+        # check_output_streams_divide_rst's general table (C-Star,
+        # cstar.roms.precheck) mirrors the *complete* do_precheck call list,
+        # which includes `extract` -- but check_extract_divides_rst above
+        # already covers that stream with a more actionable message (it names
+        # the child DomainSpec 'period' knob the author actually edits).
+        # Exclude `extract_data` from the general check's view of `settings`
+        # so `extract` isn't double-checked (and double-raised on) here.
+        check_output_streams_divide_rst(
+            {k: v for k, v in settings.items() if k != "extract_data"},
+            cppdefs_for_precheck(
+                settings.get("cppdefs", {}), settings.get("upscale_output", {})
+            ),
         )
 
     # ----- forcing (initial conditions + surface/boundary/tidal/river + CDR) --
