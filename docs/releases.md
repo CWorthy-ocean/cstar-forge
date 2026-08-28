@@ -28,6 +28,10 @@
 * Hardened an unguarded `cppdefs` write in the surface-forcing step (`sal_restore`) that could `KeyError` if the step ran without the grid step. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
 * Input generation now works directly on the executor's settings dicts (single source of truth) instead of accumulating private copies that were merged back afterward — the class of "generation can't see resolved settings" bugs behind #142 is structurally eliminated. ([#143](https://github.com/CWorthy-ocean/cstar-forge/pull/143))
 * BGC capability is threaded as an explicit `has_bgc` flag (mirroring `use_pio`) instead of being fished out of the `cppdefs` dict at each point of use. ([#143](https://github.com/CWorthy-ocean/cstar-forge/pull/143))
+* The output from forge blueprints now defaults to `<root-path>/cstar/_forge_bp_runs/<run-name>` (instead of `<root-path>/cstar-forge-run/<run-name>`) ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
+* The output from roms blueprints created by forge now defaults to `<root-path>/cstar/_roms_bp_runs/<run-name>` (instead of `<root-path>/cstar-roms-run/<run-name>`) ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
+* Both defaults keep the existing HPC scratch substitution (`$SCRATCH` on Perlmutter, `$SCRATCH` falling back to `$WORK/scratch` on Anvil) ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
+* The `roms-marbl-0.6-default` ModelSpec now pins ucla-roms `0.6.1` ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
 
 ### Miscellaneous
 
@@ -37,6 +41,8 @@
 * Blueprint reference docs updated for schema 3.0.0. ([#140](https://github.com/CWorthy-ocean/cstar-forge/pull/140))
 * New golden fixtures for the 0.6.0 tier (`golden_namelist_test-tiny-roms060.nml`, `golden_model_settings_test-tiny-roms060.json`) with the same `UPDATE_GOLDEN=1` regeneration flow as the 0.5.0 siblings ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
 * `docs/architecture-details.md` updated for the new schema tier; release-notes entry added to `docs/releases.md` ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
+* Shipped catalog blueprints and example YAML updated to the new default paths (`working_dir` is excluded from `content_hash`, so no restamping) ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
+* Docs updated to the new paths (getting-started, source-data guides, architecture details, roms-marbl blueprint reference) ([#145](https://github.com/CWorthy-ocean/cstar-forge/pull/145))
 
 ## 0.5.0
 
