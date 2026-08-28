@@ -6,6 +6,7 @@
 
 * Emitted `roms_marbl` blueprints now use schema **3.0.0**, so running them requires a C-Star that includes C-Star #643 (already on C-Star `main`): `model_params` is gone — the time step lives only in the namelist, and `use_pio` moved into `partitioning`. ([#140](https://github.com/CWorthy-ocean/cstar-forge/pull/140))
 * In forge blueprints, `partitioning.n_procs_x`/`n_procs_y` are required only when auto-tiling is off. With `auto_tiling: true`, `n_cores` is used instead — if an explicit grid is still present (e.g. from a loaded blueprint), `n_cores` is derived as `n_procs_x * n_procs_y`; an `n_cores` that contradicts the grid is rejected with a clear validation error. ([#140](https://github.com/CWorthy-ocean/cstar-forge/pull/140))
+* Requires C-Star `0.12.0` and ucla-roms >= `0.6.0` ([#146](https://github.com/CWorthy-ocean/cstar-forge/pull/146))
 
 ### New Features
 
