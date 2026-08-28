@@ -25,6 +25,8 @@
 * The wizard settings editor now skips sections that are version-gated behind a newer namelist schema than the active ucla-roms ref (e.g. `pio_settings` with a pre-0.6.0 `roms_ref` override), instead of rendering a widget whose edits would be silently discarded downstream; never-modeled sections like `cppdefs` still render as before ([#141](https://github.com/CWorthy-ocean/cstar-forge/pull/141))
 * Input generation (`RomsMarblInputData`) is seeded with a deep copy of the executor's resolved compile-time settings (`settings_compile_time_base`) instead of starting empty, so generation steps can read resolved `cppdefs` flags. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
 * Hardened an unguarded `cppdefs` write in the surface-forcing step (`sal_restore`) that could `KeyError` if the step ran without the grid step. ([#142](https://github.com/CWorthy-ocean/cstar-forge/pull/142))
+* Input generation now works directly on the executor's settings dicts (single source of truth) instead of accumulating private copies that were merged back afterward — the class of "generation can't see resolved settings" bugs behind #142 is structurally eliminated. ([#143](https://github.com/CWorthy-ocean/cstar-forge/pull/143))
+* BGC capability is threaded as an explicit `has_bgc` flag (mirroring `use_pio`) instead of being fished out of the `cppdefs` dict at each point of use. ([#143](https://github.com/CWorthy-ocean/cstar-forge/pull/143))
 
 ### Miscellaneous
 
