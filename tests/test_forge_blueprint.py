@@ -19,6 +19,7 @@ import pytest
 import yaml
 
 import cstar_forge
+import cstar_forge.forge.namelist_model as _nm
 from cstar_forge.domain_catalog import default_catalog as _CATALOG
 from cstar_forge.forge.forge_blueprint import ForgeBlueprint
 from cstar_forge.forge_blueprint_resolve import build_forge_blueprint
@@ -1993,6 +1994,10 @@ def _standard_output_settings_with_bad_frc():
     return settings
 
 
+@pytest.mark.skipif(
+    _nm._check_output_streams_divide_rst is None,
+    reason="cstar.roms.precheck not available in this cstar release; check is guarded off",
+)
 def test_resolver_rejects_non_extract_stream_not_dividing_rst_for_roms050():
     """The general C-Star `check_output_streams_divide_rst` check (which covers
     every ucla-roms >= 0.5.0 precheck stream, not just `extract`) also fires at

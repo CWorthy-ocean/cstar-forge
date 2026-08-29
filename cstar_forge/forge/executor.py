@@ -43,6 +43,7 @@ from cstar_forge.forge.forge_blueprint import (
 from cstar_forge.forge.host import HostPaths
 from cstar_forge.forge.namelist_model import (
     RunTimeSettings,
+    build_namelist,
     check_output_streams_divide_rst,
     check_rst_period_divisible,
     cppdefs_for_precheck,
@@ -1921,6 +1922,23 @@ class ForgeExecutor(BaseModel):
                     sorted(set(after) - set(before)),
                 )
 
+        # Derive n_tracers up front: prefer the value passed by the processing
+        # engine; otherwise derive it from the resolved settings (T + S + BGC
+        # ntrc_bio + passive). Needed below both to build the namelist for the
+        # output-stream precheck and later to render cppdefs.opt/namelist.nml.
+        if "n_tracers" in kwargs:
+            n_tracers = int(kwargs["n_tracers"])
+        elif self.resolved_settings is not None:
+            param = self.resolved_settings.get("param", {}) or {}
+            n_tracers = (
+                2 + int(param.get("ntrc_bio", 0)) + int(param.get("nt_passive", 0))
+            )
+        else:
+            raise ValueError(
+                "n_tracers could not be determined: neither passed as a kwarg nor "
+                "derivable from resolved_settings."
+            )
+
         # Output-stream / restart-rollover consistency net (ucla-roms >= 0.5.0's
         # check_output_divides_rst, precheck.F90), mirroring the resolver's guard
         # (build_forge_blueprint): stored blueprints reach configure_build without
@@ -1929,6 +1947,16 @@ class ForgeExecutor(BaseModel):
         # this is the enforcement point of record for that path. Unlike the
         # resolver, there's no separate check_extract_divides_rst call here to
         # de-duplicate against, so `extract` is covered by this general check too.
+        #
+        # The checker is keyed on C-Star's canonical namelist vocabulary
+        # (RomsNamelistBase group field names / real Fortran keys), not forge's
+        # settings-dict vocabulary -- build the same RomsNamelistBase subclass
+        # `write_roms_namelist` below builds and feed its `model_dump()`.
+        # (`write_roms_namelist` re-validates/rebuilds this from
+        # `_settings_run_time` again when it writes namelist.nml; that
+        # duplication is intentional and cheap -- this check must run before
+        # any build side effects (the mkdir/render calls just below), so it
+        # can't reuse an object built later in this method.)
         effective_roms_ref = (
             self.code_spec.roms.commit or self.code_spec.roms.branch
             if self.code_spec is not None
@@ -1942,27 +1970,14 @@ class ForgeExecutor(BaseModel):
                 str(effective_roms_ref) if effective_roms_ref is not None else None
             )
         if settings_cls is not RunTimeSettings:
+            rt = settings_cls.model_validate(self._settings_run_time)
+            nml = build_namelist(rt, n_tracers)
             check_output_streams_divide_rst(
-                self._settings_run_time,
+                nml.model_dump(),
                 cppdefs_for_precheck(
                     self._settings_compile_time.get("cppdefs", {}),
                     self._settings_run_time.get("upscale_output", {}),
                 ),
-            )
-
-        # Derive n_tracers: prefer the value passed by the processing engine; otherwise
-        # derive it from the resolved settings (T + S + BGC ntrc_bio + passive).
-        if "n_tracers" in kwargs:
-            n_tracers = int(kwargs["n_tracers"])
-        elif self.resolved_settings is not None:
-            param = self.resolved_settings.get("param", {}) or {}
-            n_tracers = (
-                2 + int(param.get("ntrc_bio", 0)) + int(param.get("nt_passive", 0))
-            )
-        else:
-            raise ValueError(
-                "n_tracers could not be determined: neither passed as a kwarg nor "
-                "derivable from resolved_settings."
             )
 
         # Ensure build output directories exist before writing files.
