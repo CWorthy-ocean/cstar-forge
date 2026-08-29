@@ -6,13 +6,20 @@
 
 ### New Features
 
+* Runs now fail fast at authoring and build time (ucla-roms >= 0.5.0) when any enabled output stream's file-rollover frequency (`nrpf * output_period`) does not evenly divide the restart period, instead of aborting mid-run — covering every output stream ROMS checks (his, avg, frc, random, zslice, surface-flux, particles, sponge, diagnostics, CDR, upscaling, and the BGC streams), not just nesting extraction. Pre-0.5.0 configurations are unaffected. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
+* Forge run logs now record the versions of cstar-forge, cstar-ocean, and roms-tools, plus the pinned ucla-roms/MARBL git refs, in the startup banner of each run's log file. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
+* In the wizard, changing the export name now updates the "Save to" filename to match, while preserving a directory or filename the user chose deliberately. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
+
 ### Bug Fixes
 
 * Shipped model specs and example blueprints pinned their compile-/run-time templates to a forge commit predating auto-tiling support, so enabling `auto_tiling` staged a `cppdefs.opt` without `MPI_MASKING` and the run failed late in C-Star instead of in forge. All `templates_commit` pins now point at current `main`, and the example blueprints' `content_hash` values are restamped. ([#149](https://github.com/CWorthy-ocean/cstar-forge/pull/149))
+* Wizard: a blueprint-load error message no longer lingers after the underlying problem is resolved by other means — it clears once the configuration resolves successfully, while a successful-load message (including the "N invalid settings value(s) in the file" warning) is preserved. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
+* Wizard Review panel: an invalid configuration no longer shows a red "Invalid" message and a stale green "Valid" message at the same time; only the applicable status is shown. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 
 ### Improvements
 
 * Template rendering now fails fast with a clear error when the settings contain a key the staged template never references (e.g. a new cppdefs flag against templates pinned to an older forge commit), pointing at the blueprint's templates commit pin instead of silently rendering without the setting. ([#149](https://github.com/CWorthy-ocean/cstar-forge/pull/149))
+* The output-stream/restart check degrades gracefully when installed against a cstar release without `cstar.roms.precheck`: the authoring-time check is skipped (ROMS still enforces the rule at run start) instead of forge failing to import. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 
 ### Miscellaneous
 
