@@ -561,6 +561,12 @@ def _prepare_unified_bgc_dataset(self: SourceData) -> Path:
     dataset_dir.mkdir(parents=True, exist_ok=True)
     path = dataset_dir / UNIFIED_BGC_FILENAME
     needs_download = self.clobber or (not path.exists())
+    _override = dataset_dir / "BGCdataset_v2_1_SAM.nc"
+    if _override.exists():
+        print(f"✔️  Using existing BGC dataset: {_override}")
+        self.bgc_forcing_path = _override
+        self.paths["UNIFIED_BGC"] = _override
+        return _override
 
     stale = dataset_dir / "BGCdataset.nc"
     if stale.exists():
