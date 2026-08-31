@@ -2792,9 +2792,13 @@ class ForgeBlueprintWizard:
         # which must call it explicitly since suspended observers are no-ops).
         self._cdr_mode_active: str | None = None
 
-        def _cdr_field(value, desc, unit, *, width="120px"):
+        def _cdr_field(value, desc, unit, *, width="300px"):
             """A FloatText plus an adjacent units label -- ipywidgets' own
             ``description`` has no room for a units suffix on top of a label.
+
+            ``width`` is the WHOLE widget (label + input): the 170px
+            description_width is carved out of it, so it must comfortably
+            exceed 170px or the input box collapses to zero width.
             """
             w = W.FloatText(
                 value=value,
@@ -2811,7 +2815,7 @@ class ForgeBlueprintWizard:
             value="my_cdr",
             description="Name:",
             style={"description_width": "170px"},
-            layout=W.Layout(width="260px"),
+            layout=W.Layout(width="340px"),
         )
         self.cdr_simple_lat, _cdr_lat_row = _cdr_field(0.0, "Latitude:", "°N")
         self.cdr_simple_lon, _cdr_lon_row = _cdr_field(0.0, "Longitude:", "°E")
@@ -2823,7 +2827,7 @@ class ForgeBlueprintWizard:
             10.0, "Gaussian Scale (vertical):", "m"
         )
         self.cdr_simple_flux, _cdr_flux_row = _cdr_field(
-            2 * 10**6, "ALK tracer flux:", "meq/s", width="160px"
+            2 * 10**6, "ALK tracer flux:", "meq/s", width="320px"
         )
         self.cdr_simple_start = W.DatePicker(
             description="Start:", style={"description_width": "170px"}
@@ -2967,7 +2971,10 @@ class ForgeBlueprintWizard:
                 W.HBox([self.cdr_plot_btn, self.cdr_plot_status]),
                 W.HBox([self.cdr_plot_type_dd, self.cdr_plot_release_dd]),
                 self.cdr_plot_img,
-            ]
+            ],
+            # Sits to the RIGHT of the per-mode panels (same side-by-side HBox
+            # arrangement as the grid plot) -- the padding separates the columns.
+            layout=W.Layout(padding="0 0 0 20px"),
         )
         self.cdr_plot_box.layout.display = "none"  # only for simple/yaml/netcdf
 
@@ -4735,6 +4742,10 @@ class ForgeBlueprintWizard:
         self.cdr_plot_status.value = "<i>building…</i>"
         try:
             self._build_cdr_forcing_for_plot()
+            # Clear the building marker BEFORE the sync step: _sync may set a
+            # volume-type ⚠ that must survive, and the ✓ below only fills an
+            # empty status (leaving the marker in place would stick forever).
+            self.cdr_plot_status.value = ""
             self._sync_cdr_plot_release_options()
             self._render_cdr_plot()
             if not self.cdr_plot_status.value:
@@ -6329,11 +6340,21 @@ class ForgeBlueprintWizard:
                     "CDR forcing",
                     self.cdr_dd,
                     self.cdr_mode_dd,
-                    self.cdr_simple_box,
-                    self.cdr_yaml_box,
-                    self.cdr_netcdf_box,
-                    self.cdr_upscaled_box,
-                    self.cdr_plot_box,
+                    # Per-mode panels on the left, plot column on the right --
+                    # the same side-by-side arrangement as the Grid section.
+                    W.HBox(
+                        [
+                            W.VBox(
+                                [
+                                    self.cdr_simple_box,
+                                    self.cdr_yaml_box,
+                                    self.cdr_netcdf_box,
+                                    self.cdr_upscaled_box,
+                                ]
+                            ),
+                            self.cdr_plot_box,
+                        ]
+                    ),
                 ),
                 section(
                     "Advanced settings (model defaults — collapsed; click to edit)",

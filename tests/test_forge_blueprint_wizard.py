@@ -1016,6 +1016,9 @@ def test_cdr_plot_generate_builds_once_and_switches_without_rebuild(monkeypatch)
 
     assert len(build_calls) == 1
     assert wiz._cdr_plot_object is not None
+    # The "building…" marker must not stick around after a successful render.
+    assert "building" not in wiz.cdr_plot_status.value
+    assert "✓" in wiz.cdr_plot_status.value
     assert list(wiz.cdr_plot_release_dd.options) == ["r1", "r2"]
     assert _display(wiz.cdr_plot_release_dd) == ""  # >1 release -- shown
     assert wiz.cdr_plot_img.value
