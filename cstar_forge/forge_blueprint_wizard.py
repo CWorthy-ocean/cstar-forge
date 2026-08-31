@@ -3133,13 +3133,33 @@ class ForgeBlueprintWizard:
         self.workplan_btn = W.Button(description="Save workplan", icon="sitemap")
         self.workplan_status = W.HTML("")
 
+        # Keep the run log pinned to the LATEST lines instead of snapping to the
+        # top on every append. Two cooperating pieces (verified live in voila):
+        # 1. display=flex + column-reverse on this node anchors its scroll
+        #    position at the flex start, which column-reverse puts at the bottom.
+        # 2. The stylesheet below stops the inner .jp-OutputArea from being its
+        #    own scroll container: JupyterLab CSS bounds its height and gives it
+        #    overflow auto, so IT would do the scrolling (resetting to the top on
+        #    each append) while this node never overflows. flex: 0 0 auto lets it
+        #    grow to its content so the scrolling happens on this node instead.
+        #    (Layout can only style this node itself, hence a real stylesheet.)
+        # Safe because _run_async only ever calls append_stdout, and the frontend
+        # merges consecutive same-stream outputs into a single block -- a second
+        # output type (stderr, display_data) would render above it, reversed.
         self.run_output = W.Output(
             layout=W.Layout(
                 border="1px solid #ccc",
                 padding="6px",
                 max_height="380px",
                 overflow="auto",
+                display="flex",
+                flex_flow="column-reverse",
             )
+        )
+        self.run_output.add_class("forge-run-log")
+        self._run_log_style = W.HTML(
+            "<style>.forge-run-log > .jp-OutputArea "
+            "{ flex: 0 0 auto; height: auto; max-height: none; }</style>"
         )
 
         self.roms_ref.value = self._model_default_roms_ref()
@@ -6417,6 +6437,7 @@ class ForgeBlueprintWizard:
                     self.run_warning,
                     self.run_later_note,
                     W.HBox([self.run_btn, self.run_status]),
+                    self._run_log_style,
                     self.run_output,
                 ),
                 section(
