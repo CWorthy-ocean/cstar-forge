@@ -4,24 +4,40 @@
 
 ### Breaking Changes
 
+* ForgeBlueprint schema bumped to v7: CDR config moves from `forcing.cdr_forcing`/`forcing.cdr_forcing_file` to a new top-level `cdr` section with an explicit `mode`; older blueprints migrate automatically on load (mode inferred), with a one-time content-hash warning until re-saved. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* ForcingSpec catalog entries no longer embed CDR forcing (`register_forcing` dropped its `cdr_forcing` argument); legacy ForcingSpecs with an embedded block still load and are routed into the new CDR yaml mode, but saving CDR config now creates a CdrSpec entry instead. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+
 ### New Features
 
 * Runs now fail fast at authoring and build time (ucla-roms >= 0.5.0) when any enabled output stream's file-rollover frequency (`nrpf * output_period`) does not evenly divide the restart period, instead of aborting mid-run — covering every output stream ROMS checks (his, avg, frc, random, zslice, surface-flux, particles, sponge, diagnostics, CDR, upscaling, and the BGC streams), not just nesting extraction. Pre-0.5.0 configurations are unaffected. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 * Forge run logs now record the versions of cstar-forge, cstar-ocean, and roms-tools, plus the pinned ucla-roms/MARBL git refs, in the startup banner of each run's log file. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 * In the wizard, changing the export name now updates the "Save to" filename to match, while preserving a directory or filename the user chose deliberately. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
+* Wizard CDR forcing box now offers five exclusive modes via a dropdown, showing only the controls relevant to the selected mode. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* Simple perturbation mode: a tutorial-style single tracer-perturbation release (name, lat/lon defaulting to the grid center, depth, horizontal/vertical Gaussian scales, ALK tracer flux, all with unit labels) released as a flat pulse over a start/end window that defaults to the run window. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* CDR plot widget (simple/yaml/netcdf modes): on-demand generation of release-locations, distribution, and ALK tracer-flux plots, with a dropdown to switch plot types instantly (the built forcing and rendered plots are cached) and a release selector when a forcing has multiple releases. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* Upscaled CDR forcing mode: configures ROMS to read CDR forcing supplied at runtime from a child domain's upscaled signal — sets the `cdr_frc` namelist accordingly and emits a placeholder path in the roms_marbl blueprint for C-Star's orchestrator to replace. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* CdrSpec catalog entries: named CDR configurations can be saved to and reloaded from the catalog (`CdrSpec/<name>/Cdr.yaml`), with a picker dropdown and save row in the wizard and provenance tracked in `composition.cdr`. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* YAML and netCDF import modes link to the roms-tools CDR forcing documentation for building the files. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 
 ### Bug Fixes
 
 * Shipped model specs and example blueprints pinned their compile-/run-time templates to a forge commit predating auto-tiling support, so enabling `auto_tiling` staged a `cppdefs.opt` without `MPI_MASKING` and the run failed late in C-Star instead of in forge. All `templates_commit` pins now point at current `main`, and the example blueprints' `content_hash` values are restamped. ([#149](https://github.com/CWorthy-ocean/cstar-forge/pull/149))
 * Wizard: a blueprint-load error message no longer lingers after the underlying problem is resolved by other means — it clears once the configuration resolves successfully, while a successful-load message (including the "N invalid settings value(s) in the file" warning) is preserved. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 * Wizard Review panel: an invalid configuration no longer shows a red "Invalid" message and a stale green "Valid" message at the same time; only the applicable status is shown. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
+* Wizard kernels no longer pin ~2 CPU cores indefinitely after their first regrid: `FI_PROVIDER` now defaults to `tcp` in the Voilà launcher, `cstar forge wizard`, and kernels registered via `cstar forge register-kernel` (libfabric's default sockets provider busy-polls after ESMF initializes MPI in-kernel; MPI itself remains fully available for ROMS runs, and a pre-set `FI_PROVIDER` always wins). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* Fix in-wizard run log scrolling behavior. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 
 ### Improvements
 
 * Template rendering now fails fast with a clear error when the settings contain a key the staged template never references (e.g. a new cppdefs flag against templates pinned to an older forge commit), pointing at the blueprint's templates commit pin instead of silently rendering without the setting. ([#149](https://github.com/CWorthy-ocean/cstar-forge/pull/149))
 * The output-stream/restart check degrades gracefully when installed against a cstar release without `cstar.roms.precheck`: the authoring-time check is skipped (ROMS still enforces the rule at run start) instead of forge failing to import. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
+* The CDR forcing box moved below the Run window box (above Advanced settings). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* The CDR mode vocabulary and mode-inference rule are single-sourced (`CDR_MODES`/`infer_cdr_mode`) and shared by the blueprint migration, resolver, executor, and catalog, so they cannot drift. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 
 ### Miscellaneous
+
+* Shipped example blueprints and the docs example restamped to schema v7; `docs/architecture-details.md` updated (blueprint shape, CdrSpec catalog directory, migration notes). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* Test suite grew from 978 to 1044 tests (CdrSpec validators and migration, catalog round-trips, resolver mode matrix, upscaled configure-build/placeholder coverage, wizard mode switching and per-mode round-trips, plot caching). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 
 ## 0.6.0
 
