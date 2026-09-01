@@ -57,8 +57,8 @@ from cstar_forge.forge.forge_blueprint import (
     RiverBgcSource,
     RiverForcingItem,
     RiverSource,
-    SurfaceForcingItem,
     SpecRef,
+    SurfaceForcingItem,
     SurfaceType,
     TidalForcingItem,
     TidalSource,
@@ -1302,6 +1302,34 @@ _SOURCE_OPTS: dict[Any, list[str]] = {
     ("river", None): [e.value for e in RiverSource],
     ("ic_bgc", None): [e.value for e in BgcInitialConditionsSource],
 }
+# BGC sources that carry no time axis of their own: "constants" is inline values,
+# "ESPER" is derived from the physics T/S, and GLODAP ships a single static field.
+# None can be a "climatology" (a repeating annual cycle needs a year to repeat), and
+# roms-tools raises ValueError when one is handed climatology=True -- so the wizard
+# hides the checkbox for them and never writes the field (see `_apply_row_visibility`
+# and `_gather_item`).
+_STATIC_BGC_SOURCES = frozenset(
+    {
+        BgcBoundarySource.CONSTANTS.value,
+        BgcBoundarySource.ESPER.value,
+        BgcBoundarySource.GLODAP.value,
+    }
+)
+# Dropdown labels that differ from the stored source name. Blueprints always store
+# the plain enum value; only what the user sees changes.
+_SOURCE_LABELS: dict[str, str] = {
+    BgcBoundarySource.ESPER.value: "ESPER (experimental)",
+}
+
+
+def _source_dropdown_opts(names: list[str]) -> list[tuple[str, str]]:
+    """``(label, value)`` pairs for a source-name Dropdown, so a source can be shown
+    under a friendlier label while the widget's ``.value`` stays the blueprint's
+    source name. Compare/assign against the plain name list, not ``.options``.
+    """
+    return [(_SOURCE_LABELS.get(n, n), n) for n in names]
+
+
 # Sentinel dropdown value meaning "no initial conditions" -- valid only for a
 # child domain (state comes from the parent's nesting extraction instead).
 _IC_NONE = "(none)"
@@ -1879,16 +1907,23 @@ class _ForcingEditor:
         if "serialize_dask" in w:
             show(w["serialize_dask"], name == "ESPER")
         # constants/ESPER are derived/inline pseudo-sources, not a regridded dataset:
-        # "climatology" (repeating annual cycle) doesn't apply to either, and boundary's
-        # regridding knobs (prefill/regrid_method/extrap_method/bgc_interpolation_method)
-        # only make sense for a dataset-backed source being regridded onto the grid.
+        # boundary's regridding knobs (prefill/regrid_method/extrap_method/
+        # bgc_interpolation_method) only make sense for a dataset-backed source being
+        # regridded onto the grid.
         is_derived_bgc = name in ("constants", "ESPER")
         # A CUSTOM_FILE river row is owned by `_sync_river_custom_visibility`, which
         # hides these outright (the attach flow replaces the standard-source row).
         # Without this, the re-show below would undo that hide on every row rebuild.
         hide_dataset_knobs = is_derived_bgc or name == RiverSource.CUSTOM_FILE.value
+        # "climatology" has a wider gate than the regrid knobs: GLODAP is a static
+        # field that can't be one either, but -- unlike the derived sources -- it is
+        # still regridded, so it keeps the knobs below.
         if "climatology" in w:
-            show(w["climatology"], not hide_dataset_knobs)
+            show(
+                w["climatology"],
+                name not in _STATIC_BGC_SOURCES
+                and name != RiverSource.CUSTOM_FILE.value,
+            )
         for key in (
             "prefill",
             "regrid_method",
@@ -1918,7 +1953,7 @@ class _ForcingEditor:
         if _name_val not in _name_opts and _name_opts:
             _name_val = _name_opts[0]
         w["name"] = W.Dropdown(
-            options=_name_opts or [""],
+            options=_source_dropdown_opts(_name_opts or [""]),
             value=_name_val
             if _name_val in (_name_opts or [""])
             else (_name_opts or [""])[0],
@@ -1954,10 +1989,12 @@ class _ForcingEditor:
 
             # When type changes → update the source name dropdown to the valid options.
             def _on_type_change(change, name_dd=w["name"], c=cat, ws=w):
-                new_opts = _source_opts_for(c, change["new"])
-                name_dd.options = new_opts or [""]
-                if name_dd.value not in name_dd.options:
-                    name_dd.value = name_dd.options[0]
+                new_opts = _source_opts_for(c, change["new"]) or [""]
+                name_dd.options = _source_dropdown_opts(new_opts)
+                # `.options` now holds (label, value) pairs -- membership has to be
+                # tested against the bare names or it never matches.
+                if name_dd.value not in new_opts:
+                    name_dd.value = new_opts[0]
                 self._apply_row_visibility(ws)
                 self.on_change()
 
@@ -1966,8 +2003,10 @@ class _ForcingEditor:
         if cat in ("surface", "boundary_bgc"):
             w["climatology"] = W.Checkbox(
                 value=bool(src.get("climatology", False)),
-                description="clim",
+                description="climatology",
                 indent=False,
+                # Wider than the default so the longer label isn't clipped.
+                layout=W.Layout(width="130px"),
                 # "boundary_bgc" has no own tooltip entry -- reuse "boundary"'s.
                 tooltip=_tip(
                     "boundary" if cat == "boundary_bgc" else cat, "climatology"
@@ -2016,8 +2055,10 @@ class _ForcingEditor:
         if cat == "ic_bgc":
             w["climatology"] = W.Checkbox(
                 value=bool(src.get("climatology", False)),
-                description="clim",
+                description="climatology",
                 indent=False,
+                # Wider than the default so the longer label isn't clipped.
+                layout=W.Layout(width="130px"),
                 tooltip=_tip("ic_bgc", "climatology"),
             )
             w["use_vars"] = W.Text(
@@ -2110,8 +2151,10 @@ class _ForcingEditor:
         if cat == "river":
             w["climatology"] = W.Checkbox(
                 value=bool(src.get("climatology", False)),
-                description="clim",
+                description="climatology",
                 indent=False,
+                # Wider than the default so the longer label isn't clipped.
+                layout=W.Layout(width="130px"),
                 tooltip=_tip("river", "climatology"),
             )
             w["include_bgc"] = W.Checkbox(
@@ -2382,7 +2425,14 @@ class _ForcingEditor:
                 item["custom_file"] = dict(w["_custom_file"])
             return item
         src: dict[str, Any] = {"name": w["name"].value}
-        if "climatology" in w and w["climatology"].value:
+        # The checkbox is hidden rather than destroyed when a static source is
+        # picked, so a value left over from a previously selected source would
+        # otherwise leak into the blueprint and trip roms-tools' ValueError.
+        if (
+            "climatology" in w
+            and w["climatology"].value
+            and w["name"].value not in _STATIC_BGC_SOURCES
+        ):
             src["climatology"] = True
         if "glorys_layout" in w and w["glorys_layout"].value:  # Dropdown: "" = omit
             src["glorys_layout"] = w["glorys_layout"].value

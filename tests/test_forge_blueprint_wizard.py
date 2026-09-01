@@ -130,6 +130,99 @@ def test_serialize_dask_checkbox_hidden_for_non_esper_sources(editor, cat):
     assert _display(w["esper_method"]) == "none"  # same gate
 
 
+@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
+@pytest.mark.parametrize("name", ["constants", "ESPER", "GLODAP"])
+def test_climatology_hidden_for_static_bgc_sources(editor, cat, name):
+    """None of these sources has a time axis of its own -- constants is inline
+    values, ESPER is derived from the physics T/S, and GLODAP is a single static
+    field -- so none can be a climatology, and roms-tools raises ValueError if one
+    is handed climatology=True. Hiding the checkbox keeps that unreachable.
+    """
+    w = editor._make_row(cat, {"source": {"name": name}})
+    assert _display(w["climatology"]) == "none"
+
+
+@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
+def test_climatology_shown_for_dataset_backed_bgc_sources(editor, cat):
+    """The gate is only about the static sources -- a regridded, time-varying
+    dataset still gets the checkbox.
+    """
+    for name in ("UNIFIED", "WOA_BGC"):
+        w = editor._make_row(cat, {"source": {"name": name}})
+        assert _display(w["climatology"]) == "", name
+
+
+def test_glodap_keeps_regrid_knobs_unlike_constants_and_esper(editor):
+    """GLODAP has a wider climatology gate than the regrid gate: it IS a regridded
+    dataset, so hiding its climatology must not sweep away the regrid knobs the way
+    the derived pseudo-sources do.
+    """
+    w = editor._make_row("boundary_bgc", {"source": {"name": "GLODAP"}})
+    assert _display(w["climatology"]) == "none"
+    assert _display(w["bgc_interpolation_method"]) == ""  # still regridded
+
+    w = editor._make_row("boundary_bgc", {"source": {"name": "constants"}})
+    assert _display(w["bgc_interpolation_method"]) == "none"  # not a dataset at all
+
+
+def test_stale_climatology_not_emitted_after_switch_to_static_source(editor):
+    """The checkbox is hidden rather than destroyed, so a tick left over from a
+    previously selected source would otherwise be gathered into the blueprint and
+    trip roms-tools' validation on a source that can never be a climatology.
+    """
+    w = editor._make_row(
+        "boundary_bgc", {"source": {"name": "UNIFIED", "climatology": True}}
+    )
+    assert editor._gather_item("boundary_bgc", w)["source"]["climatology"] is True
+
+    w["name"].value = "GLODAP"
+    editor._apply_row_visibility(w)
+    assert w["climatology"].value is True  # widget state survives the switch
+    assert "climatology" not in editor._gather_item("boundary_bgc", w)["source"]
+
+
+@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
+def test_esper_dropdown_is_labelled_experimental_but_stores_plain_name(editor, cat):
+    """PyESPER support is experimental, and the dropdown says so -- but the label is
+    presentation only: the blueprint must still carry the bare "ESPER" source name.
+    """
+    w = editor._make_row(cat, {"source": {"name": "ESPER"}})
+    assert ("ESPER (experimental)", "ESPER") in w["name"].options
+    assert w["name"].value == "ESPER"
+    assert editor._gather_item(cat, w)["source"]["name"] == "ESPER"
+
+
+def test_unlabelled_sources_keep_their_bare_name_in_the_dropdown(editor):
+    """Only ESPER carries a display label; every other source is its own label, so
+    `(label, value)` options must not change what the rest of the UI sees.
+    """
+    w = editor._make_row("boundary_bgc", {"source": {"name": "UNIFIED"}})
+    assert ("UNIFIED", "UNIFIED") in w["name"].options
+    assert [value for _label, value in w["name"].options] == [
+        "UNIFIED",
+        "CESM_REGRIDDED",
+        "GLODAP",
+        "WOA_BGC",
+        "constants",
+        "ESPER",
+    ]
+
+
+def test_type_switch_rebuilds_labelled_options(editor):
+    """Changing a surface row's type rewrites the source dropdown; membership there
+    has to be tested against the bare names, not the (label, value) pairs, or the
+    value reset would fire on every switch.
+    """
+    w = editor._make_row("surface", {"type": "physics", "source": {"name": "ERA5"}})
+    w["type"].value = "bgc"
+    assert [value for _label, value in w["name"].options] == [
+        "UNIFIED",
+        "CESM_REGRIDDED",
+        "MBL_co2",
+    ]
+    assert w["name"].value == "UNIFIED"
+
+
 def test_serialize_dask_not_offered_on_surface_rows(editor):
     """Surface bgc is not a BgcSourceItem -- its schema has no `serialize_dask`, and
     `_Section` is extra="forbid", so emitting one there would fail validation.
