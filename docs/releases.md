@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.7.0
 
 ### Breaking Changes
 
@@ -11,13 +11,12 @@
 
 * Runs now fail fast at authoring and build time (ucla-roms >= 0.5.0) when any enabled output stream's file-rollover frequency (`nrpf * output_period`) does not evenly divide the restart period, instead of aborting mid-run — covering every output stream ROMS checks (his, avg, frc, random, zslice, surface-flux, particles, sponge, diagnostics, CDR, upscaling, and the BGC streams), not just nesting extraction. Pre-0.5.0 configurations are unaffected. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 * Forge run logs now record the versions of cstar-forge, cstar-ocean, and roms-tools, plus the pinned ucla-roms/MARBL git refs, in the startup banner of each run's log file. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
-* In the wizard, changing the export name now updates the "Save to" filename to match, while preserving a directory or filename the user chose deliberately. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 * Wizard CDR forcing box now offers five exclusive modes via a dropdown, showing only the controls relevant to the selected mode. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
-* Simple perturbation mode: a tutorial-style single tracer-perturbation release (name, lat/lon defaulting to the grid center, depth, horizontal/vertical Gaussian scales, ALK tracer flux, all with unit labels) released as a flat pulse over a start/end window that defaults to the run window. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
-* CDR plot widget (simple/yaml/netcdf modes): on-demand generation of release-locations, distribution, and ALK tracer-flux plots, with a dropdown to switch plot types instantly (the built forcing and rendered plots are cached) and a release selector when a forcing has multiple releases. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
-* Upscaled CDR forcing mode: configures ROMS to read CDR forcing supplied at runtime from a child domain's upscaled signal — sets the `cdr_frc` namelist accordingly and emits a placeholder path in the roms_marbl blueprint for C-Star's orchestrator to replace. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
-* CdrSpec catalog entries: named CDR configurations can be saved to and reloaded from the catalog (`CdrSpec/<name>/Cdr.yaml`), with a picker dropdown and save row in the wizard and provenance tracked in `composition.cdr`. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
-* YAML and netCDF import modes link to the roms-tools CDR forcing documentation for building the files. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+  * Simple perturbation mode: a tutorial-style single tracer-perturbation release (name, lat/lon defaulting to the grid center, depth, horizontal/vertical Gaussian scales, ALK tracer flux, all with unit labels) released as a flat pulse over a start/end window that defaults to the run window. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+  * CDR plot widget (simple/yaml/netcdf modes): on-demand generation of release-locations, distribution, and ALK tracer-flux plots, with a dropdown to switch plot types instantly (the built forcing and rendered plots are cached) and a release selector when a forcing has multiple releases. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+  * Upscaled CDR forcing mode: configures ROMS to read CDR forcing supplied at runtime from a child domain's upscaled signal — sets the `cdr_frc` namelist accordingly and emits a placeholder path in the roms_marbl blueprint for C-Star's orchestrator to replace. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+  * CdrSpec catalog entries: named CDR configurations can be saved to and reloaded from the catalog (`CdrSpec/<name>/Cdr.yaml`), with a picker dropdown and save row in the wizard and provenance tracked in `composition.cdr`. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+  * YAML and netCDF import modes link to the roms-tools CDR forcing documentation for building the files. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * Forge now recognizes Yale's Bouchet cluster (new `YCRC_bouchet` system tag, detected via the `CLUSTER`/`SLURM_CLUSTER_NAME` env vars, mirroring C-Star's detection). ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 * On Bouchet, data directories and working dirs are placed on scratch automatically: the scratch root is discovered by globbing `~/scratch_pi_*` (first match sorted, plus the username), with `$SCRATCH` still winning as an explicit override; `cstar-forge-data` (source-data and input-data) and `_forge_bp_runs` land under it, and default-form `working_dir`s are rebased onto it. If no `scratch_pi_*` directory is found, Forge falls back to the home-anchored layout with a warning instead of failing. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 * New `$PROJECT` convention on all HPC layouts: when set, the data base moves to `$PROJECT/cstar-forge-data` (source-data shared, input-data per-user) while run scratch stays on the machine's scratch filesystem. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
@@ -31,6 +30,7 @@
 * Wizard kernels no longer pin ~2 CPU cores indefinitely after their first regrid: `FI_PROVIDER` now defaults to `tcp` in the Voilà launcher, `cstar forge wizard`, and kernels registered via `cstar forge register-kernel` (libfabric's default sockets provider busy-polls after ESMF initializes MPI in-kernel; MPI itself remains fully available for ROMS runs, and a pre-set `FI_PROVIDER` always wins). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * Fix in-wizard run log scrolling behavior. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * Jupyter kernels registered by `cstar forge register-kernel` failed to start under HPC Jupyter portals (e.g. OnDemand) whose `PYTHONPATH` exports jupyter/pyzmq trees built for a different Python; the kernel wrapper now clears `PYTHONPATH` so the env's own packages always win. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
+* In the wizard, changing the export name now updates the "Save to" filename to match, while preserving a directory or filename the user chose deliberately. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 
 ### Improvements
 
