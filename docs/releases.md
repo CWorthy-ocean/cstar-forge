@@ -45,6 +45,7 @@
 * Test suite grew from 978 to 1044 tests (CdrSpec validators and migration, catalog round-trips, resolver mode matrix, upscaled configure-build/placeholder coverage, wizard mode switching and per-mode round-trips, plot caching). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * The domain catalog stays home-anchored on Bouchet (same as other HPC systems); `CSTAR_FORGE_CATALOG` remains the override. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 * The HPC section of `docs/installation.md` now points to `cstar forge copy-notebook` instead of suggesting a repo clone to get the notebook wizard. ([#153](https://github.com/CWorthy-ocean/cstar-forge/pull/153))
+* Bump C-Star version to 0.13 ([#154](https://github.com/CWorthy-ocean/cstar-forge/pull/154))
 
 ## 0.6.0
 
