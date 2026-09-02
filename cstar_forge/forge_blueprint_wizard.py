@@ -368,23 +368,6 @@ HELP_TEXT: dict[str, str] = {
     ): "GLORYS spatial layout: 'regional' or 'global'. Leave blank for non-GLORYS.",
     (
         "boundary",
-        "serialize_dask",
-    ): "Write THIS source's NetCDF one dask task at a time (BLAS/numba boosted to every "
-    "core), bounding that write's peak memory to a single task. Required for large "
-    "domains: a 12-month ESPER boundary on a 1858x962x100 grid exhausted swap and was "
-    "killed under the ordinary concurrent write. Each boundary bgc source is written to "
-    "its own file, so this leaves the physics write -- which does not need it, and runs "
-    "~3x slower under it -- on the concurrent path. Costs wall time; leave off unless "
-    "the write is failing.",
-    (
-        "ic",
-        "serialize_dask",
-    ): "Write initial conditions one dask task at a time, bounding peak memory to a "
-    "single task. Unlike boundary forcing, IC merges every bgc source into ONE dataset, "
-    "so this serializes the whole initial-conditions write rather than just this "
-    "source's. Costs wall time; leave off unless the write is failing.",
-    (
-        "boundary",
         "bgc_interpolation_method",
     ): "Vertical interpolation for BGC boundary tracers (type='bgc'). 'depth' (default), "
     "'density' (isopycnal space), or 'density_mld' (mixed-layer-depth anchored). "
@@ -1904,8 +1887,6 @@ class _ForcingEditor:
             show(w["esper_equation"], name == "ESPER")
         # Serializing the write is only worth offering for ESPER: it is the one bgc
         # source whose per-chunk cost makes the concurrent write a memory risk.
-        if "serialize_dask" in w:
-            show(w["serialize_dask"], name == "ESPER")
         # constants/ESPER are derived/inline pseudo-sources, not a regridded dataset:
         # boundary's regridding knobs (prefill/regrid_method/extrap_method/
         # bgc_interpolation_method) only make sense for a dataset-backed source being
@@ -2093,22 +2074,6 @@ class _ForcingEditor:
                 )
                 or _tip("ic", "ic_bgc_interp"),
             )
-            # Per-source serialized write (BgcSourceItem.serialize_dask). Only
-            # meaningful for an ESPER source -- _apply_row_visibility hides it
-            # otherwise -- since that is the one whose write is large enough to
-            # need it. Boundary forcing writes each bgc source to its own file, so
-            # ticking this leaves the physics write (and any other companion) on
-            # the ordinary concurrent path; IC merges its sources into one dataset,
-            # so there it serializes the whole initial-conditions write.
-            w["serialize_dask"] = W.Checkbox(
-                value=bool(item.get("serialize_dask", False)),
-                description="serialize dask write (required for large domains)",
-                indent=False,
-                layout=W.Layout(width="380px"),
-                tooltip=_tip(
-                    "ic" if cat == "ic_bgc" else "boundary", "serialize_dask"
-                ),
-            )
         if cat == "surface":
             w["correct_radiation"] = W.Checkbox(
                 value=bool(item.get("correct_radiation", False)),
@@ -2271,6 +2236,18 @@ class _ForcingEditor:
         for widget in w.values():
             widget.observe(lambda _ch: self.on_change(), names="value")
         w["_remove_btn"] = remove
+        # `BgcSourceItem.serialize_dask` is deliberately NOT offered as a widget.
+        # PyESPER serialises entry into its own numba kernels with a per-process
+        # semaphore, which is the hazard this flag existed to avoid, so setting it
+        # no longer buys protection -- it just forces the rest of that write (a
+        # boundary's physics companion, or the whole merged IC dataset) onto the
+        # one-task-at-a-time path. It survives as a blueprint field and the
+        # `--serialize-dask-write` CLI flag for manual troubleshooting. Carried
+        # opaquely -- and, like `_remove_btn`, only after the loop above, since it
+        # is not a widget to observe -- so editing an existing blueprint in the
+        # wizard round-trips the field instead of silently dropping it.
+        if cat in ("ic_bgc", "boundary_bgc") and item.get("serialize_dask"):
+            w["_serialize_dask"] = True
         if cat == "river":
             # Custom-file attach row (RiverSource.CUSTOM_FILE): added after the
             # generic per-widget on_change wiring above (mirrors _remove_btn) --
@@ -2357,7 +2334,11 @@ class _ForcingEditor:
         # trailing button is easily clipped off-screen in a notebook without
         # horizontal scrolling -- putting it first keeps it reachable regardless of
         # how many fields are visible.
-        keys = [k for k in w if k not in ("_remove_btn", "_custom_file")]
+        # Underscore-prefixed keys are not layout children: `_remove_btn` is
+        # placed explicitly below, and `_custom_file`/`_serialize_dask` are carried
+        # data rather than widgets. Filter by prefix so a future carry cannot be
+        # forgotten here and end up handed to HBox as a child.
+        keys = [k for k in w if not k.startswith("_")]
         if "type" in keys:
             keys = ["type", *[k for k in keys if k != "type"]]
         w["_remove_btn"].layout.display = ""
@@ -2469,10 +2450,10 @@ class _ForcingEditor:
         if "bgc_interpolation_method" in w and w["bgc_interpolation_method"].value:
             item["bgc_interpolation_method"] = w["bgc_interpolation_method"].value
         # Item level, not `src`: serialize_dask is a Forge write option, not a
-        # roms-tools source parameter. Only emitted when ticked, so an untouched
-        # row stays `None` ("inherit --serialize-dask-write") rather than a hard
-        # False that would override the flag.
-        if "serialize_dask" in w and w["serialize_dask"].value:
+        # roms-tools source parameter. No longer editable here (see `_make_row`);
+        # re-emitted only when the loaded blueprint already carried it, so a
+        # round-trip through the wizard neither invents nor drops it.
+        if w.get("_serialize_dask"):
             item["serialize_dask"] = True
         if "prefill" in w and w["prefill"].value:  # Dropdown: "" = leave unset
             item["prefill"] = w["prefill"].value

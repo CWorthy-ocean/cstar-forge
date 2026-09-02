@@ -4727,11 +4727,13 @@ class TestSaveModifiedSpecsToCatalog:
     ):
         """A per-source `serialize_dask` must survive save -> reload.
 
+        The field is no longer wizard-editable -- PyESPER serialises its own
+        kernels, so the checkbox was removed -- but a blueprint that already sets
+        it must round-trip rather than be silently rewritten on an unrelated edit.
         `_verify_spec_roundtrip` compares `content_hash()`, which covers all
-        results-affecting blueprint data -- so if the wizard's seed
-        reconstruction dropped this field, saving a forcing spec for a large
-        domain would fail to round-trip and, worse, a reload would silently hand
-        the domain back the concurrent write that gets it OOM-killed.
+        results-affecting blueprint data, so a dropped field shows up here as a
+        failed round-trip. Seeded through the row's opaque carry, which is how
+        `_make_row` preserves it without a widget.
         """
         wiz = self._wizard(isolated_catalog)
         rows = wiz._forcing_editor._rows["boundary_bgc"]
@@ -4739,7 +4741,7 @@ class TestSaveModifiedSpecsToCatalog:
             pytest.skip("bundled forcing spec has no boundary bgc source to flag")
         row = rows[0]
         row["name"].value = "ESPER"
-        row["serialize_dask"].value = True
+        row["_serialize_dask"] = True
         wiz._rebuild()
 
         bgc = wiz.config.forcing.boundary.bgc_sources
@@ -4759,7 +4761,7 @@ class TestSaveModifiedSpecsToCatalog:
             f"serialize_dask missing from the written spec: {saved_bgc}"
         )
 
-        # And a fresh wizard picking that spec back up still has it ticked.
+        # And a fresh wizard picking that spec back up still carries it.
         wiz2 = self._wizard(isolated_catalog)
         wiz2.forcing_dd.value = "serialized-esper-forcing"
         assert any(

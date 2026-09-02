@@ -96,41 +96,6 @@ def test_boundary_row_layout_visibility_by_source_name(editor):
 
 
 @pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
-def test_serialize_dask_checkbox_is_esper_only_and_emitted_at_item_level(editor, cat):
-    """`serialize_dask` is a per-source WRITE option (BgcSourceItem.serialize_dask),
-    not a roms-tools source parameter, so it must land at item level -- never inside
-    `source`, where roms-tools' own validation would see an unknown key. It is only
-    offered for ESPER, the one bgc source whose write needs it.
-    """
-    w = editor._make_row(cat, {"source": {"name": "ESPER"}})
-    assert "serialize_dask" in w
-    assert _display(w["serialize_dask"]) == ""  # shown for ESPER
-
-    # Unticked -> absent entirely, so the source stays "inherit the CLI flag"
-    # rather than a hard False that would override --serialize-dask-write.
-    item = editor._gather_item(cat, w)
-    assert "serialize_dask" not in item
-    assert "serialize_dask" not in item["source"]
-
-    w["serialize_dask"].value = True
-    item = editor._gather_item(cat, w)
-    assert item["serialize_dask"] is True
-    assert "serialize_dask" not in item["source"], (
-        "must not leak into the roms-tools source block"
-    )
-
-
-@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
-def test_serialize_dask_checkbox_hidden_for_non_esper_sources(editor, cat):
-    """A gridded bgc source is regridded, not derived per-point, so its write does
-    not need serializing -- the checkbox stays hidden the same way esper_method does.
-    """
-    w = editor._make_row(cat, {"source": {"name": "UNIFIED"}})
-    assert _display(w["serialize_dask"]) == "none"
-    assert _display(w["esper_method"]) == "none"  # same gate
-
-
-@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
 @pytest.mark.parametrize("name", ["constants", "ESPER", "GLODAP"])
 def test_climatology_hidden_for_static_bgc_sources(editor, cat, name):
     """None of these sources has a time axis of its own -- constants is inline
@@ -221,6 +186,49 @@ def test_type_switch_rebuilds_labelled_options(editor):
         "MBL_co2",
     ]
     assert w["name"].value == "UNIFIED"
+
+
+@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
+@pytest.mark.parametrize("name", ["ESPER", "UNIFIED"])
+def test_serialize_dask_is_not_offered_as_a_widget(editor, cat, name):
+    """`serialize_dask` is deliberately unexposed, for every source including ESPER.
+
+    PyESPER serialises entry into its own numba kernels with a per-process
+    semaphore, so the flag no longer buys the protection it was added for -- it
+    only forces the rest of that write onto the one-task-at-a-time path. It stays
+    a blueprint field and a CLI flag for manual troubleshooting.
+    """
+    w = editor._make_row(cat, {"source": {"name": name}})
+    assert "serialize_dask" not in w
+    item = editor._gather_item(cat, w)
+    assert "serialize_dask" not in item
+    assert "serialize_dask" not in item["source"]
+
+
+@pytest.mark.parametrize("cat", ["ic_bgc", "boundary_bgc"])
+def test_serialize_dask_round_trips_when_the_blueprint_already_set_it(editor, cat):
+    """Loading a blueprint that sets it and re-saving must not drop it.
+
+    The wizard has no widget for it, but silently rewriting someone's blueprint on
+    an unrelated edit is worse than leaving a field they can delete deliberately --
+    and `_build_bgc_section` has already been bitten once by dropping exactly this
+    field. It lands at item level, never inside `source`, where roms-tools'
+    extra="forbid" validation would reject it.
+    """
+    w = editor._make_row(
+        cat, {"source": {"name": "ESPER"}, "serialize_dask": True}
+    )
+    item = editor._gather_item(cat, w)
+    assert item["serialize_dask"] is True
+    assert "serialize_dask" not in item["source"]
+
+
+def test_serialize_dask_not_invented_for_rows_that_lacked_it(editor):
+    """An untouched row stays absent, so the source keeps inheriting the CLI flag
+    rather than pinning a hard value.
+    """
+    w = editor._make_row("ic_bgc", {"source": {"name": "ESPER"}})
+    assert "serialize_dask" not in editor._gather_item("ic_bgc", w)
 
 
 def test_serialize_dask_not_offered_on_surface_rows(editor):
