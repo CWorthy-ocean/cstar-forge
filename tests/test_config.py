@@ -298,12 +298,12 @@ class TestSystemLayoutRegistry:
         from cstar_forge.config import USER
 
         layout_fn = SYSTEM_LAYOUT_REGISTRY["RCAC_anvil"]
-        env = {"WORK": str(tmp_path / "work"), "SCRATCH": str(tmp_path / "scratch")}
+        env = {"PROJECT": str(tmp_path / "proj"), "SCRATCH": str(tmp_path / "scratch")}
         source_data, input_data, scratch = layout_fn(tmp_path, env)
 
-        assert source_data == tmp_path / "work" / "cstar-forge-data" / "source-data"
+        assert source_data == tmp_path / "proj" / "cstar-forge-data" / "source-data"
         assert (
-            input_data == tmp_path / "work" / "cstar-forge-data" / USER / "input-data"
+            input_data == tmp_path / "proj" / "cstar-forge-data" / USER / "input-data"
         )
         assert scratch == tmp_path / "scratch" / "cstar" / "_forge_bp_runs"
 
@@ -358,6 +358,75 @@ class TestSystemLayoutRegistry:
         bouchet_fn = SYSTEM_LAYOUT_REGISTRY["YCRC_bouchet"]
         unknown_fn = SYSTEM_LAYOUT_REGISTRY["unknown"]
         assert bouchet_fn(tmp_path, {}) == unknown_fn(tmp_path, {})
+
+    # ---- $PROJECT: standard env var for the (shared) data-base parent dir ----
+
+    def test_anvil_project_drives_everything_work_ignored(self, tmp_path):
+        """$PROJECT drives the data base AND the scratch fallback; $WORK is never
+        consulted, so a user-overridden $PROJECT moves everything with it.
+        """
+        from cstar_forge.config import USER
+
+        layout_fn = SYSTEM_LAYOUT_REGISTRY["RCAC_anvil"]
+        env = {"PROJECT": str(tmp_path / "proj"), "WORK": str(tmp_path / "work")}
+        source_data, input_data, scratch = layout_fn(tmp_path, env)
+
+        base = tmp_path / "proj" / "cstar-forge-data"
+        assert source_data == base / "source-data"
+        assert input_data == base / USER / "input-data"
+        # No $SCRATCH: the scratch fallback derives from $PROJECT, not $WORK.
+        assert scratch == tmp_path / "proj" / "scratch" / "cstar" / "_forge_bp_runs"
+
+    def test_anvil_without_project_uses_home_even_if_work_set(self, tmp_path):
+        """No $PROJECT falls back to home/work; a lone $WORK is ignored."""
+        layout_fn = SYSTEM_LAYOUT_REGISTRY["RCAC_anvil"]
+        env = {"WORK": str(tmp_path / "elsewhere")}
+        source_data, _, _ = layout_fn(tmp_path, env)
+        assert source_data == tmp_path / "work" / "cstar-forge-data" / "source-data"
+
+    def test_perlmutter_project_moves_data_base_not_run_scratch(self, tmp_path):
+        """$PROJECT relocates the data base only; run scratch stays on $SCRATCH."""
+        from cstar_forge.config import USER
+
+        layout_fn = SYSTEM_LAYOUT_REGISTRY["NERSC_perlmutter"]
+        env = {"PROJECT": str(tmp_path / "proj"), "SCRATCH": str(tmp_path / "scratch")}
+        source_data, input_data, scratch = layout_fn(tmp_path, env)
+
+        base = tmp_path / "proj" / "cstar-forge-data"
+        assert source_data == base / "source-data"
+        assert input_data == base / USER / "input-data"
+        assert scratch == tmp_path / "scratch" / "cstar" / "_forge_bp_runs"
+
+    def test_bouchet_project_moves_data_base_and_adds_user_layer(
+        self, tmp_path, monkeypatch
+    ):
+        """$PROJECT relocates the data base and restores the per-user input-data
+        layer (the shared project dir, unlike the discovered scratch root, does
+        not end in the username); run scratch stays on the discovered root.
+        """
+        monkeypatch.setattr(config_module, "USER", "testuser")
+        (tmp_path / "scratch_pi_abc" / "testuser").mkdir(parents=True)
+
+        layout_fn = SYSTEM_LAYOUT_REGISTRY["YCRC_bouchet"]
+        env = {"PROJECT": str(tmp_path / "proj")}
+        source_data, input_data, scratch = layout_fn(tmp_path, env)
+
+        base = tmp_path / "proj" / "cstar-forge-data"
+        assert source_data == base / "source-data"
+        assert input_data == base / "testuser" / "input-data"
+        scratch_root = tmp_path / "scratch_pi_abc" / "testuser"
+        assert scratch == scratch_root / "cstar" / "_forge_bp_runs"
+
+    def test_bouchet_project_ignored_without_scratch_root(self, tmp_path, monkeypatch):
+        """Documented edge: with no discoverable scratch root, the home-anchored
+        fallback ignores $PROJECT entirely.
+        """
+        monkeypatch.setattr(config_module, "USER", "testuser")
+
+        bouchet_fn = SYSTEM_LAYOUT_REGISTRY["YCRC_bouchet"]
+        unknown_fn = SYSTEM_LAYOUT_REGISTRY["unknown"]
+        env = {"PROJECT": str(tmp_path / "proj")}
+        assert bouchet_fn(tmp_path, env) == unknown_fn(tmp_path, {})
 
 
 class TestBouchetScratchRoot:
@@ -427,7 +496,7 @@ class TestRelocateWorkingDir:
         from cstar_forge.config import relocate_working_dir
 
         home = tmp_path / "home"
-        env = {"WORK": str(tmp_path / "work"), "SCRATCH": str(tmp_path / "scratch")}
+        env = {"PROJECT": str(tmp_path / "proj"), "SCRATCH": str(tmp_path / "scratch")}
         wd = relocate_working_dir(
             home / "cstar" / "_forge_bp_runs" / "my-run",
             system_tag="RCAC_anvil",
@@ -436,11 +505,12 @@ class TestRelocateWorkingDir:
         )
         assert wd == tmp_path / "scratch" / "cstar" / "_forge_bp_runs" / "my-run"
 
-    def test_anvil_falls_back_to_work_scratch(self, tmp_path):
+    def test_anvil_falls_back_to_project_scratch(self, tmp_path):
+        """No $SCRATCH: the fallback derives from $PROJECT; $WORK is ignored."""
         from cstar_forge.config import relocate_working_dir
 
         home = tmp_path / "home"
-        env = {"WORK": str(tmp_path / "work")}
+        env = {"PROJECT": str(tmp_path / "proj"), "WORK": str(tmp_path / "work")}
         wd = relocate_working_dir(
             home / "cstar" / "_forge_bp_runs" / "my-run",
             system_tag="RCAC_anvil",
@@ -448,7 +518,7 @@ class TestRelocateWorkingDir:
             home=home,
         )
         assert (
-            wd == tmp_path / "work" / "scratch" / "cstar" / "_forge_bp_runs" / "my-run"
+            wd == tmp_path / "proj" / "scratch" / "cstar" / "_forge_bp_runs" / "my-run"
         )
 
     def test_legacy_cstar_forge_run_root_rebases_to_scratch(self, tmp_path):
