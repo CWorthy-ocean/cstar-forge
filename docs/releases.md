@@ -18,6 +18,9 @@
 * Upscaled CDR forcing mode: configures ROMS to read CDR forcing supplied at runtime from a child domain's upscaled signal — sets the `cdr_frc` namelist accordingly and emits a placeholder path in the roms_marbl blueprint for C-Star's orchestrator to replace. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * CdrSpec catalog entries: named CDR configurations can be saved to and reloaded from the catalog (`CdrSpec/<name>/Cdr.yaml`), with a picker dropdown and save row in the wizard and provenance tracked in `composition.cdr`. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * YAML and netCDF import modes link to the roms-tools CDR forcing documentation for building the files. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* Forge now recognizes Yale's Bouchet cluster (new `YCRC_bouchet` system tag, detected via the `CLUSTER`/`SLURM_CLUSTER_NAME` env vars, mirroring C-Star's detection). ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
+* On Bouchet, data directories and working dirs are placed on scratch automatically: the scratch root is discovered by globbing `~/scratch_pi_*` (first match sorted, plus the username), with `$SCRATCH` still winning as an explicit override; `cstar-forge-data` (source-data and input-data) and `_forge_bp_runs` land under it, and default-form `working_dir`s are rebased onto it. If no `scratch_pi_*` directory is found, Forge falls back to the home-anchored layout with a warning instead of failing. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
+* New `$PROJECT` convention on all HPC layouts: when set, the data base moves to `$PROJECT/cstar-forge-data` (source-data shared, input-data per-user) while run scratch stays on the machine's scratch filesystem. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 
 ### Bug Fixes
 
@@ -26,6 +29,7 @@
 * Wizard Review panel: an invalid configuration no longer shows a red "Invalid" message and a stale green "Valid" message at the same time; only the applicable status is shown. ([#148](https://github.com/CWorthy-ocean/cstar-forge/pull/148))
 * Wizard kernels no longer pin ~2 CPU cores indefinitely after their first regrid: `FI_PROVIDER` now defaults to `tcp` in the Voilà launcher, `cstar forge wizard`, and kernels registered via `cstar forge register-kernel` (libfabric's default sockets provider busy-polls after ESMF initializes MPI in-kernel; MPI itself remains fully available for ROMS runs, and a pre-set `FI_PROVIDER` always wins). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * Fix in-wizard run log scrolling behavior. ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* Jupyter kernels registered by `cstar forge register-kernel` failed to start under HPC Jupyter portals (e.g. OnDemand) whose `PYTHONPATH` exports jupyter/pyzmq trees built for a different Python; the kernel wrapper now clears `PYTHONPATH` so the env's own packages always win. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 
 ### Improvements
 
@@ -38,6 +42,7 @@
 
 * Shipped example blueprints and the docs example restamped to schema v7; `docs/architecture-details.md` updated (blueprint shape, CdrSpec catalog directory, migration notes). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * Test suite grew from 978 to 1044 tests (CdrSpec validators and migration, catalog round-trips, resolver mode matrix, upscaled configure-build/placeholder coverage, wizard mode switching and per-mode round-trips, plot caching). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
+* The domain catalog stays home-anchored on Bouchet (same as other HPC systems); `CSTAR_FORGE_CATALOG` remains the override. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 
 ## 0.6.0
 
