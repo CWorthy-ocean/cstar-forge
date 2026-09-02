@@ -21,6 +21,7 @@
 * Forge now recognizes Yale's Bouchet cluster (new `YCRC_bouchet` system tag, detected via the `CLUSTER`/`SLURM_CLUSTER_NAME` env vars, mirroring C-Star's detection). ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 * On Bouchet, data directories and working dirs are placed on scratch automatically: the scratch root is discovered by globbing `~/scratch_pi_*` (first match sorted, plus the username), with `$SCRATCH` still winning as an explicit override; `cstar-forge-data` (source-data and input-data) and `_forge_bp_runs` land under it, and default-form `working_dir`s are rebased onto it. If no `scratch_pi_*` directory is found, Forge falls back to the home-anchored layout with a warning instead of failing. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
 * New `$PROJECT` convention on all HPC layouts: when set, the data base moves to `$PROJECT/cstar-forge-data` (source-data shared, input-data per-user) while run scratch stays on the machine's scratch filesystem. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
+* New `cstar forge copy-notebook` command places a runnable copy of the wizard notebook at `~/cstar/forge-blueprint-wizard.ipynb` (`--dest` to choose another location) for use in Jupyter — handy on HPC systems with a hosted Jupyter interface. Re-running is a no-op when the copy is current; `--force` refreshes it after an upgrade or overwrites local edits. ([#153](https://github.com/CWorthy-ocean/cstar-forge/pull/153))
 
 ### Bug Fixes
 
@@ -43,6 +44,7 @@
 * Shipped example blueprints and the docs example restamped to schema v7; `docs/architecture-details.md` updated (blueprint shape, CdrSpec catalog directory, migration notes). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * Test suite grew from 978 to 1044 tests (CdrSpec validators and migration, catalog round-trips, resolver mode matrix, upscaled configure-build/placeholder coverage, wizard mode switching and per-mode round-trips, plot caching). ([#150](https://github.com/CWorthy-ocean/cstar-forge/pull/150))
 * The domain catalog stays home-anchored on Bouchet (same as other HPC systems); `CSTAR_FORGE_CATALOG` remains the override. ([#152](https://github.com/CWorthy-ocean/cstar-forge/pull/152))
+* The HPC section of `docs/installation.md` now points to `cstar forge copy-notebook` instead of suggesting a repo clone to get the notebook wizard. ([#153](https://github.com/CWorthy-ocean/cstar-forge/pull/153))
 
 ## 0.6.0
 
