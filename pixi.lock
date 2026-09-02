@@ -340,7 +340,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -562,7 +562,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -1314,7 +1314,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -1558,7 +1558,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -2367,7 +2367,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-1.3.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.12.13-py312hd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -2644,7 +2644,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/compiler-rt_osx-arm64-21.1.8-hce30654_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.4.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.15-py313hd8ed1ab_101.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -3415,8 +3415,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.4.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.15-py313hd8ed1ab_101.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-forge-0.5.0-pyhc364b38_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-forge-0.6.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -3666,8 +3666,8 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.4.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.15-py313hd8ed1ab_101.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-forge-0.5.0-pyhc364b38_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-forge-0.6.0-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -14377,9 +14377,9 @@ packages:
   run_exports: {}
   size: 48329
   timestamp: 1786366745175
-- conda: https://conda.anaconda.org/conda-forge/noarch/cstar-forge-0.5.0-pyhc364b38_0.conda
-  sha256: 5c7ef32ed5657c32a91da97af3e7770f9c2801ef95484c23cc4923f8ca692508
-  md5: 595dad8beeeafda060ee82a5721287e1
+- conda: https://conda.anaconda.org/conda-forge/noarch/cstar-forge-0.6.0-pyhc364b38_0.conda
+  sha256: 76ecc05cdff9884fed6e9c1547029aaa0a22d4ba24dcbb82f37396178552c4ec
+  md5: b154823462b9acddb4ff752d989d6e26
   depends:
   - python >=3.12
   - jinja2
@@ -14401,7 +14401,7 @@ packages:
   - nest-asyncio
   - ujson
   - fastparquet
-  - cstar-ocean >=0.11.0
+  - cstar-ocean >=0.12.0
   - roms-tools >=4.1.1,<5
   - jupyterlab
   - voila
@@ -14416,11 +14416,11 @@ packages:
   purls:
   - pkg:pypi/cstar-forge?source=hash-mapping
   run_exports: {}
-  size: 265183
-  timestamp: 1787360489735
-- conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.12.0-pyhc364b38_0.conda
-  sha256: a7ec5a032fe09cfea331f4e87d59b4e910567c7aabf3856dcde9fa3af73af4ed
-  md5: bbc72b4e885118cd61734a7bcf7638ea
+  size: 271727
+  timestamp: 1787949945765
+- conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.0-pyhc364b38_0.conda
+  sha256: c6003f846424617969581a7a03e757b73ebd61d3eb6419c3ceea2156c7ce60bf
+  md5: da2a62dc4fffb0a36374754d0bd7baf9
   depends:
   - python >=3.12
   - fakeredis <2.35
@@ -14438,11 +14438,12 @@ packages:
   - typer <=0.25
   - python
   license: Apache-2.0
+  license_family: APACHE
   purls:
-  - pkg:pypi/cstar-ocean?source=compressed-mapping
+  - pkg:pypi/cstar-ocean?source=hash-mapping
   run_exports: {}
-  size: 379819
-  timestamp: 1787944143595
+  size: 387981
+  timestamp: 1787969632533
 - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
   sha256: bb47aec5338695ff8efbddbc669064a3b10fe34ad881fb8ad5d64fbfa6910ed1
   md5: 4c2a8fef270f6c69591889b93f9f55c1
@@ -25924,7 +25925,7 @@ packages:
   - nest-asyncio
   - ujson
   - fastparquet
-  - cstar-ocean>=0.12.0
+  - cstar-ocean>=0.13.0
   - roms-tools>=4.1.1,<5
   - jupyterlab ; extra == 'app'
   - voila ; extra == 'app'
