@@ -47,7 +47,7 @@ dependencies = [
     "ujson",
     "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.13.0",
+    "cstar-ocean>=0.13.3",
     # >=4.1.0: first release with unified BGC v2.1 dataset support, which forge
     # requires (cstar-ocean's own pin is looser because it doesn't).
     "roms_tools>=4.1.1,<5",
@@ -114,7 +114,7 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=4.1.1,<5"
-cstar-ocean = ">=0.13.0"
+cstar-ocean = ">=0.13.3"
 dask = "*"
 distributed = "*"
 numpy = "*"
