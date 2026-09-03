@@ -7,6 +7,7 @@
 ### New Features
 
 * `cstar forge show-paths [--json]` prints the detected compute system, hostname and configured data paths. `python -m cstar_forge.config show-paths` still works and produces identical output. ([#160](https://github.com/CWorthy-ocean/cstar-forge/pull/160))
+* Wizard: a "From catalog" dropdown and "Load selected" button let you load any forge blueprint in the catalog without knowing its file path. ([#161](https://github.com/CWorthy-ocean/cstar-forge/pull/161))
 
 ### Bug Fixes
 
