@@ -1,8 +1,6 @@
 # Release notes
 
-## Unreleased
-
-### Breaking Changes
+## 0.7.3
 
 ### New Features
 
