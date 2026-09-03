@@ -934,6 +934,79 @@ class TestRomsMarblInputDataHelperMethods:
 
         assert result["correct_radiation"] is True  # Extra should override
 
+    def test_build_input_args_defaults_lose_to_cfg_and_options(
+        self, sample_roms_marbl_input_data
+    ):
+        """``defaults`` sits at the bottom of the precedence ladder: the item config
+        and its ``options`` passthrough both win over it.
+        """
+        base_kwargs = {
+            "type": "physics",
+            "correct_radiation": False,
+            "options": {"start_time_pad": False},
+        }
+
+        result = sample_roms_marbl_input_data._build_input_args(
+            "forcing.surface",
+            base_kwargs=base_kwargs,
+            defaults={"start_time_pad": True, "end_time_pad": True},
+        )
+
+        assert result["start_time_pad"] is False  # item options win
+        assert result["end_time_pad"] is True  # default applies where unset
+
+    def test_time_pad_defaults_default_to_true(self, sample_roms_marbl_input_data):
+        """Unset, the run-window padding matches the roms-tools default (both True)."""
+        assert sample_roms_marbl_input_data._time_pad_defaults() == {
+            "start_time_pad": True,
+            "end_time_pad": True,
+        }
+
+    def test_time_pad_defaults_reflect_run_window(
+        self,
+        tmp_path,
+        sample_forcing_override,
+        sample_grid,
+        sample_open_boundaries,
+        sample_source_data,
+        sample_partitioning,
+    ):
+        """``start_time_pad``/``end_time_pad`` flow from the executor onto the rt
+        kwargs for surface and boundary forcing.
+        """
+        data_dir = tmp_path / "input_data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        blueprint_dir = tmp_path / "blueprints"
+        blueprint_dir.mkdir(parents=True, exist_ok=True)
+
+        data = RomsMarblInputData(
+            domain_name="test_grid",
+            start_date=datetime(2012, 1, 1),
+            end_date=datetime(2012, 1, 2),
+            forcing_override=sample_forcing_override,
+            grid=sample_grid,
+            boundaries=sample_open_boundaries,
+            source_data=sample_source_data,
+            roms_marbl_blueprint_dir=blueprint_dir,
+            partitioning=sample_partitioning,
+            use_dask=False,
+            input_data_dir=data_dir,
+            start_time_pad=False,
+            end_time_pad=True,
+        )
+
+        assert data._time_pad_defaults() == {
+            "start_time_pad": False,
+            "end_time_pad": True,
+        }
+        args = data._build_input_args(
+            "forcing.boundary",
+            base_kwargs={"source": {"name": "GLORYS"}, "type": "physics"},
+            defaults=data._time_pad_defaults(),
+        )
+        assert args["start_time_pad"] is False
+        assert args["end_time_pad"] is True
+
     def test_build_input_args_injects_chunks_when_subchunked(
         self, sample_roms_marbl_input_data
     ):

@@ -241,6 +241,8 @@ def forge_blueprint_to_builder_kwargs(cfg: ForgeBlueprint) -> dict[str, Any]:
         cdr_forcing_file=cfg.cdr.cdr_forcing_file,
         forcing_override=sources_to_forcing_override(cfg),
         model_reference_date=cfg.run.model_reference_date,
+        start_time_pad=cfg.run.start_time_pad,
+        end_time_pad=cfg.run.end_time_pad,
         source_dataset_keys=list(cfg.datasets),
         resolved_datasets={
             name: rd.model_dump() for name, rd in cfg.forcing.resolved_datasets.items()

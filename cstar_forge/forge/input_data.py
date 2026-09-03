@@ -357,6 +357,18 @@ class RomsMarblInputData(InputData):
     model_reference_date: datetime | None = None
     """ROMS model reference date (t=0). Forwarded to every rt object that accepts it.
     If None, roms-tools defaults to 2000-01-01."""
+    start_time_pad: bool = True
+    """Include one source record before ``start_date`` in the generated surface and
+    boundary forcing, so ROMS can interpolate at the exact simulation start boundary
+    (from ``ForgeExecutor.start_time_pad``). Supplied as a *default* to the rt
+    constructors that accept it (SurfaceForcing, BoundaryForcing), so a per-item
+    ``options`` passthrough still wins. True is the roms-tools default."""
+    end_time_pad: bool = True
+    """Include one source record after ``end_date`` in the generated surface and
+    boundary forcing, so ROMS can interpolate at the exact simulation end boundary
+    (from ``ForgeExecutor.end_time_pad``). Supplied as a *default* to the rt
+    constructors that accept it (SurfaceForcing, BoundaryForcing), so a per-item
+    ``options`` passthrough still wins. True is the roms-tools default."""
     grid_parent: rt.Grid | None = None
     grid_child: rt.Grid | None = None
     metadata_child: dict[str, Any] | None = None
@@ -1055,6 +1067,7 @@ class RomsMarblInputData(InputData):
         extra: dict[str, Any] | None = None,
         base_kwargs: dict[str, Any] | None = None,
         time_window: tuple[datetime, datetime] | None = None,
+        defaults: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Merge per-input defaults with runtime arguments.
@@ -1062,6 +1075,11 @@ class RomsMarblInputData(InputData):
         Uses base_kwargs (always provided from input_list).
         Resolves "source" and "bgc_source" through SourceData.
         Merges with extra, where extra overrides defaults.
+
+        ``defaults`` sits at the bottom of the precedence ladder (below the item
+        config, its ``options`` passthrough, and ``extra``) -- it carries run-level
+        knobs that a per-item setting is still allowed to override, e.g. the
+        run-window time padding.
         """
         # base_kwargs always comes from input_list entries.
         cfg = dict(base_kwargs) if base_kwargs is not None else {}
@@ -1091,8 +1109,9 @@ class RomsMarblInputData(InputData):
         # but lose to `extra` (which contains hardcoded run-time injections like dates).
         item_options = cfg.pop("options", None) or {}
 
-        # extra overrides defaults; item_options sit between cfg and extra
-        merged = {**cfg, **item_options}
+        # extra overrides defaults; item_options sit between cfg and extra,
+        # and `defaults` sits below everything.
+        merged = {**(defaults or {}), **cfg, **item_options}
         if extra:
             merged = {**merged, **extra}
         if subchunked and "chunks" not in merged:
@@ -1123,6 +1142,18 @@ class RomsMarblInputData(InputData):
         if self.model_reference_date is not None:
             return {"model_reference_date": self.model_reference_date}
         return {}
+
+    def _time_pad_defaults(self) -> dict[str, Any]:
+        """Run-window time padding, as *defaults* for the rt constructors that accept
+        it (SurfaceForcing, BoundaryForcing -- no other rt object takes these).
+
+        Passed via ``_build_input_args(defaults=...)`` rather than ``extra=`` so a
+        per-item ``options`` passthrough can still override the run-level setting.
+        """
+        return {
+            "start_time_pad": self.start_time_pad,
+            "end_time_pad": self.end_time_pad,
+        }
 
     @register_input(name="grid", order=10, label="Writing ROMS grid")
     def _generate_grid(self, key: str = "grid", **kwargs):
@@ -1312,7 +1343,12 @@ class RomsMarblInputData(InputData):
             use_dask=self.use_dask,
             **self._mrd_extra(),
         )
-        input_args = self._build_input_args(key, extra=extra, base_kwargs=kwargs)
+        input_args = self._build_input_args(
+            key,
+            extra=extra,
+            base_kwargs=kwargs,
+            defaults=self._time_pad_defaults(),
+        )
         type = input_args.get("type")
         if type is None:
             raise ValueError(
@@ -1462,7 +1498,10 @@ class RomsMarblInputData(InputData):
             )
             return None
         physics_args = self._build_input_args(
-            key, extra=extra, base_kwargs=physics_kwargs
+            key,
+            extra=extra,
+            base_kwargs=physics_kwargs,
+            defaults=self._time_pad_defaults(),
         )
         with mem_log("BoundaryForcing() [physics companion]", enabled=self.verbose):
             return rt.BoundaryForcing(grid=self.grid, **physics_args)
@@ -1489,7 +1528,12 @@ class RomsMarblInputData(InputData):
             use_dask=self.use_dask,
             **self._mrd_extra(),
         )
-        input_args = self._build_input_args(key, extra=extra, base_kwargs=kwargs)
+        input_args = self._build_input_args(
+            key,
+            extra=extra,
+            base_kwargs=kwargs,
+            defaults=self._time_pad_defaults(),
+        )
         type = input_args.get("type")
         if type is None:
             raise ValueError(

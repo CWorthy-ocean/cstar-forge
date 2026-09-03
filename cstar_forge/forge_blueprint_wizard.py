@@ -99,6 +99,22 @@ HELP_TEXT: dict[str, str] = {
     ("run", "end"): "End date of the simulation run window.",
     (
         "run",
+        "start_time_pad",
+    ): "Include one source record before the start date in the generated surface and "
+    "boundary forcing, so ROMS can interpolate at the exact simulation start boundary. "
+    "Forwarded to roms-tools' SurfaceForcing/BoundaryForcing as start_time_pad. Leave "
+    "checked (the roms-tools default) unless the source data lands exactly on the start "
+    "date.",
+    (
+        "run",
+        "end_time_pad",
+    ): "Include one source record after the end date in the generated surface and "
+    "boundary forcing, so ROMS can interpolate at the exact simulation end boundary. "
+    "Forwarded to roms-tools' SurfaceForcing/BoundaryForcing as end_time_pad. Leave "
+    "checked (the roms-tools default) unless the source data lands exactly on the end "
+    "date.",
+    (
+        "run",
         "dt",
     ): "Barotropic time step in seconds. Leave blank to compute from the CFL criterion "
     "(click 'Compute dt (CFL)' — requires roms_tools).",
@@ -2623,6 +2639,28 @@ class ForgeBlueprintWizard:
             style={"description_width": "110px"},
             tooltip=_tip("run", "end"),
         )
+        # Forcing time-window padding (roms-tools SurfaceForcing/BoundaryForcing
+        # start_time_pad/end_time_pad). Checked by default -- matching roms-tools --
+        # because unpadded forcing does not span the exact run window unless the
+        # source records happen to land on the start/end dates.
+        self.start_time_pad_chk = W.Checkbox(
+            value=True,
+            description="pad start time",
+            indent=False,
+            layout=W.Layout(width="180px"),
+            tooltip=_tip("run", "start_time_pad"),
+        )
+        self.start_time_pad_note = W.HTML(
+            "<span style='color:#666'>(Time padding is required to match ROMS "
+            "start/end times)</span>"
+        )
+        self.end_time_pad_chk = W.Checkbox(
+            value=True,
+            description="pad end time",
+            indent=False,
+            layout=W.Layout(width="180px"),
+            tooltip=_tip("run", "end_time_pad"),
+        )
         self.model_ref_date = W.DatePicker(
             value=date(2000, 1, 1),
             description="Model ref date:",
@@ -3238,6 +3276,8 @@ class ForgeBlueprintWizard:
             self.marbl_ref,
             self.start,
             self.end,
+            self.start_time_pad_chk,
+            self.end_time_pad_chk,
             self.model_ref_date,
             self.description,
             self.dt,
@@ -4817,6 +4857,8 @@ class ForgeBlueprintWizard:
             self._save_path_touched = True
             self.start.value = cfg.run.start_date.date()
             self.end.value = cfg.run.end_date.date()
+            self.start_time_pad_chk.value = bool(cfg.run.start_time_pad)
+            self.end_time_pad_chk.value = bool(cfg.run.end_time_pad)
             self.model_ref_date.value = cfg.run.model_reference_date.date()
             gk = cfg.domain.grid_kwargs
             for k, w in self.grid_w.items():
@@ -5051,6 +5093,8 @@ class ForgeBlueprintWizard:
             ),
             start_date=datetime.combine(self.start.value, datetime.min.time()),
             end_date=datetime.combine(self.end.value, datetime.min.time()),
+            start_time_pad=bool(self.start_time_pad_chk.value),
+            end_time_pad=bool(self.end_time_pad_chk.value),
             description=self.description.value,
             # Untouched: always pass None so the resolver recomputes a fresh default
             # (self.name.value may still hold the *previous* rebuild's backfilled
@@ -6353,6 +6397,8 @@ class ForgeBlueprintWizard:
                     "Run window",
                     self.start,
                     self.end,
+                    W.HBox([self.start_time_pad_chk, self.start_time_pad_note]),
+                    self.end_time_pad_chk,
                     self.model_ref_date,
                     self.description,
                 ),

@@ -566,6 +566,20 @@ class RunWindow(_Section):
     """The ROMS model reference date (t=0). Passed to every rt object that accepts it
     (InitialConditions, SurfaceForcing, BoundaryForcing, TidalForcing, CDRForcing).
     Defaults to 2000-01-01, which is the roms-tools default."""
+    start_time_pad: bool = True
+    """Include one source record before ``start_date`` in the generated surface and
+    boundary forcing, so ROMS can interpolate at the exact simulation start boundary.
+    Forwarded to the rt objects that accept it (SurfaceForcing, BoundaryForcing);
+    True is the roms-tools default. Padding is required for the forcing to cover the
+    run window's start -- turn it off only when the source data is known to land
+    exactly on ``start_date``."""
+    end_time_pad: bool = True
+    """Include one source record after ``end_date`` in the generated surface and
+    boundary forcing, so ROMS can interpolate at the exact simulation end boundary.
+    Forwarded to the rt objects that accept it (SurfaceForcing, BoundaryForcing);
+    True is the roms-tools default. Padding is required for the forcing to cover the
+    run window's end -- turn it off only when the source data is known to land
+    exactly on ``end_date``."""
 
 
 # ===========================================================================

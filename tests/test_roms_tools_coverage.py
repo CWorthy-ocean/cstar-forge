@@ -62,6 +62,11 @@ _FORGE_FIELDS = {
         "extrap_method",
         "extrap_kwargs",
         "model_reference_date",
+        # start_time_pad/end_time_pad are handled run-level (ForgeBlueprint
+        # RunWindow -> ForgeExecutor -> RomsMarblInputData), like
+        # model_reference_date -- not per-item fields.
+        "start_time_pad",
+        "end_time_pad",
         "options",
     },
     "BoundaryForcing": {
@@ -73,6 +78,9 @@ _FORGE_FIELDS = {
         "extrap_method",
         "extrap_kwargs",
         "model_reference_date",
+        # Run-level, same as SurfaceForcing above.
+        "start_time_pad",
+        "end_time_pad",
         "options",
     },
     "TidalForcing": {
@@ -127,10 +135,6 @@ _SKIP = {
         "chunks",
         "initial_slice_bounds",
         "bypass_validation",
-        # new in roms-tools: forcing time-window padding; will be exposed
-        # deliberately (typed fields + resolver/wizard wiring) in an upcoming PR
-        "start_time_pad",
-        "end_time_pad",
     },
     "BoundaryForcing": {
         "chunks",
@@ -138,10 +142,6 @@ _SKIP = {
         "bypass_validation",
         "physics_forcing",  # internal object for density interp wiring (set by Forge, not user)
         "apply_2d_horizontal_fill",  # deprecated in rt>=4 in favor of `prefill`; Forge exposes prefill instead
-        # new in roms-tools: forcing time-window padding; will be exposed
-        # deliberately (typed fields + resolver/wizard wiring) in an upcoming PR
-        "start_time_pad",
-        "end_time_pad",
     },
     "TidalForcing": {
         "bypass_validation",

@@ -911,6 +911,36 @@ def test_cdr_upscaled_mode_round_trips_through_populate_from():
     assert wiz2.config.content_hash() == wiz.config.content_hash()
 
 
+def test_time_pad_checkboxes_default_on_and_reach_the_blueprint():
+    """The Run window pad checkboxes default to checked (the roms-tools default)
+    and land on ``RunWindow.start_time_pad`` / ``end_time_pad``.
+    """
+    wiz = ForgeBlueprintWizard()
+    assert wiz.start_time_pad_chk.value is True
+    assert wiz.end_time_pad_chk.value is True
+    assert wiz.config is not None
+    assert wiz.config.run.start_time_pad is True
+    assert wiz.config.run.end_time_pad is True
+
+    wiz.start_time_pad_chk.value = False
+    assert wiz.config.run.start_time_pad is False
+    assert wiz.config.run.end_time_pad is True
+
+
+def test_time_pad_round_trips_through_populate_from():
+    wiz = ForgeBlueprintWizard()
+    wiz.start_time_pad_chk.value = False
+    wiz.end_time_pad_chk.value = False
+    assert wiz.config is not None
+
+    wiz2 = ForgeBlueprintWizard()
+    wiz2._populate_from(wiz.config)
+
+    assert wiz2.start_time_pad_chk.value is False
+    assert wiz2.end_time_pad_chk.value is False
+    assert wiz2.config.content_hash() == wiz.config.content_hash()
+
+
 def test_composition_cdr_specref_provenance(tmp_path):
     import shutil
 

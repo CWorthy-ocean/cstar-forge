@@ -265,6 +265,26 @@ class ForgeExecutor(BaseModel):
             "None uses the roms-tools default (2000-01-01)."
         ),
     )
+    start_time_pad: bool = Field(
+        default=True,
+        description=(
+            "Include one source record before start_date in the generated surface and "
+            "boundary forcing, so ROMS can interpolate at the exact simulation start "
+            "boundary (from ForgeBlueprint ``run.start_time_pad``). Forwarded to the rt "
+            "objects that accept it (SurfaceForcing, BoundaryForcing); True is the "
+            "roms-tools default."
+        ),
+    )
+    end_time_pad: bool = Field(
+        default=True,
+        description=(
+            "Include one source record after end_date in the generated surface and "
+            "boundary forcing, so ROMS can interpolate at the exact simulation end "
+            "boundary (from ForgeBlueprint ``run.end_time_pad``). Forwarded to the rt "
+            "objects that accept it (SurfaceForcing, BoundaryForcing); True is the "
+            "roms-tools default."
+        ),
+    )
     host: HostPaths | None = Field(
         default=None,
         validate_default=False,
@@ -1574,6 +1594,8 @@ class ForgeExecutor(BaseModel):
             source_data=self.src_data,
             forcing_override=self.forcing_override,
             model_reference_date=self.model_reference_date,
+            start_time_pad=self.start_time_pad,
+            end_time_pad=self.end_time_pad,
             roms_marbl_blueprint_dir=self.roms_marbl_blueprint_dir,
             partitioning=self.partitioning,
             cdr_mode=self.cdr_mode,

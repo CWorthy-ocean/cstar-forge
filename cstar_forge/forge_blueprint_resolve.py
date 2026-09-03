@@ -395,6 +395,8 @@ def build_forge_blueprint(
     start_date: datetime,
     end_date: datetime,
     model_reference_date: datetime | None = None,
+    start_time_pad: bool = True,
+    end_time_pad: bool = True,
     name: str | None = None,
     description: str = "Generated blueprint",
     cdr: dict[str, Any] | CdrSpec | None = None,
@@ -496,6 +498,11 @@ def build_forge_blueprint(
     ``model_reference_date`` is the ROMS model reference date (t=0), passed to every
     rt object that accepts it. If ``None`` (the default), ``RunWindow`` falls back to
     its own default (2000-01-01, the roms-tools default).
+
+    ``start_time_pad`` / ``end_time_pad`` control whether the generated surface and
+    boundary forcing include one source record outside the run window at each end, so
+    ROMS can interpolate at the exact start/end boundary. Both default to ``True``
+    (the roms-tools default) and land on ``RunWindow``.
 
     ``v_sponge`` and ``dt`` are both domain-owned numerics with the same pattern:
     if ``None`` (the default), each is derived from the grid -- ``v_sponge`` from
@@ -1023,6 +1030,8 @@ def build_forge_blueprint(
         run=RunWindow(
             start_date=start_date,
             end_date=end_date,
+            start_time_pad=start_time_pad,
+            end_time_pad=end_time_pad,
             **(
                 {"model_reference_date": model_reference_date}
                 if model_reference_date is not None
