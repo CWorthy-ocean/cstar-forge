@@ -34,9 +34,15 @@ from cstar_forge.forge import source_data
 from cstar_forge.forge.forge_blueprint import OpenBoundaries, UserProvidedFile
 from cstar_forge.forge.source_registry import ROMS_TOOLS_SOURCE_NAME
 from cstar_forge.forge.user_files import stage_user_netcdf, verify_user_file
+from cstar_forge.forge.xarray_lockfix import apply_combinedlock_leak_fix
 from cstar_forge.utils import mem_log
 
 log = logging.getLogger(__name__)
+
+# xarray's CachingFileManager.__del__ can leak a global netCDF lock during
+# dask-threaded saves, permanently deadlocking input generation (progress bar
+# frozen mid-save). See xarray_lockfix module docstring for the mechanism.
+apply_combinedlock_leak_fix()
 
 # Basename stem for CDR NetCDF: ``{domain_name}_cdr.nc``. The full name contains the
 # substring ``cdr.nc`` by convention (a former C-Star build check enforced this).
@@ -64,6 +70,8 @@ def _numba_num_threads(n: int):
         yield
     finally:
         numba.set_num_threads(prev)
+
+
 # Sentinel Resource.location for a child domain with no generated initial
 # conditions -- see the ``initial_conditions`` placeholder in
 # RomsMarblInputData.__init__ for why this exists. A plain string validates
@@ -72,6 +80,17 @@ def _numba_num_threads(n: int):
 CHILD_IC_PLACEHOLDER_LOCATION = (
     "cstar-forge:child-domain-initial-conditions-placeholder"
 )
+
+# Sentinel Resource.location for "upscaled" CDR mode (ForgeExecutor.cdr_mode ==
+# "upscaled" -- see forge_blueprint.CdrSpec.mode's docstring): no generation step
+# runs (the real CDR-forcing data is supplied by C-Star's runtime orchestrator
+# from an upscaled/multi-domain run, not by Forge), so there is no real Resource
+# to emit here, just like a child domain with no generated initial conditions
+# above. A greppable sentinel, same shape/rationale as
+# CHILD_IC_PLACEHOLDER_LOCATION: C-Star's orchestrator is expected to later
+# replace this Resource with the real runtime-supplied path, but that
+# replacement directive does not exist yet -- this is forge-only for now.
+UPSCALED_CDR_PLACEHOLDER_LOCATION = "cstar-forge:upscaled-cdr-forcing-placeholder"
 
 # Matches the part of a candidate filename's stem that follows a planned output's
 # stem, for the known roms-tools multi-file suffixes: grouped time chunks
@@ -353,6 +372,19 @@ class RomsMarblInputData(InputData):
     source_data: source_data.SourceData
     roms_marbl_blueprint_dir: Path
     partitioning: cstar_models.PartitioningParameterSet
+    cdr_mode: str = "none"
+    """Which of the five CDR modes drives this run (from ``ForgeExecutor.cdr_mode``
+    -- see ``forge_blueprint.CdrSpec.mode``'s docstring). Only "upscaled" changes
+    behavior here: no CDR generation step is scheduled (neither ``cdr_forcing``
+    nor ``cdr_forcing_file`` is populated for that mode, so the ``if self.cdr_forcing
+    or self.cdr_forcing_file`` check below is already False for it), and a
+    placeholder ``Resource`` (``UPSCALED_CDR_PLACEHOLDER_LOCATION``) is emitted onto
+    ``roms_marbl_blueprint_elements.cdr_forcing`` instead, mirroring the child-IC
+    placeholder pattern below. The other four modes need no branch here: "none"
+    already schedules nothing (both fields unset), and "simple"/"yaml"/"netcdf" are
+    indistinguishable from each other at this layer (all just "cdr_forcing or
+    cdr_forcing_file is set" -- the mode-specific handling lives upstream, in the
+    resolver's CdrSpec and ForgeExecutor's field validation)."""
     cdr_forcing: dict | None = None
     cdr_forcing_file: UserProvidedFile | dict[str, Any] | None = None
     """A user-supplied pre-made CDR-forcing netCDF (from ``ForgeExecutor.cdr_forcing_file``),
@@ -371,6 +403,16 @@ class RomsMarblInputData(InputData):
     grid_parent: rt.Grid | None = None
     grid_child: rt.Grid | None = None
     metadata_child: dict[str, Any] | None = None
+    settings_compile_time: dict[str, Any] | None = None
+    """Executor-owned live compile-time settings dict (``ForgeExecutor._settings_compile_time``),
+    bound by reference -- not copied. Generation steps read and mutate it directly;
+    the executor's dict IS this object's ``_settings_compile_time``, so there is no
+    merge-back step. When None (standalone/test use), a fresh empty dict is created."""
+    settings_run_time: dict[str, Any] | None = None
+    """Executor-owned live run-time settings dict (``ForgeExecutor._settings_run_time``),
+    bound by reference -- not copied. Generation steps read and mutate it directly;
+    the executor's dict IS this object's ``_settings_run_time``, so there is no
+    merge-back step. When None (standalone/test use), a fresh empty dict is created."""
     use_dask: bool = True
     dask_num_workers: int = 8
     """Cap on dask's default threaded-scheduler worker count during ``generate_all``'s
@@ -422,6 +464,10 @@ class RomsMarblInputData(InputData):
     gates timing/memory instrumentation (``mem_log``) around every roms-tools
     constructor and ``.save()`` in this class. Off by default; enabled via
     ``--verbose``."""
+    has_bgc: bool = False
+    """Whether the model build includes MARBL BGC (from ``cppdefs.marbl``); gates
+    ``include_bgc`` on ``make_nesting_info`` and the run-time ``bgc`` section writes.
+    Mirrors ``ForgeExecutor._has_bgc``, and the ``use_pio`` field's pattern above."""
 
     # Memoized subchunk reference paths, keyed by dataset key (e.g. "GLORYS_REGIONAL"),
     # so IC + boundary + bgc-physics-boundary reuse one reference instead of rebuilding.
@@ -437,6 +483,10 @@ class RomsMarblInputData(InputData):
     # Coarse grid dimension flag (set during surface forcing generation)
     include_coarse_dims: bool | None = field(default=None)
     _clobber: bool = field(default=False, init=False)
+    # First interp_frc derived this run -- the coarse-grid consistency check must
+    # compare only values from THIS run, not the resolver-seeded defaults in the
+    # shared run-time dict.
+    _interp_frc_this_run: int | None = field(default=None, init=False)
     _existing_planned_outputs: set[Path] = field(default_factory=set, init=False)
     _planned_output_paths: set[Path] = field(default_factory=set, init=False)
     """All planned NetCDF outputs for this run (resolved paths), computed once in
@@ -573,19 +623,49 @@ class RomsMarblInputData(InputData):
                 "required unless a parent grid is provided."
             )
 
+        # CDR forcing: normally present in unique_keys (generation is planned via
+        # input_list/_generate_cdr_forcing) and left as an empty placeholder
+        # Dataset here, like grid/initial_conditions -- filled in once generated.
+        # "upscaled" mode schedules no generation step at all (see cdr_mode's
+        # docstring above), so "cdr_forcing" is never in unique_keys for it; it
+        # instead needs its own real Resource here (C-Star's RomsMarblBlueprint
+        # declares cdr_forcing Dataset | None -- nullable, unlike
+        # initial_conditions -- so there is no schema-validity forcing function
+        # requiring this like there is for the child-IC placeholder above, but
+        # the placeholder still gives C-Star's orchestrator something concrete
+        # to find-and-replace with the real runtime-supplied CDR path).
+        if "cdr_forcing" in unique_keys:
+            cdr_forcing_dataset = cstar_models.Dataset(data=[])
+        elif self.cdr_mode == "upscaled":
+            cdr_forcing_dataset = cstar_models.Dataset(
+                data=[Resource(location=UPSCALED_CDR_PLACEHOLDER_LOCATION)],
+                documentation=(
+                    "Placeholder for 'upscaled' CDR mode: no CDR forcing is "
+                    "generated by Forge for this run; C-Star's runtime "
+                    "orchestrator is expected to replace this with the real, "
+                    "run-specific CDR forcing path."
+                ),
+            )
+        else:
+            cdr_forcing_dataset = None
+
         # Initialize roms_marbl_blueprint_elements
         self.roms_marbl_blueprint_elements = RomsMarblBlueprintInputData(
             grid=cstar_models.Dataset(data=[]) if "grid" in unique_keys else None,
             initial_conditions=initial_conditions,
             forcing=forcing_config,
-            cdr_forcing=cstar_models.Dataset(data=[])
-            if "cdr_forcing" in unique_keys
-            else None,
+            cdr_forcing=cdr_forcing_dataset,
         )
 
-        # Initialize settings dictionaries to empty dicts
-        self._settings_compile_time = {}
-        self._settings_run_time = {}
+        # Bind the executor-owned settings dicts directly -- no copy, no merge-back.
+        # Generation steps mutate these in place, and the caller (ForgeExecutor)
+        # observes the writes through its own reference to the same dict.
+        self._settings_compile_time = (
+            self.settings_compile_time if self.settings_compile_time is not None else {}
+        )
+        self._settings_run_time = (
+            self.settings_run_time if self.settings_run_time is not None else {}
+        )
         if _ic_settings_placeholder:
             # The namelist's "initial" section (inifile) is required non-None,
             # but _generate_initial_conditions never runs for this child (no
@@ -670,6 +750,16 @@ class RomsMarblInputData(InputData):
             and reused if already on disk), since every other step depends on the
             in-memory grid object. When ``None`` (default), all registered steps in
             ``input_list`` run as before.
+
+        Returns
+        -------
+        RomsMarblBlueprintInputData | None
+            ``self.roms_marbl_blueprint_elements``, or ``None`` if the input
+            directory is non-empty and ``clobber`` is False. Compile-time and
+            run-time settings are not returned: they are the executor-owned dicts
+            passed in via ``settings_compile_time``/``settings_run_time`` and
+            mutated in place by the generation steps, so the caller already holds
+            the up-to-date dicts through its own reference.
         """
         log.debug(
             "generate_all: entering for %r (clobber=%s, test=%s, only=%s)",
@@ -680,7 +770,7 @@ class RomsMarblInputData(InputData):
         )
         self._clobber = clobber
         if not self._ensure_empty_or_clobber(clobber):
-            return None, {}, {}
+            return None
 
         # Build list of (step, kwargs) tuples, sorted by order
         step_kwargs_list = []
@@ -730,7 +820,9 @@ class RomsMarblInputData(InputData):
             cpu_count = len(os.sched_getaffinity(0))
         except (AttributeError, OSError):  # non-Linux fallback
             cpu_count = os.cpu_count() or 1
-        inner_threads = max(1, cpu_count // self.dask_num_workers) if cpu_count >= 16 else 1
+        inner_threads = (
+            max(1, cpu_count // self.dask_num_workers) if cpu_count >= 16 else 1
+        )
         dask_cm = (
             dask.config.set(num_workers=self.dask_num_workers)
             if self.use_dask
@@ -741,7 +833,11 @@ class RomsMarblInputData(InputData):
             if self.use_dask
             else contextlib.nullcontext()
         )
-        numba_cm = _numba_num_threads(inner_threads) if self.use_dask else contextlib.nullcontext()
+        numba_cm = (
+            _numba_num_threads(inner_threads)
+            if self.use_dask
+            else contextlib.nullcontext()
+        )
         with dask_cm, threadpool_cm, numba_cm:
             # Execute
             for idx, (step, kwargs) in enumerate(step_kwargs_list, start=1):
@@ -781,11 +877,7 @@ class RomsMarblInputData(InputData):
             else:
                 print("\n✅ All input files generated.\n")
 
-        return (
-            self.roms_marbl_blueprint_elements,
-            self._settings_compile_time,
-            self._settings_run_time,
-        )
+        return self.roms_marbl_blueprint_elements
 
     @staticmethod
     def _bgc_output_suffix(
@@ -1375,12 +1467,7 @@ class RomsMarblInputData(InputData):
                 # defaults to false when we are making child boundary conditions, but it needs to be set to true in order to
                 # save the BGC variables.
                 nesting_kwargs = dict(self.metadata_child or {})
-                has_marbl = bool(
-                    (self._settings_compile_time.get("cppdefs") or {}).get(
-                        "marbl", False
-                    )
-                )
-                if has_marbl:
+                if self.has_bgc:
                     # ROMS-Tools: include_bgc=True sets output_vars to include "bgc" on nesting.nc.
                     nesting_kwargs.setdefault("include_bgc", True)
                 nesting_kwargs.setdefault("verbose", self.verbose)
@@ -1401,9 +1488,7 @@ class RomsMarblInputData(InputData):
         resource = Resource(location=str(out_path), partitioned=False)
         self.roms_marbl_blueprint_elements.grid.data.append(resource)
 
-        self._settings_run_time["grid"] = dict(
-            grid_file=out_path,
-        )
+        self._settings_run_time.setdefault("grid", {})["grid_file"] = out_path
 
         if "cppdefs" not in self._settings_compile_time:
             self._settings_compile_time["cppdefs"] = {}
@@ -1417,8 +1502,15 @@ class RomsMarblInputData(InputData):
         self._settings_run_time["param"]["llm"] = self.grid.nx
         self._settings_run_time["param"]["mmm"] = self.grid.ny
         self._settings_run_time["param"]["n"] = self.grid.N
-        self._settings_run_time["param"]["np_xi"] = self.partitioning.n_procs_x
-        self._settings_run_time["param"]["np_eta"] = self.partitioning.n_procs_y
+        # Under auto_tiling, ROMS computes the actual decomposition at runtime;
+        # leave the resolver's placeholder np_xi/np_eta (1/1) rather than
+        # overwriting with None (forge) or a stale explicit layout (C-Star's
+        # PartitioningParameterSet allows auto_tiling alongside n_procs_x/y).
+        if not self.partitioning.auto_tiling:
+            if self.partitioning.n_procs_x is not None:
+                self._settings_run_time["param"]["np_xi"] = self.partitioning.n_procs_x
+            if self.partitioning.n_procs_y is not None:
+                self._settings_run_time["param"]["np_eta"] = self.partitioning.n_procs_y
 
         if out_path_nesting is not None:
             if "extract_data" not in self._settings_run_time:
@@ -1434,7 +1526,7 @@ class RomsMarblInputData(InputData):
             )
             self._settings_run_time["extract_data"]["hc_chd"] = self.grid_child.hc
 
-        self._settings_run_time["s_coord"] = dict(
+        self._settings_run_time.setdefault("s_coord", {}).update(
             tcline=self.grid.hc,
             theta_b=self.grid.theta_b,
             theta_s=self.grid.theta_s,
@@ -1529,9 +1621,7 @@ class RomsMarblInputData(InputData):
             resource = Resource(location=paths, partitioned=False)
             self.roms_marbl_blueprint_elements.initial_conditions.data.append(resource)
 
-        self._settings_run_time["initial"] = dict(
-            initial_file=paths[0],
-        )
+        self._settings_run_time.setdefault("initial", {})["initial_file"] = paths[0]
 
     @register_input(
         name="forcing.surface", order=30, label="Generating surface forcing"
@@ -1612,11 +1702,11 @@ class RomsMarblInputData(InputData):
 
         if input_args["type"] == "restoring":
             if "sss" in input_args["restoring_forces"]:
-                self._settings_compile_time["cppdefs"]["sal_restore"] = True
+                self._settings_compile_time.setdefault("cppdefs", {})["sal_restore"] = (
+                    True
+                )
         elif input_args["type"] == "bgc" and input_args["source"]["name"] == "MBL_co2":
-            if "cppdefs" not in self._settings_compile_time:
-                self._settings_compile_time["cppdefs"] = {}
-            self._settings_compile_time["cppdefs"]["co2_tvarying"] = True
+            self._settings_compile_time.setdefault("cppdefs", {})["co2_tvarying"] = True
 
         # Append Resources directly to roms_marbl_blueprint_elements.forcing[subkey]
 
@@ -1637,38 +1727,27 @@ class RomsMarblInputData(InputData):
         else:
             interp_frc = self._interp_frc_surface_reuse(input_args, Path(paths[0]))
 
-        # Only touch 'bgc' if the model has MARBL/BGC — read from cppdefs.marbl
-        # (the compile-time flag), which is the single source of truth.
-        has_bgc_compile = bool(
-            (self._settings_compile_time.get("cppdefs") or {}).get("marbl", False)
-        )
-
         # Set interp_frc in the appropriate section based on forcing type
         # blk_frc.interp_frc is for physics surface forcing
         # bgc.interp_frc is for bgc surface forcing (only if model has bgc)
-        # Both should have the same value when present (enforced by check below)
-        if "blk_frc" not in self._settings_run_time:
-            self._settings_run_time["blk_frc"] = {}
-        if has_bgc_compile and "bgc" not in self._settings_run_time:
-            self._settings_run_time["bgc"] = {}
+        # Both should have the same value when present (enforced by check below).
+        # Compared against ``_interp_frc_this_run`` rather than reading back from
+        # ``_settings_run_time`` -- the executor pre-seeds blk_frc/bgc.interp_frc
+        # before generation runs, so a shared-dict read would false-positive a
+        # mismatch against that seed rather than against a value from this run.
+        if (
+            self._interp_frc_this_run is not None
+            and interp_frc != self._interp_frc_this_run
+        ):
+            raise ValueError(
+                "Mismatch in coarse grid settings between surface forcing types"
+            )
+        self._interp_frc_this_run = interp_frc
 
-        # Check for consistency: all surface forcing types should use the same coarse grid setting
-        if "interp_frc" in self._settings_run_time["blk_frc"]:
-            if interp_frc != self._settings_run_time["blk_frc"]["interp_frc"]:
-                raise ValueError(
-                    "Mismatch in coarse grid settings between surface forcing types"
-                )
-        if has_bgc_compile and "interp_frc" in self._settings_run_time["bgc"]:
-            if interp_frc != self._settings_run_time["bgc"]["interp_frc"]:
-                raise ValueError(
-                    "Mismatch in coarse grid settings between surface forcing types"
-                )
-
-        # Set interp_frc for the appropriate section based on type (only set bgc if model has bgc)
-        if "bgc" in type and has_bgc_compile:
-            self._settings_run_time["bgc"]["interp_frc"] = interp_frc
+        if "bgc" in type and self.has_bgc:
+            self._settings_run_time.setdefault("bgc", {})["interp_frc"] = interp_frc
         else:
-            self._settings_run_time["blk_frc"]["interp_frc"] = interp_frc
+            self._settings_run_time.setdefault("blk_frc", {})["interp_frc"] = interp_frc
 
         self.include_coarse_dims = interp_frc == 1
 
@@ -1790,9 +1869,7 @@ class RomsMarblInputData(InputData):
                     key, extra=extra, base_kwargs=dict(kwargs)
                 )
                 input_args["bgc_sources"] = bgc_sources_resolved
-                input_args["bgc_model"] = (
-                    rt.BGCMarbl if bgc_sources_resolved else None
-                )
+                input_args["bgc_model"] = rt.BGCMarbl if bgc_sources_resolved else None
                 with mem_log(
                     "BoundaryForcing() [yaml-sidecar-only]", enabled=self.verbose
                 ):
@@ -1831,8 +1908,7 @@ class RomsMarblInputData(InputData):
 
         input_args = self._build_input_args(key, extra=extra, base_kwargs=kwargs)
         if "chunks" not in input_args and any(
-            self._block_is_subchunked(bs.get("source"))
-            for bs in bgc_sources_resolved
+            self._block_is_subchunked(bs.get("source")) for bs in bgc_sources_resolved
         ):
             input_args["chunks"] = {}
         input_args["bgc_sources"] = bgc_sources_resolved
@@ -2486,6 +2562,23 @@ class RomsMarblInputData(InputData):
         two don't co-occur. If that changes, tile outputs would need the same
         ``_pio_mangle``/``_pio_finalize`` nccopy treatment as the whole-field saves.
         """
+        if (
+            self.partitioning.auto_tiling
+            or self.partitioning.n_procs_x is None
+            or self.partitioning.n_procs_y is None
+        ):
+            # Unreachable in practice: auto_tiling requires use_pio, and PIO
+            # skips file partitioning entirely (see the docstring above). Guard
+            # on auto_tiling itself (not just None n_procs -- C-Star's
+            # PartitioningParameterSet allows both set together) rather than
+            # letting roms_tools.partition_netcdf split files into a fixed
+            # layout ROMS would ignore, or raise a TypeError on None.
+            raise ValueError(
+                "Cannot partition input files: auto_tiling is on or "
+                "partitioning.n_procs_x/n_procs_y are not set (the tiling is "
+                "chosen at runtime, which is incompatible with file "
+                "partitioning)."
+            )
         input_args = dict(
             np_eta=self.partitioning.n_procs_y,
             np_xi=self.partitioning.n_procs_x,
