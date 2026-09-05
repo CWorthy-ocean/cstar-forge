@@ -188,15 +188,16 @@ def sources_to_forcing_override(cfg: ForgeBlueprint) -> dict[str, Any]:
         d = spec.model_dump(exclude={"source", "bgc_sources"}, mode="json")
         d["source"] = _src(spec.source)
         if spec.bgc_sources:
+            # Introspect BgcSourceItem's own fields (via model_dump) rather than
+            # hand-listing them: a hand-written dict silently DROPS any field
+            # added to the model later -- that is how `serialize_dask` first
+            # went missing here, so the per-source write-scheduler flag never
+            # reached input_data._bgc_serialize_flags in production even though
+            # the resolver had already introspected+carried it faithfully.
             d["bgc_sources"] = [
                 {
+                    **bs.model_dump(mode="json", exclude={"source"}, exclude_none=True),
                     "source": _src(bs.source),
-                    **({"use_vars": bs.use_vars} if bs.use_vars else {}),
-                    **(
-                        {"bgc_interpolation_method": bs.bgc_interpolation_method.value}
-                        if bs.bgc_interpolation_method is not None
-                        else {}
-                    ),
                 }
                 for bs in spec.bgc_sources
             ]

@@ -3199,6 +3199,224 @@ def test_committed_example_validates():
 
 
 # ---------------------------------------------------------------------------
+# Multiple bgc_sources: use_vars partitioning is required and enforced disjoint
+# on both InitialConditions and BoundaryForcing (_require_partitioned_bgc_use_vars).
+# ---------------------------------------------------------------------------
+class TestBgcSourcesUseVarsPartitioning:
+    def _two_sources(self, use_vars=(None, None)):
+        from cstar_forge.forge.forge_blueprint import BgcSourceItem
+
+        return [
+            BgcSourceItem(source={"name": "UNIFIED"}, use_vars=use_vars[0]),
+            BgcSourceItem(source={"name": "GLODAP"}, use_vars=use_vars[1]),
+        ]
+
+    @pytest.mark.parametrize(
+        "section_cls_name", ["InitialConditions", "BoundaryForcing"]
+    )
+    def test_single_bgc_source_needs_no_use_vars(self, section_cls_name):
+        """Control: a single bgc source is never ambiguous, so use_vars stays
+        optional -- the shipped blueprints all have exactly one.
+        """
+        from cstar_forge.forge import forge_blueprint as fb
+
+        cls = getattr(fb, section_cls_name)
+        section = cls(
+            source={"name": "GLORYS"},
+            bgc_sources=[fb.BgcSourceItem(source={"name": "UNIFIED"})],
+        )
+        assert section.bgc_sources[0].use_vars is None
+
+    @pytest.mark.parametrize(
+        "section_cls_name", ["InitialConditions", "BoundaryForcing"]
+    )
+    def test_multiple_bgc_sources_require_use_vars_on_every_item(
+        self, section_cls_name
+    ):
+        from cstar_forge.forge import forge_blueprint as fb
+
+        cls = getattr(fb, section_cls_name)
+        with pytest.raises(ValueError, match="partition with use_vars"):
+            cls(
+                source={"name": "GLORYS"},
+                bgc_sources=self._two_sources(use_vars=(["ALK"], None)),
+            )
+
+    @pytest.mark.parametrize(
+        "section_cls_name", ["InitialConditions", "BoundaryForcing"]
+    )
+    def test_multiple_bgc_sources_reject_overlapping_use_vars(self, section_cls_name):
+        from cstar_forge.forge import forge_blueprint as fb
+
+        cls = getattr(fb, section_cls_name)
+        with pytest.raises(ValueError, match="partition with use_vars"):
+            cls(
+                source={"name": "GLORYS"},
+                bgc_sources=self._two_sources(use_vars=(["ALK", "DIC"], ["DIC"])),
+            )
+
+    @pytest.mark.parametrize(
+        "section_cls_name", ["InitialConditions", "BoundaryForcing"]
+    )
+    def test_multiple_bgc_sources_accept_disjoint_use_vars(self, section_cls_name):
+        from cstar_forge.forge import forge_blueprint as fb
+
+        cls = getattr(fb, section_cls_name)
+        section = cls(
+            source={"name": "GLORYS"},
+            bgc_sources=self._two_sources(use_vars=(["ALK", "DIC"], ["NO3"])),
+        )
+        assert [bs.use_vars for bs in section.bgc_sources] == [["ALK", "DIC"], ["NO3"]]
+
+    def test_shipped_blueprints_have_single_bgc_source_and_still_validate(self):
+        """The new validator must not break any file already in the repo -- every
+        shipped blueprint has exactly one bgc source per section.
+        """
+        for p in _shipped_blueprint_paths():
+            cfg = ForgeBlueprint.from_yaml(p)
+            for section in (cfg.forcing.initial_conditions, cfg.forcing.boundary):
+                if section is not None:
+                    assert len(section.bgc_sources) <= 1, (
+                        f"{p} has multiple bgc_sources -- the validator matrix "
+                        "above should gain a case for this instead of relying "
+                        "on this assumption"
+                    )
+
+
+# ---------------------------------------------------------------------------
+# migrate_forcing_inputs hardening: warn on dropped per-item bgc keys, raise on
+# a non-dict boundary entry (silent data loss before), and a direct test of the
+# shared function on a ForcingSpec-shaped (ic + forcing siblings) pair.
+# ---------------------------------------------------------------------------
+class TestMigrateForcingInputsHardening:
+    def test_dropped_bgc_item_keys_warn_with_index_and_source_name(self):
+        from cstar_forge.forge.forge_blueprint import migrate_forcing_inputs
+
+        forcing = {
+            "boundary": [
+                {"type": "physics", "source": {"name": "GLORYS"}},
+                {
+                    "type": "bgc",
+                    "source": {"name": "UNIFIED"},
+                    "regrid_method": "nearest",  # not on BgcSourceItem -- dropped
+                },
+            ]
+        }
+        with pytest.warns(
+            UserWarning, match=r"forcing\.boundary\[1\].*UNIFIED.*regrid_method"
+        ):
+            migrate_forcing_inputs(None, forcing)
+        assert forcing["boundary"]["bgc_sources"] == [{"source": {"name": "UNIFIED"}}]
+
+    def test_no_warning_when_no_extra_keys_dropped(self):
+        import warnings
+
+        from cstar_forge.forge.forge_blueprint import migrate_forcing_inputs
+
+        forcing = {
+            "boundary": [
+                {"type": "physics", "source": {"name": "GLORYS"}},
+                {"type": "bgc", "source": {"name": "UNIFIED"}, "use_vars": None},
+            ]
+        }
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            migrate_forcing_inputs(None, forcing)
+        assert not w
+
+    def test_non_dict_boundary_entry_raises(self):
+        from cstar_forge.forge.forge_blueprint import migrate_forcing_inputs
+
+        with pytest.raises(ValueError, match="non-dict entr"):
+            migrate_forcing_inputs(
+                None,
+                {"boundary": [{"type": "physics", "source": {"name": "GLORYS"}}, None]},
+            )
+
+    def test_all_non_dict_boundary_list_raises_not_silently_none(self):
+        """Previously an all-non-dict list silently became `None` (boundary
+        forcing quietly vanishing); it must now raise instead.
+        """
+        from cstar_forge.forge.forge_blueprint import migrate_forcing_inputs
+
+        with pytest.raises(ValueError, match="non-dict entr"):
+            migrate_forcing_inputs(None, {"boundary": [None, "not-a-dict"]})
+
+    def test_direct_call_on_forcingspec_shaped_pair(self):
+        """A catalog ``Forcing.yaml`` keeps ``initial_conditions`` and
+        ``forcing`` as top-level siblings (not nested under one ``forcing``
+        dict, unlike a full ForgeBlueprint) -- migrate_forcing_inputs must
+        accept exactly that shape, since it's the wizard's ForcingSpec loader's
+        real call signature.
+        """
+        from cstar_forge.forge.forge_blueprint import migrate_forcing_inputs
+
+        ic = {"bgc_source": {"name": "UNIFIED"}}
+        forcing = {
+            "boundary": [
+                {"type": "physics", "source": {"name": "GLORYS"}},
+                {"type": "bgc", "source": {"name": "UNIFIED"}},
+            ]
+        }
+        migrate_forcing_inputs(ic, forcing)
+        assert ic["bgc_sources"] == [{"source": {"name": "UNIFIED"}}]
+        assert forcing["boundary"]["source"] == {"name": "GLORYS"}
+        assert forcing["boundary"]["bgc_sources"] == [{"source": {"name": "UNIFIED"}}]
+
+    def test_already_migrated_pair_is_a_no_op(self):
+        import copy
+
+        from cstar_forge.forge.forge_blueprint import migrate_forcing_inputs
+
+        ic = {"bgc_sources": [{"source": {"name": "UNIFIED"}}]}
+        forcing = {"boundary": {"source": {"name": "GLORYS"}, "bgc_sources": []}}
+        ic_before, forcing_before = copy.deepcopy(ic), copy.deepcopy(forcing)
+        migrate_forcing_inputs(ic, forcing)
+        assert ic == ic_before
+        assert forcing == forcing_before
+
+
+# ---------------------------------------------------------------------------
+# Shipped-blueprint hygiene: every checked-in blueprint must be current version,
+# hash-consistent with its own content, and load with no warnings.
+# ---------------------------------------------------------------------------
+def _shipped_blueprint_paths() -> list[Path]:
+    pkg_root = Path(cstar_forge.__file__).parent
+    repo_root = pkg_root.parent
+    paths = sorted((pkg_root / "catalog" / "blueprints").glob("*.forge_blueprint.yaml"))
+    example = repo_root / "docs" / "forge-blueprint-example.wio-toy.yaml"
+    if example.exists():
+        paths.append(example)
+    return paths
+
+
+@pytest.mark.parametrize("path", _shipped_blueprint_paths(), ids=lambda p: p.name)
+def test_shipped_blueprint_hygiene(path):
+    import warnings
+
+    raw = yaml.safe_load(path.read_text())
+    assert raw.get("forge_blueprint_version") == FORGE_BLUEPRINT_VERSION, (
+        f"{path} is stamped forge_blueprint_version={raw.get('forge_blueprint_version')!r}, "
+        f"expected {FORGE_BLUEPRINT_VERSION!r} -- restamp it (see B1's restamp recipe)."
+    )
+    stored_hash = raw.get("provenance", {}).get("content_hash")
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        cfg = ForgeBlueprint.from_yaml(path)
+    assert not w, (
+        f"{path} emits warning(s) on load: {[str(x.message) for x in w]} -- a "
+        "shipped blueprint should already be in current, warning-free shape."
+    )
+
+    assert stored_hash == cfg.content_hash(), (
+        f"{path}'s stored provenance.content_hash is stale -- restamp it (see "
+        "B1's restamp recipe: rewrite the content_hash: line with "
+        "ForgeBlueprint.from_yaml(p).content_hash())."
+    )
+
+
+# ---------------------------------------------------------------------------
 # _forge_version -- best-effort git describe / package-version identifier for
 # provenance.forge_version (see test_forge_version_* above for the resolver wiring)
 # ---------------------------------------------------------------------------

@@ -2448,14 +2448,7 @@ class TestGoldenNamelist:
         ):
             mock_ic_instance = MagicMock()
             mock_ic_instance.save.side_effect = self._touch_save_list
-            # This suite's IC has an (IC) bgc_sources entry, so
-            # _generate_initial_conditions takes the multi-object merge path,
-            # which needs a real Dataset (not a MagicMock) from
-            # rt.InitialConditions.merge() -- the whole class is mocked here, so
-            # that classmethod needs its own return value too.
-            mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
-            mock_ic.merge.return_value = xr.Dataset()
 
             mock_surface_instance = MagicMock()
             mock_surface_instance.save.side_effect = self._touch_save
@@ -2887,14 +2880,7 @@ class TestForgeRunnerEndToEnd:
         ):
             mock_ic_instance = MagicMock()
             mock_ic_instance.save.side_effect = TestGoldenNamelist._touch_save_list
-            # This suite's IC has an (IC) bgc_sources entry, so
-            # _generate_initial_conditions takes the multi-object merge path,
-            # which needs a real Dataset (not a MagicMock) from
-            # rt.InitialConditions.merge() -- the whole class is mocked here, so
-            # that classmethod needs its own return value too.
-            mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
-            mock_ic.merge.return_value = xr.Dataset()
 
             mock_surface_instance = MagicMock()
             mock_surface_instance.save.side_effect = TestGoldenNamelist._touch_save
@@ -3149,14 +3135,7 @@ class TestOnlyInputsReuseIsIdempotent:
         ):
             mock_ic_instance = MagicMock()
             mock_ic_instance.save.side_effect = self._touch_save_list
-            # This suite's IC has an (IC) bgc_sources entry, so
-            # _generate_initial_conditions takes the multi-object merge path,
-            # which needs a real Dataset (not a MagicMock) from
-            # rt.InitialConditions.merge() -- the whole class is mocked here, so
-            # that classmethod needs its own return value too.
-            mock_ic_instance.ds = xr.Dataset()
             mock_ic.return_value = mock_ic_instance
-            mock_ic.merge.return_value = xr.Dataset()
 
             mock_surface_instance = MagicMock()
             mock_surface_instance.save.side_effect = self._touch_save

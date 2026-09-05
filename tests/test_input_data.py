@@ -2608,6 +2608,104 @@ class TestRiverCustomFileForcing:
         river_input_data.source_data.path_for_source.assert_not_called()
 
 
+class TestNumbaNumThreadsClamping:
+    """``_numba_num_threads`` must clamp its requested thread count to
+    ``numba.config.NUMBA_NUM_THREADS`` -- ``numba.set_num_threads`` raises
+    ValueError for anything above that ceiling, and ``inner_threads`` (computed
+    from the *whole machine's* core count in ``generate_all``) can exceed a
+    smaller configured ceiling (e.g. via the ``NUMBA_NUM_THREADS`` env var).
+    """
+
+    def test_clamps_requested_threads_to_configured_ceiling(self, monkeypatch):
+        import numba
+
+        from cstar_forge.forge.input_data import _numba_num_threads
+
+        monkeypatch.setattr(numba.config, "NUMBA_NUM_THREADS", 4)
+        monkeypatch.setattr(numba, "get_num_threads", lambda: 4)
+        calls = []
+        monkeypatch.setattr(numba, "set_num_threads", calls.append)
+
+        with _numba_num_threads(64):
+            pass
+
+        assert calls == [4, 4]  # clamped down from 64, then restored to "prev" (4)
+
+    def test_does_not_clamp_when_already_within_ceiling(self, monkeypatch):
+        import numba
+
+        from cstar_forge.forge.input_data import _numba_num_threads
+
+        monkeypatch.setattr(numba.config, "NUMBA_NUM_THREADS", 16)
+        monkeypatch.setattr(numba, "get_num_threads", lambda: 16)
+        calls = []
+        monkeypatch.setattr(numba, "set_num_threads", calls.append)
+
+        with _numba_num_threads(2):
+            pass
+
+        assert calls == [2, 16]  # 2 is within the ceiling -> passed through as-is
+
+
+class TestGenerateAllDaskNumWorkersGuard:
+    """``generate_all`` must not divide by (or pass through) a non-positive
+    ``dask_num_workers`` -- a misconfiguration or an explicit 0/negative
+    override must not crash generation before a single input file is written.
+
+    Uses the same minimal harness as ``test_generate_all_test_mode``
+    (``test=True`` skips every step but ``forcing.boundary``, so only
+    ``rt.BoundaryForcing`` + the xarray open/combine calls need mocking) --
+    the point here is only to reach the ``inner_threads``/``dask.config.set``
+    arithmetic near the top of ``generate_all`` without a ZeroDivisionError,
+    not to exercise the rest of generation.
+    """
+
+    @pytest.mark.parametrize("bad_value", [0, -1])
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    @patch("xarray.combine_by_coords")
+    @patch("xarray.open_dataset")
+    def test_non_positive_dask_num_workers_does_not_raise(
+        self,
+        mock_open_dataset,
+        mock_combine,
+        mock_boundary_class,
+        bad_value,
+        sample_roms_marbl_input_data,
+        monkeypatch,
+    ):
+        # Force the "high-core" branch (cpu_count >= 16) so the division this
+        # guards actually executes -- below 16 cores generate_all always falls
+        # back to the conservative 1-thread pin regardless of dask_num_workers.
+        monkeypatch.setattr(
+            "cstar_forge.forge.input_data.os.sched_getaffinity",
+            lambda _pid: set(range(32)),
+            raising=False,  # not available on macOS
+        )
+
+        mock_boundary = MagicMock()
+
+        def boundary_save(path, *args, **kwargs):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).touch()
+            return [path]
+
+        mock_boundary.bgc = [MagicMock()]
+        mock_boundary.physics.save.side_effect = boundary_save
+        mock_boundary.to_yaml = MagicMock()
+        mock_boundary_class.return_value = mock_boundary
+
+        mock_ds = xr.Dataset()
+        mock_open_dataset.return_value = mock_ds
+        mock_combine.return_value = mock_ds
+
+        data = sample_roms_marbl_input_data
+        data.dask_num_workers = bad_value
+        data.use_dask = True
+
+        result = data.generate_all(clobber=True, test=True)
+        assert result is not None
+
+
 class TestRomsMarblInputDataGenerateAll:
     """Tests for generate_all method."""
 
@@ -3570,11 +3668,17 @@ class TestBoundaryBgcSources:
         boundary = forge_models.BoundaryForcing(
             source=forge_models.SourceSpec(name="GLORYS"),
             bgc_sources=[
+                # Two bgc sources requires disjoint use_vars on both (see
+                # _require_partitioned_bgc_use_vars) -- arbitrary but disjoint,
+                # since this fixture is about serialize_dask/filenames, not
+                # about which tracers each source actually contributes.
                 forge_models.BgcSourceItem(
-                    source=forge_models.SourceSpec(name="UNIFIED", climatology=True)
+                    source=forge_models.SourceSpec(name="UNIFIED", climatology=True),
+                    use_vars=["ALK", "DIC"],
                 ),
                 forge_models.BgcSourceItem(
-                    source=forge_models.SourceSpec(name="GLODAP")
+                    source=forge_models.SourceSpec(name="GLODAP"),
+                    use_vars=["NO3", "PO4"],
                 ),
             ],
         )
@@ -3674,17 +3778,62 @@ class TestBoundaryBgcSources:
         assert mock_bf.bgc[0].save.call_args.kwargs["serialize_dask"] is True
         assert mock_bf.bgc[1].save.call_args.kwargs["serialize_dask"] is False
 
-        # Tracer derivation still runs across every source, but must NOT save --
-        # each object is saved above with its own serialize_dask.
-        mock_bf.bgc_model.return_value.process_bgc_fields.assert_called_once()
-        pbf_kwargs = mock_bf.bgc_model.return_value.process_bgc_fields.call_args.kwargs
-        assert pbf_kwargs["filepath"] is None
+        # Tracer derivation across every source already ran inside
+        # `rt.BoundaryForcing.__post_init__` (real roms-tools; mocked away here)
+        # -- forge itself must NOT call `process_bgc_fields` again: it would redo
+        # that work and, since the companion roms-tools change dropped
+        # `process_bgc_fields`'s `filepath=` parameter, would now raise TypeError.
+        mock_bf.bgc_model.return_value.process_bgc_fields.assert_not_called()
 
         # `serialize_dask` is a Forge-only write option: roms-tools must never see
         # it among the source items it validates.
         for item in mock_bf_class.call_args.kwargs["bgc_sources"]:
             assert "serialize_dask" not in item
             assert "serialize_dask" not in item["source"]
+
+    @pytest.mark.parametrize("source_name", ["WOA_BGC", "UNIFIED"])
+    @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
+    def test_planned_and_generated_boundary_bgc_suffix_match(
+        self, mock_bf_class, source_name, sample_roms_marbl_input_data, tmp_path
+    ):
+        """The generated boundary-bgc filename must match what
+        `_planned_netcdf_outputs` (and ForgeExecutor's own planner) computes
+        from the same raw blueprint kwargs. Regression: `_generate_boundary_forcing`
+        used to build the suffix from the RESOLVED source (after
+        `_rename_for_roms_tools` -- e.g. WOA_BGC becomes roms-tools' bare "WOA"),
+        which disagreed with the planners (both use the raw name via
+        `_item_source_name`) whenever a source's `ROMS_TOOLS_SOURCE_NAME` entry
+        renames it. Parametrized over a renamed source (WOA_BGC -> WOA) and an
+        unrenamed one (UNIFIED) as a control.
+        """
+        mock_bf = MagicMock()
+        mock_bf.bgc = [MagicMock()]
+        physics_path = tmp_path / "boundary-physics.nc"
+        physics_path.touch()
+        mock_bf.physics.save.return_value = [physics_path]
+        mock_bf_class.return_value = mock_bf
+
+        data = sample_roms_marbl_input_data
+        boundary_kwargs = {
+            "source": {"name": "GLORYS"},
+            "bgc_sources": [{"source": {"name": source_name}}],
+        }
+
+        planned = data._planned_netcdf_outputs(
+            [(INPUT_REGISTRY["forcing.boundary"], boundary_kwargs)]
+        )
+        planned_bgc = [p for p in planned if "boundary-bgc" in p.name]
+        assert len(planned_bgc) == 1, (
+            f"expected exactly one planned bgc output, got {planned}"
+        )
+
+        data._generate_boundary_forcing(key="forcing.boundary", **boundary_kwargs)
+
+        generated_path = Path(mock_bf.bgc[0].save.call_args.args[0])
+        assert generated_path.name.replace("_nc4", "") == planned_bgc[0].name, (
+            f"generated {generated_path.name!r} does not match planned "
+            f"{planned_bgc[0].name!r} for source {source_name!r}"
+        )
 
     @patch("cstar_forge.forge.input_data.rt.BoundaryForcing")
     def test_global_serialize_flag_is_the_fallback_for_unset_sources(
