@@ -40,6 +40,7 @@ from cstar_forge.forge.forge_blueprint import (
     BgcBoundarySource,
     BgcInitialConditionsSource,
     BgcInterpMethod,
+    BgcSourceItem,
     BgcSurfaceSource,
     BoundaryForcing,
     ClimatologyMode,
@@ -57,11 +58,13 @@ from cstar_forge.forge.forge_blueprint import (
     RiverBgcSource,
     RiverForcingItem,
     RiverSource,
+    SourceSpec,
     SpecRef,
     SurfaceForcingItem,
     SurfaceType,
     TidalForcingItem,
     TidalSource,
+    migrate_forcing_inputs,
 )
 from cstar_forge.forge.namelist_model import (
     RunTimeSettings,
@@ -355,10 +358,6 @@ HELP_TEXT: dict[str, str] = {
         "name",
     ): "Logical source name for boundary conditions, e.g. 'GLORYS' (physics) or "
     "'UNIFIED' / 'WOA_BGC' (BGC). Resolved via the catalog alias map.",
-    (
-        "boundary",
-        "type",
-    ): "Boundary forcing type: 'physics' (T, S, u, v, ζ) or 'bgc' (BGC tracers).",
     (
         "boundary",
         "climatology",
@@ -798,10 +797,17 @@ def _split_forcing_data(
     ``description`` (not part of either). Shared by the round-trip verifier and
     ``_on_forcing_spec``/``_populate_from`` so CDR routes consistently everywhere
     a ForcingSpec is read.
+
+    Also migrates any pre-v8 forcing-input shapes in place (see
+    ``migrate_forcing_inputs``) -- a hand-authored or older catalog ``Forcing.yaml``
+    may still carry ``initial_conditions.bgc_source`` (singular) or a list-shaped
+    ``forcing.boundary``, neither of which the forcing editor understands; deep-
+    copied first so this never mutates the catalog's own parsed dict.
     """
-    d = dict(d)
+    d = copy.deepcopy(d)
     d.pop("description", None)
     cdr = d.pop("cdr_forcing", None)
+    migrate_forcing_inputs(d.get("initial_conditions"), d.get("forcing"))
     return d, cdr
 
 
@@ -1285,6 +1291,13 @@ _FORCING_CATEGORIES = ("surface", "tidal", "river")
 # physics source is a required scalar (like IC's), not a row list -- see the
 # `boundary_*` widgets built alongside `ic_*` in `__init__`, mirroring `ic_box`.
 _ROW_CATEGORIES = ("ic_bgc", "boundary_bgc", *_FORCING_CATEGORIES)
+# Section-level default-BGC-interpolation widget attr name for each bgc row
+# category -- shared by `_ForcingEditor._sync_bgc` so a "Copy ... bgc ->" click
+# can copy the section default alongside the rows themselves.
+_DEFAULT_INTERP_ATTR = {
+    "ic_bgc": "ic_bgc_interp",
+    "boundary_bgc": "boundary_bgc_interp",
+}
 _GLORYS_LAYOUT_OPTS = ["", "regional", "global"]  # "" = not specified
 
 # Display-only accordion titles for the forcing editor's category keys -- cosmetic,
@@ -1326,6 +1339,13 @@ _STATIC_BGC_SOURCES = frozenset(
         BgcBoundarySource.GLODAP.value,
     }
 )
+# Derived/inline pseudo-sources computed at generation time (no dataset, no
+# path, no regridding knobs): gates both which per-row widgets are shown
+# (`_apply_row_visibility`) and which keys `_gather_item` emits, so the two
+# can never disagree. Mirrors source_registry.DERIVED_BGC_SOURCES (upper-case).
+_DERIVED_BGC_SOURCES = frozenset(
+    {BgcBoundarySource.CONSTANTS.value, BgcBoundarySource.ESPER.value}
+)
 # Dropdown labels that differ from the stored source name. Blueprints always store
 # the plain enum value; only what the user sees changes.
 _SOURCE_LABELS: dict[str, str] = {
@@ -1345,7 +1365,12 @@ def _source_dropdown_opts(names: list[str]) -> list[tuple[str, str]]:
 # child domain (state comes from the parent's nesting extraction instead).
 _IC_NONE = "(none)"
 _IC_SOURCE_OPTS = [e.value for e in InitialConditionsSource] + [_IC_NONE]
-_IC_BGC_SOURCE_OPTS = [""] + [e.value for e in BgcInitialConditionsSource]
+# Sentinel dropdown value meaning "no boundary forcing" -- valid for any domain
+# (not just a child grid, which already gets this behavior unconditionally via
+# `_gather()`'s durable nesting-based clear, see `ForgeBlueprintWizard._gather`).
+# Mirrors `_IC_NONE`: `gather()` below emits `forcing["boundary"] = None` outright
+# instead of a sourceless dict, matching `Forcing.boundary: BoundaryForcing | None`.
+_BOUNDARY_NONE = "(none)"
 _RIVER_BGC_SOURCE_OPTS = [""] + [e.value for e in RiverBgcSource]
 # ESPER source fields (SourceSpec.esper_method/esper_equation); "" = unset (roms-tools
 # default: method="nn", equation=8).
@@ -1691,7 +1716,15 @@ class _ForcingEditor:
     def __init__(self, W, forcing_inputs: dict[str, Any], on_change):
         self.W = W
         self.on_change = on_change
-        fi = forcing_inputs or {}
+        # Deep-copied so migration and every `.get(...)` below never mutate the
+        # caller's dict (a catalog-parsed ForcingSpec, or a resolved config's
+        # `_sources_to_inputs` reconstruction). `_split_forcing_data` already
+        # migrates a catalog Forcing.yaml before it reaches here, but a caller
+        # (e.g. the fresh-wizard-startup seed) may hand a raw catalog dict
+        # straight through -- migrating again is a no-op (idempotent) when it
+        # already has been.
+        fi = copy.deepcopy(forcing_inputs) if forcing_inputs else {}
+        migrate_forcing_inputs(fi.get("initial_conditions"), fi.get("forcing"))
         # An explicit `None` (emitted by `_sources_to_inputs` for a loaded child
         # blueprint with no IC) means "seed as (none)"; a plain missing key (fresh-
         # wizard startup, which always supplies a real initial_conditions block)
@@ -1840,14 +1873,22 @@ class _ForcingEditor:
         # BoundaryForcing.source is a required scalar (like InitialConditions.source),
         # not a row list, so it gets the same scalar-widget-group treatment as IC's
         # physics source (only "boundary_bgc" below is a row-list, mirroring "ic_bgc").
+        # An explicit `None` (a resolved config with no boundary forcing at all,
+        # or the nesting-derived clear for a child grid) means "seed as (none)";
+        # a plain missing key (fresh-wizard startup) keeps the historical GLORYS
+        # default -- mirrors the IC "(none)" handling above.
+        _boundary_is_none = "boundary" in forc and forc["boundary"] is None
         boundary_block = forc.get("boundary") or {}
         _boundary_source = boundary_block.get("source") or {}
         _boundary_opts = _source_opts_for("boundary", None)
-        _boundary_name_val = str(_boundary_source.get("name", _boundary_opts[0]))
-        if _boundary_name_val not in _boundary_opts:
-            _boundary_name_val = _boundary_opts[0]
+        if _boundary_is_none:
+            _boundary_name_val = _BOUNDARY_NONE
+        else:
+            _boundary_name_val = str(_boundary_source.get("name", _boundary_opts[0]))
+            if _boundary_name_val not in _boundary_opts:
+                _boundary_name_val = _boundary_opts[0]
         self.boundary_name = W.Dropdown(
-            options=_boundary_opts,
+            options=[*_boundary_opts, _BOUNDARY_NONE],
             value=_boundary_name_val,
             description="boundary source:",
             style={"description_width": "110px"},
@@ -1937,9 +1978,27 @@ class _ForcingEditor:
             _w.observe(lambda _ch: on_change(), names="value")
 
         def _sync_boundary_layout_visibility(_change=None):
+            has_boundary = self.boundary_name.value != _BOUNDARY_NONE
             self.boundary_layout.layout.display = (
-                "" if self.boundary_name.value == "GLORYS" else "none"
+                "" if has_boundary and self.boundary_name.value == "GLORYS" else "none"
             )
+            for w in (
+                self.boundary_path,
+                self.boundary_bgc_interp,
+                self.boundary_validate,
+                self.boundary_prefill,
+                self.boundary_regrid_method,
+                self.boundary_extrap_method,
+                self.boundary_options,
+            ):
+                w.layout.display = "" if has_boundary else "none"
+            # "boundary_bgc" is a row list, not a scalar widget group -- hide its
+            # whole pane instead (rows are NOT cleared, so switching back to a
+            # real source restores them). Guarded because the first call below
+            # runs before `_containers` is built.
+            boundary_bgc_pane = getattr(self, "_containers", {}).get("boundary_bgc")
+            if boundary_bgc_pane is not None:
+                boundary_bgc_pane.layout.display = "" if has_boundary else "none"
 
         self.boundary_name.observe(_sync_boundary_layout_visibility, names="value")
         _sync_boundary_layout_visibility()
@@ -1962,7 +2021,10 @@ class _ForcingEditor:
         self._sync_to_boundary_btn = W.Button(
             description="Copy IC bgc → Boundary",
             layout=W.Layout(width="200px"),
-            tooltip="Replace the boundary bgc sources with a copy of the IC bgc sources",
+            tooltip=(
+                "Replace the boundary bgc sources AND default BGC interpolation "
+                "with a copy of the IC bgc sources and default"
+            ),
         )
         self._sync_to_boundary_btn.on_click(
             lambda _b: self._sync_bgc("ic_bgc", "boundary_bgc")
@@ -1970,7 +2032,10 @@ class _ForcingEditor:
         self._sync_to_ic_btn = W.Button(
             description="Copy Boundary bgc → IC",
             layout=W.Layout(width="200px"),
-            tooltip="Replace the IC bgc sources with a copy of the boundary bgc sources",
+            tooltip=(
+                "Replace the IC bgc sources AND default BGC interpolation with a "
+                "copy of the boundary bgc sources and default"
+            ),
         )
         self._sync_to_ic_btn.on_click(
             lambda _b: self._sync_bgc("boundary_bgc", "ic_bgc")
@@ -1991,9 +2056,11 @@ class _ForcingEditor:
                 self._rows[cat].append(self._make_row(cat, item))
             self._render(cat)
 
-        # The panes now exist; re-run so a seeded "(none)" IC hides the ic_bgc pane
-        # (the call during widget construction above could not reach it yet).
+        # The panes now exist; re-run so a seeded "(none)" IC/boundary hides the
+        # ic_bgc/boundary_bgc pane (the call during widget construction above
+        # could not reach it yet).
         _sync_ic_layout_visibility()
+        _sync_boundary_layout_visibility()
 
     # ---- one item row --------------------------------------------------------
     @staticmethod
@@ -2019,11 +2086,11 @@ class _ForcingEditor:
             show(w["wind_dropoff"], t == SurfaceType.PHYSICS.value)
         if "glorys_layout" in w:
             show(w["glorys_layout"], name == "GLORYS")
-        # use_vars only makes sense for a bgc-type source: surface/boundary rows with
-        # type="bgc", or an IC-BGC row (no "type" widget at all -- every row there is
-        # implicitly bgc).
+        # use_vars is only ever built for ic_bgc/boundary_bgc rows (see _make_row --
+        # SurfaceForcingItem has no such field), so it's always relevant when
+        # present; no type-based gating needed here.
         if "use_vars" in w:
-            show(w["use_vars"], t is None or t == SurfaceType.BGC.value)
+            show(w["use_vars"], True)
         # constants/ESPER fields (see _add_bgc_source_widgets) only apply to their
         # matching source name.
         if "constants" in w:
@@ -2032,13 +2099,21 @@ class _ForcingEditor:
             show(w["esper_method"], name == "ESPER")
         if "esper_equation" in w:
             show(w["esper_equation"], name == "ESPER")
-        # Serializing the write is only worth offering for ESPER: it is the one bgc
-        # source whose per-chunk cost makes the concurrent write a memory risk.
-        # constants/ESPER are derived/inline pseudo-sources, not a regridded dataset:
-        # boundary's regridding knobs (prefill/regrid_method/extrap_method/
+        # A 'constants' source takes no path (SourceSpec._constants_only_for_
+        # constants_source forbids pairing them) -- gated on the "constants" key's
+        # presence, which only ic_bgc/boundary_bgc rows carry, so this never
+        # touches surface/tidal/river rows' own `path` widget (river's is instead
+        # owned outright by `_sync_river_custom_visibility` in custom-file mode).
+        if "path" in w and "constants" in w:
+            show(w["path"], name != "constants")
+        # `_serialize_dask` (carried opaquely, see `_make_row`/`_gather_item` -- no
+        # widget to show/hide here) is only ever set on an ESPER source: it is the
+        # one bgc source whose per-chunk cost makes the concurrent write a memory
+        # risk. constants/ESPER are derived/inline pseudo-sources, not a regridded
+        # dataset: boundary's regridding knobs (prefill/regrid_method/extrap_method/
         # bgc_interpolation_method) only make sense for a dataset-backed source being
         # regridded onto the grid.
-        is_derived_bgc = name in ("constants", "ESPER")
+        is_derived_bgc = name in _DERIVED_BGC_SOURCES
         # A CUSTOM_FILE river row is owned by `_sync_river_custom_visibility`, which
         # hides these outright (the attach flow replaces the standard-source row).
         # Without this, the re-show below would undo that hide on every row rebuild.
@@ -2128,7 +2203,7 @@ class _ForcingEditor:
 
             w["type"].observe(_on_type_change, names="value")
 
-        if cat in ("surface", "boundary_bgc"):
+        if cat in ("surface", "boundary_bgc", "ic_bgc"):
             w["climatology"] = W.Checkbox(
                 value=bool(src.get("climatology", False)),
                 description="climatology",
@@ -2165,12 +2240,17 @@ class _ForcingEditor:
                 tooltip=_tip(cat, "glorys_layout"),
             )
 
-        if cat in ("surface", "boundary_bgc"):
+        if cat in ("ic_bgc", "boundary_bgc"):
             # BGC-only knobs: down-select which vars this source contributes, and
-            # constants/ESPER-specific fields (visibility gated to type="bgc"/the
-            # matching source name by _apply_row_visibility). "boundary_bgc" has no
-            # own tooltip entries -- reuse "boundary"'s (same underlying fields).
-            _tip_cat = "boundary" if cat == "boundary_bgc" else cat
+            # constants/ESPER-specific fields (visibility gated to the matching
+            # source name by _apply_row_visibility). Only "ic_bgc"/"boundary_bgc"
+            # rows carry these -- unlike them, `SurfaceForcingItem` has no
+            # `use_vars` field at all (extra="forbid" would reject it), and
+            # `BgcSurfaceSource` offers neither "constants" nor "ESPER", so a
+            # surface bgc row never needs (and, for use_vars, must never emit)
+            # these widgets. "boundary_bgc" has no own tooltip entries -- reuse
+            # "boundary"'s (same underlying fields).
+            _tip_cat = "boundary" if cat == "boundary_bgc" else "ic_bgc"
             w["use_vars"] = W.Text(
                 value=", ".join(item.get("use_vars") or []),
                 description="use_vars:",
@@ -2180,29 +2260,6 @@ class _ForcingEditor:
                 tooltip=_tip(_tip_cat, "use_vars"),
             )
             _add_bgc_source_widgets(W, w, _tip_cat, src, small)
-        if cat == "ic_bgc":
-            w["climatology"] = W.Checkbox(
-                value=bool(src.get("climatology", False)),
-                description="climatology",
-                indent=False,
-                # Wider than the default so the longer label isn't clipped.
-                layout=W.Layout(width="130px"),
-                tooltip=_tip("ic_bgc", "climatology"),
-            )
-            w["use_vars"] = W.Text(
-                value=", ".join(item.get("use_vars") or []),
-                description="use_vars:",
-                style=small,
-                layout=W.Layout(width="200px"),
-                placeholder="ALK,DIC,...",
-                tooltip=_tip("ic_bgc", "use_vars"),
-            )
-            _add_bgc_source_widgets(W, w, "ic_bgc", src, small)
-
-            def _on_ic_bgc_name_change(_change, ws=w):
-                self._apply_row_visibility(ws)
-
-            w["name"].observe(_on_ic_bgc_name_change, names="value")
         if cat in ("ic_bgc", "boundary_bgc"):
             # Per-source interp-method override (BgcSourceItem.bgc_interpolation_method):
             # blank = inherit the section's own default (self.ic_bgc_interp /
@@ -2474,7 +2531,7 @@ class _ForcingEditor:
         self._apply_row_visibility(w)
         return w
 
-    def _row_box(self, w, cat: str):
+    def _row_box(self, w):
         # `type` (when present) drives the other options in the row, so show it first.
         # The remove button goes at the FRONT (not the end): a row can grow quite wide
         # (name/path/climatology/constants/esper dropdowns/options editor), and a
@@ -2493,7 +2550,7 @@ class _ForcingEditor:
 
     def _render(self, cat: str):
         W = self.W
-        boxes = [self._row_box(w, cat) for w in self._rows[cat]]
+        boxes = [self._row_box(w) for w in self._rows[cat]]
         label = "add bgc source" if cat in ("ic_bgc", "boundary_bgc") else f"add {cat}"
         add = W.Button(description=label, icon="plus", layout=W.Layout(width="150px"))
         add.on_click(lambda _b, c=cat: self._add(c))
@@ -2518,15 +2575,25 @@ class _ForcingEditor:
         self.on_change()
 
     def _sync_bgc(self, from_cat: str, to_cat: str):
-        """One-shot copy of every bgc-source row from ``from_cat`` to ``to_cat``
-        (``"ic_bgc"``/``"boundary_bgc"``) -- snapshots the source panel's current
-        values and replaces the target panel's rows with fresh copies built from
+        """One-shot copy of every bgc-source row, AND the section-level default
+        BGC interpolation method, from ``from_cat`` to ``to_cat`` (``"ic_bgc"``/
+        ``"boundary_bgc"``) -- snapshots the source panel's current values and
+        replaces the target panel's rows/default with fresh copies built from
         them; not a live link, so later edits to either panel don't affect the
         other until the button is pressed again.
+
+        The default matters alongside the rows, not just the rows themselves: a
+        copied row with a blank (inherit-the-default) per-row
+        ``bgc_interpolation_method`` would silently change *meaning* if the
+        source and target panels' defaults differ (see ``self.ic_bgc_interp``/
+        ``self.boundary_bgc_interp``).
         """
         items = [self._gather_item(from_cat, w) for w in self._rows[from_cat]]
         self._rows[to_cat] = [self._make_row(to_cat, item) for item in items]
         self._render(to_cat)
+        from_attr = _DEFAULT_INTERP_ATTR[from_cat]
+        to_attr = _DEFAULT_INTERP_ATTR[to_cat]
+        getattr(self, to_attr).value = getattr(self, from_attr).value
         self.on_change()
 
     def _add(self, cat: str):
@@ -2552,27 +2619,39 @@ class _ForcingEditor:
             if w.get("_custom_file"):
                 item["custom_file"] = dict(w["_custom_file"])
             return item
-        src: dict[str, Any] = {"name": w["name"].value}
+        name_val = w["name"].value
+        # `constants`/`ESPER` are derived/inline pseudo-sources: SourceSpec's own
+        # validators reject `constants`/`esper_method`/`esper_equation` paired with
+        # any other source name, and reject `path` paired with `constants` -- so
+        # each is only ever emitted for its matching source name, never leaked in
+        # from a hidden widget that still holds a stale value from a previously
+        # selected source (see `_apply_row_visibility`).
+        is_derived_bgc = name_val in _DERIVED_BGC_SOURCES
+        src: dict[str, Any] = {"name": name_val}
         # The checkbox is hidden rather than destroyed when a static source is
         # picked, so a value left over from a previously selected source would
         # otherwise leak into the blueprint and trip roms-tools' ValueError.
         if (
             "climatology" in w
             and w["climatology"].value
-            and w["name"].value not in _STATIC_BGC_SOURCES
+            and name_val not in _STATIC_BGC_SOURCES
         ):
             src["climatology"] = True
         if "glorys_layout" in w and w["glorys_layout"].value:  # Dropdown: "" = omit
             src["glorys_layout"] = w["glorys_layout"].value
-        if "path" in w and w["path"].value.strip():  # blank = derive default path
+        if (
+            "path" in w and w["path"].value.strip() and name_val != "constants"
+        ):  # blank = derive default path; a 'constants' source takes no path
             src["path"] = w["path"].value.strip()
-        if "constants" in w:  # constants source: {"key": float, ...}
+        if "constants" in w and name_val == "constants":  # {"key": float, ...}
             constants = _parse_constants(w["constants"].value)
             if constants:
                 src["constants"] = constants
-        if "esper_method" in w and w["esper_method"].value:  # Dropdown: "" = unset
+        if (
+            "esper_method" in w and w["esper_method"].value and name_val == "ESPER"
+        ):  # Dropdown: "" = unset
             src["esper_method"] = w["esper_method"].value
-        if "esper_equation" in w and w["esper_equation"].value:
+        if "esper_equation" in w and w["esper_equation"].value and name_val == "ESPER":
             src["esper_equation"] = int(w["esper_equation"].value)
         item: dict[str, Any] = {"source": src}
         if "type" in w:
@@ -2593,8 +2672,15 @@ class _ForcingEditor:
             ]
         # Shared surface/tidal regrid knobs: only emit non-default values to keep
         # specs clean. bgc_interpolation_method (ic_bgc/boundary_bgc rows) uses the
-        # blank-sentinel convention instead (blank = inherit the section default).
-        if "bgc_interpolation_method" in w and w["bgc_interpolation_method"].value:
+        # blank-sentinel convention instead (blank = inherit the section default);
+        # constants/ESPER are derived/inline pseudo-sources, not a regridded
+        # dataset, so it never applies to them (mirrors the hidden-widget gate in
+        # `_apply_row_visibility`).
+        if (
+            "bgc_interpolation_method" in w
+            and w["bgc_interpolation_method"].value
+            and not is_derived_bgc
+        ):
             item["bgc_interpolation_method"] = w["bgc_interpolation_method"].value
         # Item level, not `src`: serialize_dask is a Forge write option, not a
         # roms-tools source parameter. No longer editable here (see `_make_row`);
@@ -2675,34 +2761,41 @@ class _ForcingEditor:
 
         # Boundary: a structural mirror of the IC dict above -- BoundaryForcing has
         # the identical source/bgc_sources/bgc_interpolation_method/prefill/etc.
-        # shape as InitialConditions (see forge_blueprint.BoundaryForcing).
-        boundary_source = {"name": self.boundary_name.value}
-        if self.boundary_layout.value:
-            boundary_source["glorys_layout"] = self.boundary_layout.value
-        if self.boundary_path.value.strip():
-            boundary_source["path"] = self.boundary_path.value.strip()
-        boundary: dict[str, Any] = {"source": boundary_source}
-        boundary_bgc_sources = [
-            self._gather_item("boundary_bgc", w) for w in self._rows["boundary_bgc"]
-        ]
-        if boundary_bgc_sources:
-            boundary["bgc_sources"] = boundary_bgc_sources
-        if (
-            self.boundary_bgc_interp.value
-            and self.boundary_bgc_interp.value != BgcInterpMethod.DEPTH.value
-        ):
-            boundary["bgc_interpolation_method"] = self.boundary_bgc_interp.value
-        if not self.boundary_validate.value:  # checked ("validate") is the default
-            boundary["bypass_validation"] = True
-        if self.boundary_prefill.value:
-            boundary["prefill"] = self.boundary_prefill.value
-        if self.boundary_regrid_method.value:
-            boundary["regrid_method"] = self.boundary_regrid_method.value
-        if self.boundary_extrap_method.value:
-            boundary["extrap_method"] = self.boundary_extrap_method.value
-        boundary_opts = _parse_options(self.boundary_options.value)
-        if boundary_opts:
-            boundary["options"] = boundary_opts
+        # shape as InitialConditions (see forge_blueprint.BoundaryForcing) -- except
+        # boundary has no IC-style omit-the-key convention: `Forcing.boundary` is
+        # `BoundaryForcing | None`, so "(none)" emits an explicit `None`, not an
+        # omitted key (mirrors the durable child-grid clear in
+        # `ForgeBlueprintWizard._gather`, which forces this same field to `None`).
+        if self.boundary_name.value == _BOUNDARY_NONE:
+            boundary: dict[str, Any] | None = None
+        else:
+            boundary_source = {"name": self.boundary_name.value}
+            if self.boundary_layout.value:
+                boundary_source["glorys_layout"] = self.boundary_layout.value
+            if self.boundary_path.value.strip():
+                boundary_source["path"] = self.boundary_path.value.strip()
+            boundary = {"source": boundary_source}
+            boundary_bgc_sources = [
+                self._gather_item("boundary_bgc", w) for w in self._rows["boundary_bgc"]
+            ]
+            if boundary_bgc_sources:
+                boundary["bgc_sources"] = boundary_bgc_sources
+            if (
+                self.boundary_bgc_interp.value
+                and self.boundary_bgc_interp.value != BgcInterpMethod.DEPTH.value
+            ):
+                boundary["bgc_interpolation_method"] = self.boundary_bgc_interp.value
+            if not self.boundary_validate.value:  # checked ("validate") is default
+                boundary["bypass_validation"] = True
+            if self.boundary_prefill.value:
+                boundary["prefill"] = self.boundary_prefill.value
+            if self.boundary_regrid_method.value:
+                boundary["regrid_method"] = self.boundary_regrid_method.value
+            if self.boundary_extrap_method.value:
+                boundary["extrap_method"] = self.boundary_extrap_method.value
+            boundary_opts = _parse_options(self.boundary_options.value)
+            if boundary_opts:
+                boundary["options"] = boundary_opts
 
         forcing = {
             cat: [self._gather_item(cat, w) for w in self._rows[cat]]
@@ -4508,21 +4601,12 @@ class ForgeBlueprintWizard:
         """
 
         def src(spec) -> dict[str, Any]:
+            # SourceSpec's own fields (climatology/glorys_layout/path/constants/
+            # esper_method/esper_equation) -- generic `plain()` handles all of
+            # them uniformly (esper_method/esper_equation are plain Literal
+            # strings/ints, not Enum members, so no special-casing needed).
             d: dict[str, Any] = {"name": spec.name}
-            if spec.climatology:
-                d["climatology"] = True
-            if spec.glorys_layout:
-                d["glorys_layout"] = spec.glorys_layout
-            if getattr(spec, "path", None):
-                d["path"] = spec.path
-            if getattr(spec, "constants", None):
-                d["constants"] = dict(spec.constants)
-            if getattr(spec, "esper_method", None):
-                d["esper_method"] = getattr(
-                    spec.esper_method, "value", spec.esper_method
-                )
-            if getattr(spec, "esper_equation", None):
-                d["esper_equation"] = spec.esper_equation
+            d.update(plain(spec, SourceSpec, skip=("name",)))
             return d
 
         def plain(it, cls, skip=("source",)) -> dict[str, Any]:
@@ -4551,16 +4635,13 @@ class ForgeBlueprintWizard:
             d: dict[str, Any] = {"source": src(spec.source)}
             bgc_sources = []
             for bs in spec.bgc_sources:
+                # BgcSourceItem's own fields (use_vars/bgc_interpolation_method/
+                # serialize_dask) -- carrying serialize_dask back into the seed
+                # matters: editing an existing blueprint in the wizard would
+                # otherwise silently drop it, and a large domain would go back
+                # to the write that fails.
                 bd: dict[str, Any] = {"source": src(bs.source)}
-                if bs.use_vars:
-                    bd["use_vars"] = list(bs.use_vars)
-                if bs.bgc_interpolation_method is not None:
-                    bd["bgc_interpolation_method"] = bs.bgc_interpolation_method.value
-                # Carry the per-source serialized-write choice back into the seed,
-                # or editing an existing blueprint in the wizard would silently drop
-                # it -- and a large domain would go back to the write that fails.
-                if bs.serialize_dask:
-                    bd["serialize_dask"] = True
+                bd.update(plain(bs, BgcSourceItem))
                 bgc_sources.append(bd)
             if bgc_sources:
                 d["bgc_sources"] = bgc_sources
@@ -4583,7 +4664,12 @@ class ForgeBlueprintWizard:
             )
 
         forcing: dict[str, Any] = {}
-        if f.boundary is not None:
+        if f.boundary is None:
+            # Explicit sentinel (as opposed to an omitted key) so
+            # `_ForcingEditor.__init__` seeds the "(none)" dropdown option
+            # instead of falling back to the fresh-wizard default source.
+            forcing["boundary"] = None
+        else:
             boundary = bgc_section(f.boundary)
             boundary.update(
                 plain(f.boundary, BoundaryForcing, skip=("source", "bgc_sources"))

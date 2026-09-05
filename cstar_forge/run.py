@@ -254,7 +254,11 @@ def main(argv: list | None = None, *, prog: str = "python -m cstar_forge.run") -
         "with --serialize-dask-write: a manual low-memory/troubleshooting tool "
         "that bounds peak memory to one task's footprint at a wall-time cost "
         "(default and --no-serialize-dask-write are the ordinary concurrent "
-        "write; PyESPER protects its own chunks). Ignored with --no-dask.",
+        "write; PyESPER protects its own chunks). This is only the FALLBACK: a "
+        "bgc source that sets its own 'serialize_dask' in the blueprint "
+        "(BgcSourceItem) always wins for that source, whatever this flag is "
+        "set to -- this flag only decides the write behavior for sources that "
+        "leave it unset (None). Ignored with --no-dask.",
     )
     parser.add_argument(
         "--subchunk",

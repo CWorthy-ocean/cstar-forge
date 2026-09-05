@@ -64,8 +64,12 @@ def _numba_num_threads(n: int):
     the machine's cores between dask's own worker count and each worker's internal
     BLAS/numba parallelism instead of forcing either extreme.
     """
+    # numba.set_num_threads raises ValueError for n > numba.config.NUMBA_NUM_THREADS
+    # (the launch-time ceiling -- the whole node's core count, or a smaller value
+    # if the NUMBA_NUM_THREADS env var pinned it) -- clamp rather than let a
+    # generous `inner_threads` computed from os.sched_getaffinity crash generation.
     prev = numba.get_num_threads()
-    numba.set_num_threads(n)
+    numba.set_num_threads(min(n, numba.config.NUMBA_NUM_THREADS))
     try:
         yield
     finally:
@@ -820,11 +824,14 @@ class RomsMarblInputData(InputData):
             cpu_count = len(os.sched_getaffinity(0))
         except (AttributeError, OSError):  # non-Linux fallback
             cpu_count = os.cpu_count() or 1
-        inner_threads = (
-            max(1, cpu_count // self.dask_num_workers) if cpu_count >= 16 else 1
-        )
+        # Guard against a non-positive dask_num_workers (misconfiguration, or an
+        # explicit 0/negative override) -- it would otherwise divide by zero (0)
+        # or produce a negative inner_threads (negative), either of which crashes
+        # generation before a single input file is written; treat it as 1 worker.
+        dask_num_workers = self.dask_num_workers if self.dask_num_workers > 0 else 1
+        inner_threads = max(1, cpu_count // dask_num_workers) if cpu_count >= 16 else 1
         dask_cm = (
-            dask.config.set(num_workers=self.dask_num_workers)
+            dask.config.set(num_workers=dask_num_workers)
             if self.use_dask
             else contextlib.nullcontext()
         )
@@ -1127,11 +1134,15 @@ class RomsMarblInputData(InputData):
         immediately after the per-bgc-source ``.save()`` calls in
         ``_generate_boundary_forcing``.
 
-        ``BoundaryForcingSource.save()`` returns None, so we can't rely on a
-        return value the way the single-item save paths elsewhere in this file do
-        -- this glob (no clobber short-circuit; we just wrote these files
-        ourselves this run) covers the same grouped multi-file outputs (e.g.
-        monthly chunks) that ``_existing_output_paths`` handles for reuse.
+        ``BoundaryForcingSource.save()`` now returns the ``list[Path]`` it
+        actually wrote, but ``_generate_boundary_forcing`` discovers it via this
+        glob instead of trusting that return value directly -- unlike the
+        physics write, a grouped/climatology bgc split's returned names are not
+        assumed equivalent to what this glob finds, so this stays the single
+        source of truth for bgc outputs (no clobber short-circuit; we just wrote
+        these files ourselves this run). Covers the same grouped multi-file
+        outputs (e.g. monthly chunks) that ``_existing_output_paths`` handles
+        for reuse.
         """
         found = self._glob_matching_outputs(mangled_path)
         return found or [str(mangled_path)]
@@ -1572,10 +1583,12 @@ class RomsMarblInputData(InputData):
             # `inifile` key is a single scalar path), so there is no per-source
             # write to serialize independently the way boundary forcing has: any
             # source asking for it serializes the whole IC write.
-            ic_serialize_dask = (
-                True
-                if any(self._bgc_serialize_flags(bgc_sources_raw))
-                else self.serialize_dask_write
+            # `_bgc_serialize_flags` already folds each source's own
+            # `serialize_dask` against the `--serialize-dask-write` fallback, so
+            # `any(...)` alone would miss the case of zero bgc sources with the
+            # CLI flag set; `or bool(self.serialize_dask_write)` covers that.
+            ic_serialize_dask = any(self._bgc_serialize_flags(bgc_sources_raw)) or bool(
+                self.serialize_dask_write
             )
             input_args = self._build_input_args(
                 key, extra=extra, base_kwargs=kwargs, time_window=time_window
@@ -1829,11 +1842,20 @@ class RomsMarblInputData(InputData):
 
         physics_yaml_path = self._yaml_filename(f"{key}-physics")
         physics_output_path = self._forcing_filename(input_name="boundary-physics")
+        # Built from the RAW (unresolved) blueprint source names, not
+        # `bgc_sources_resolved` -- `_resolve_bgc_sources_list` renames a source
+        # to whatever roms-tools registers it under (`_rename_for_roms_tools`,
+        # via `_resolve_source_block`), which for some sources differs from
+        # Forge's logical name. `_planned_netcdf_outputs`/`executor.
+        # _planned_netcdf_outputs` both plan off the raw name (via
+        # `_item_source_name`), so building the actual filename off the
+        # resolved/renamed name here made the generated suffix disagree with
+        # what was planned.
         bgc_details = [
             self._forcing_detail_suffix(
-                "bgc", bs["source"].get("name"), bs.get("use_vars")
+                "bgc", self._item_source_name(bs), self._item_use_vars(bs)
             )
-            for bs in bgc_sources_resolved
+            for bs in (bgc_sources_raw or [])
         ]
         bgc_yaml_paths = [self._yaml_filename(f"{key}-{d}") for d in bgc_details]
         bgc_output_paths = [
@@ -1956,22 +1978,27 @@ class RomsMarblInputData(InputData):
                 self._pio_mangle(physics_output_path),
                 serialize_dask=self.serialize_dask_write,
             )
-            if bry.bgc:
-                # filepath=None: derive/fill the MARBL tracer set across every
-                # source but do NOT let it save -- each object is saved below with
-                # its own serialize_dask.
-                bry.bgc_model().process_bgc_fields(bry.bgc, filepath=None)
-                for obj, path, serialize in zip(
-                    bry.bgc, bgc_mangled_paths, bgc_serialize_flags, strict=True
-                ):
-                    obj.save(str(path), serialize_dask=serialize)
+            # `rt.BoundaryForcing.__post_init__` already ran
+            # `bgc_model().process_bgc_fields(self.bgc)` to derive/fill the
+            # MARBL tracer set across every source (see its own __post_init__,
+            # roms_tools/setup/boundary_forcing.py) -- calling it again here
+            # would redo that work and, since the companion roms-tools change
+            # dropped `process_bgc_fields`'s `filepath=` parameter, now raises
+            # TypeError. Just save each already-completed source with its own
+            # serialize_dask.
+            for obj, path, serialize in zip(
+                bry.bgc, bgc_mangled_paths, bgc_serialize_flags, strict=True
+            ):
+                obj.save(str(path), serialize_dask=serialize)
         self._record_boundary_forcing_result(
             "physics", self._pio_finalize(physics_paths)
         )
-        # `BoundaryForcingSource.save()` returns None, and its actual writes can
-        # use a grouped/climatology suffix (e.g. a monthly split) rather than the
-        # exact name we asked for -- so discover what was really written, same as
-        # the reuse path above.
+        # `BoundaryForcingSource.save()` returns the `list[Path]` it actually
+        # wrote, but a grouped/climatology split (e.g. monthly) may use
+        # different filenames than the single mangled path we asked for --
+        # discover what was really written the same way as the reuse path
+        # above, rather than trusting the return value (which the physics
+        # write above can, since it is never grouped this way).
         for mangled_path in bgc_mangled_paths:
             saved = self._discover_saved_paths(mangled_path)
             finalized = self._pio_finalize(saved)

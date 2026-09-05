@@ -57,6 +57,7 @@ import json
 import math
 import re
 import subprocess
+import warnings
 from datetime import UTC, datetime
 from enum import Enum
 from importlib.metadata import PackageNotFoundError
@@ -536,60 +537,119 @@ def migrate_forge_blueprint_data(data: dict[str, Any] | None) -> dict[str, Any]:
     if version is None or version < 8:
         forcing = data.get("forcing")
         if isinstance(forcing, dict):
-            ic = forcing.get("initial_conditions")
-            if isinstance(ic, dict) and "bgc_source" in ic:
-                old_bgc_source = ic.pop("bgc_source")
-                if "bgc_sources" in ic:
-                    # Both the pre-v6 singular key and the v6+ list key are present
-                    # in the same dict -- an inconsistent/hand-edited file, not
-                    # "already migrated" data (which would only ever have
-                    # `bgc_sources`). Silently discarding `old_bgc_source` here
-                    # would lose a real source with no trace; fail loudly instead.
-                    raise ValueError(
-                        "forcing.initial_conditions has both the pre-v6 'bgc_source' "
-                        "and the v6+ 'bgc_sources' -- remove whichever is stale "
-                        "before loading (this file was likely hand-edited)."
-                    )
-                ic["bgc_sources"] = (
-                    [{"source": old_bgc_source}] if old_bgc_source else []
-                )
-
-        # `forcing.boundary` collapsed from a flat, `type`-discriminated list into a
-        # single BoundaryForcing section. Main released v6/v7 with the list shape, so
-        # (unlike when this change was branch-local) real files carry it and DO need
-        # converting: the `type: physics` item becomes the section's own
-        # source + plain fields, each `type: bgc` item becomes a `bgc_sources` entry.
-        if isinstance(forcing, dict) and isinstance(forcing.get("boundary"), list):
-            items = [b for b in forcing["boundary"] if isinstance(b, dict)]
-            if not items:
-                forcing["boundary"] = None
-            else:
-                phys = next(
-                    (b for b in items if b.get("type") in (None, "physics")), None
-                )
-                if phys is None:
-                    raise ValueError(
-                        "forcing.boundary has no type='physics' entry to convert "
-                        "into the v8 BoundaryForcing section source."
-                    )
-                bgc_keys = set(BgcSourceItem.model_fields)
-                sect_keys = set(BoundaryForcing.model_fields) - {
-                    "source",
-                    "bgc_sources",
-                }
-                section: dict[str, Any] = {"source": phys.get("source")}
-                for k, v in phys.items():
-                    if k in sect_keys:
-                        section[k] = v
-                section["bgc_sources"] = [
-                    {k: v for k, v in b.items() if k in bgc_keys}
-                    for b in items
-                    if b.get("type") == "bgc"
-                ]
-                forcing["boundary"] = section
+            migrate_forcing_inputs(forcing.get("initial_conditions"), forcing)
 
     data["forge_blueprint_version"] = FORGE_BLUEPRINT_VERSION
     return data
+
+
+def migrate_forcing_inputs(
+    initial_conditions: dict[str, Any] | None, forcing: dict[str, Any] | None
+) -> None:
+    """Migrate the pre-v8 forcing-input shapes IN PLACE (idempotent).
+
+    Shared by :func:`migrate_forge_blueprint_data` (where ``initial_conditions``
+    lives inside ``forcing``) and by the wizard's ForcingSpec loader (where a
+    catalog ``Forcing.yaml`` keeps ``initial_conditions`` and ``forcing`` as
+    top-level siblings and is otherwise never migrated) -- one function, so
+    the two entry points cannot drift.
+
+    * ``initial_conditions.bgc_source`` (a single source dict) is rewrapped as a
+      one-item ``bgc_sources`` list; absent/``None`` becomes ``[]``. Both keys
+      present at once is an inconsistent, hand-edited file and raises.
+    * ``forcing.boundary`` as a flat, ``type``-discriminated list collapses into
+      the single ``BoundaryForcing`` section: the ``type: physics`` item supplies
+      ``source`` plus the section's plain fields, every ``type: bgc`` item becomes
+      a ``bgc_sources`` entry, and an empty list becomes ``None``.
+
+    Already-current data (a ``bgc_sources`` list, a dict-shaped ``boundary``) is
+    left untouched, so calling this on migrated input is a no-op.
+    """
+    ic = initial_conditions
+    if isinstance(ic, dict) and "bgc_source" in ic:
+        old_bgc_source = ic.pop("bgc_source")
+        if "bgc_sources" in ic:
+            # Both the pre-v6 singular key and the v6+ list key are present in
+            # the same dict -- an inconsistent/hand-edited file, not "already
+            # migrated" data (which would only ever have `bgc_sources`).
+            # Silently discarding `old_bgc_source` here would lose a real
+            # source with no trace; fail loudly instead.
+            raise ValueError(
+                "initial_conditions has both the pre-v6 'bgc_source' and the "
+                "v6+ 'bgc_sources' -- remove whichever is stale before loading "
+                "(this file was likely hand-edited)."
+            )
+        ic["bgc_sources"] = [{"source": old_bgc_source}] if old_bgc_source else []
+
+    # `forcing.boundary` collapsed from a flat, `type`-discriminated list into a
+    # single BoundaryForcing section. Main released v6/v7 with the list shape, so
+    # real files carry it and DO need converting: the `type: physics` item
+    # becomes the section's own source + plain fields, each `type: bgc` item
+    # becomes a `bgc_sources` entry.
+    if isinstance(forcing, dict) and isinstance(forcing.get("boundary"), list):
+        boundary_list = forcing["boundary"]
+        non_dict = [b for b in boundary_list if not isinstance(b, dict)]
+        if non_dict:
+            # The old code silently filtered these out -- an all-non-dict list
+            # became `None` (boundary forcing silently vanishing) and a mixed
+            # list silently lost whichever entries weren't dicts. Both are data
+            # loss with no trace; a malformed file should fail loudly instead.
+            raise ValueError(
+                f"forcing.boundary has {len(non_dict)} non-dict entr"
+                f"{'y' if len(non_dict) == 1 else 'ies'} -- each pre-v8 "
+                "boundary item must be a mapping with a 'type' key; fix the "
+                "file (this is not a migratable shape)."
+            )
+        items = boundary_list
+        if not items:
+            forcing["boundary"] = None
+        else:
+            phys = next((b for b in items if b.get("type") in (None, "physics")), None)
+            if phys is None:
+                raise ValueError(
+                    "forcing.boundary has no type='physics' entry to convert "
+                    "into the v8 BoundaryForcing section source."
+                )
+            bgc_keys = set(BgcSourceItem.model_fields)
+            sect_keys = set(BoundaryForcing.model_fields) - {
+                "source",
+                "bgc_sources",
+            }
+            section: dict[str, Any] = {"source": phys.get("source")}
+            for k, v in phys.items():
+                if k in sect_keys:
+                    section[k] = v
+            bgc_sources = []
+            for idx, b in enumerate(items):
+                if b.get("type") != "bgc":
+                    continue
+                # Per-item keys that a pre-v8 flat boundary item could carry
+                # (e.g. per-item regrid overrides) but `BgcSourceItem` has no
+                # slot for -- BgcSourceItem only has source/use_vars/
+                # bgc_interpolation_method/serialize_dask, the rest of the old
+                # per-item shape lived on the section itself. Warn rather than
+                # silently drop so a hand-authored override doesn't vanish
+                # without a trace.
+                dropped = {
+                    k: v
+                    for k, v in b.items()
+                    if k not in bgc_keys
+                    and k != "type"
+                    and not (v is None or v is False or v == {} or v == [])
+                }
+                if dropped:
+                    src = b.get("source")
+                    src_name = src.get("name") if isinstance(src, dict) else src
+                    warnings.warn(
+                        f"forcing.boundary[{idx}] (source={src_name!r}) sets "
+                        f"{sorted(dropped)}, which are being dropped: per-item "
+                        "regrid options are not representable on BgcSourceItem; "
+                        "set them on the boundary section instead.",
+                        stacklevel=2,
+                    )
+                bgc_sources.append({k: v for k, v in b.items() if k in bgc_keys})
+            section["bgc_sources"] = bgc_sources
+            forcing["boundary"] = section
 
 
 class _Section(BaseModel):
@@ -1013,8 +1073,9 @@ class BgcSourceItem(_Section):
     use_vars: list[str] | None = None
     """Down-select which BGC variables this source contributes. Presence-only
     check in roms-tools -- raises if a requested variable isn't provided by the
-    source. Required when multiple ``bgc_sources`` are present, so their variable
-    sets can be arranged not to overlap."""
+    source. Required when multiple ``bgc_sources`` are present (enforced by
+    ``InitialConditions``/``BoundaryForcing``'s ``_bgc_sources_use_vars_partitioned``
+    validator), so their variable sets can be arranged not to overlap."""
     bgc_interpolation_method: BgcInterpMethod | None = None
     """Per-source override of the section's ``bgc_interpolation_method``
     default. ``None`` means "inherit the section default" -- roms-tools' own
@@ -1039,6 +1100,40 @@ class BgcSourceItem(_Section):
     concurrent write. Initial conditions merge every bgc source into ONE dataset
     and so cannot be split -- there, any source setting this serializes the whole
     initial-conditions write."""
+
+
+def _require_partitioned_bgc_use_vars(
+    bgc_sources: list[BgcSourceItem], section_label: str
+) -> None:
+    """Shared by ``InitialConditions``/``BoundaryForcing``: when more than one
+    bgc source is present there is no other signal for which tracers each
+    source contributes, so every item MUST declare ``use_vars`` and the
+    declared sets must be pairwise disjoint -- an overlapping tracer would
+    leave it undefined which source's value actually lands in the merged/
+    per-source output.
+    """
+    if len(bgc_sources) <= 1:
+        return
+    seen_by_var: dict[str, tuple[int, str]] = {}
+    for idx, bs in enumerate(bgc_sources):
+        name = bs.source.name
+        if not bs.use_vars:
+            raise ValueError(
+                f"{section_label}.bgc_sources[{idx}] (source={name!r}) has no "
+                "use_vars, but multiple bgc_sources are present -- partition "
+                "with use_vars so each source's tracers are unambiguous"
+            )
+        for var in bs.use_vars:
+            prior = seen_by_var.get(var)
+            if prior is not None:
+                other_idx, other_name = prior
+                raise ValueError(
+                    f"{section_label}.bgc_sources[{idx}] (source={name!r}) and "
+                    f"bgc_sources[{other_idx}] (source={other_name!r}) both "
+                    f"claim {var!r} via use_vars -- partition with use_vars so "
+                    "the tracer sets don't overlap"
+                )
+            seen_by_var[var] = (idx, name)
 
 
 class InitialConditions(_Section):
@@ -1067,6 +1162,11 @@ class InitialConditions(_Section):
     across physics + every bgc source). Off (validation runs) by default;
     the wizard exposes this as a checked "Validate" box, so checking it off
     corresponds to setting this True."""
+
+    @model_validator(mode="after")
+    def _bgc_sources_use_vars_partitioned(self) -> InitialConditions:
+        _require_partitioned_bgc_use_vars(self.bgc_sources, "initial_conditions")
+        return self
 
 
 class BoundaryForcing(_Section):
@@ -1099,6 +1199,11 @@ class BoundaryForcing(_Section):
     across physics + every bgc source). Off (validation runs) by default;
     the wizard exposes this as a checked "Validate" box, so checking it off
     corresponds to setting this True."""
+
+    @model_validator(mode="after")
+    def _bgc_sources_use_vars_partitioned(self) -> BoundaryForcing:
+        _require_partitioned_bgc_use_vars(self.bgc_sources, "forcing.boundary")
+        return self
 
 
 class ResolvedDataset(_Section):
@@ -1579,6 +1684,19 @@ class ForgeBlueprint(Blueprint):
                 custom_file = river.get("custom_file")
                 if custom_file:
                     custom_file.pop("location", None)
+            # `bypass_validation` (skip roms-tools' post-construction NaN checks)
+            # and each bgc source's `serialize_dask` (force that write onto the
+            # synchronous dask scheduler) are execution-environment knobs -- they
+            # change how the run is performed, not what it produces -- so identical
+            # inputs run with different validation/write-scheduler choices must
+            # still hash identically. Scrub both from initial_conditions and
+            # boundary, same rationale as the `location` scrubs above.
+            for section_key in ("initial_conditions", "boundary"):
+                section = forcing.get(section_key)
+                if section:
+                    section.pop("bypass_validation", None)
+                    for bs in section.get("bgc_sources") or []:
+                        bs.pop("serialize_dask", None)
         blob = json.dumps(data, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
