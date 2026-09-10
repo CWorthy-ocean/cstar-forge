@@ -31,6 +31,10 @@ dependencies = [
     "dask",
     "distributed",
     "threadpoolctl",
+    # numba is imported directly in cstar_forge/forge/input_data.py (BLAS/numba
+    # thread-count clamping around dask writes) -- not just a roms-tools
+    # transitive dependency.
+    "numba",
     "fsspec",
     "pydantic",
     "numpy",
@@ -51,6 +55,9 @@ dependencies = [
     # >=5.0: the BoundaryForcing/InitialConditions monolithic wrapper API (multiple
     # BGC sources in one constructor call) forge now builds on directly -- a breaking
     # because it doesn't use these classes).
+    # roms-tools 5.0.0 is unreleased (and C-Star still pins roms_tools<5) --
+    # environment.yml and pixi.lock regeneration is deferred until 5.0.0 is on
+    # conda-forge; do not hand-edit either generated file in the meantime.
     "roms_tools>=5.0,<6",
 ]
 
