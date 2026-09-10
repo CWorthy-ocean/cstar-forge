@@ -47,10 +47,9 @@ dependencies = [
     "ujson",
     "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.11.0",
+    "cstar-ocean>=0.13.3",
     # >=5.0: the BoundaryForcing/InitialConditions monolithic wrapper API (multiple
     # BGC sources in one constructor call) forge now builds on directly -- a breaking
-    # change from the pre-5.0 split-object API (cstar-ocean's own pin is looser
     # because it doesn't use these classes).
     "roms_tools>=5.0,<6",
 ]
@@ -116,7 +115,7 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=5.0,<6"
-cstar-ocean = ">=0.11.0"
+cstar-ocean = ">=0.13.3"
 dask = "*"
 distributed = "*"
 numpy = "*"
@@ -137,7 +136,7 @@ ujson = "*"
 # complete environment with NO companion pip step — the blessed HPC replay
 # artifact for non-developers.
 [tool.pixi.feature.user.dependencies]
-cstar-forge = ">=0.4.0"
+cstar-forge = ">=0.6.0"
 
 # Laptop/workstation build toolchain — the pixi analog of dev-setup.sh's
 # --with-compilers, mirroring conda-forge cstar-ocean-standalone's list.

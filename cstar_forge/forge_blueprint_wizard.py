@@ -67,6 +67,7 @@ from cstar_forge.forge.namelist_model import (
     RunTimeSettings,
     run_time_settings_for_ref,
     validate_run_time_sections,
+    version_gated_section_names,
 )
 from cstar_forge.forge.user_files import hash_netcdf_contents
 from cstar_forge.forge_blueprint_resolve import (
@@ -908,6 +909,10 @@ _ADVANCED_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
             "gamma2",
             "ubind",
             "lin_rho_eos",
+            # pio_settings is ModelSpec-owned (like the rest of this pane), NOT an
+            # output section: edits here must land in composition.model / "Save
+            # Model spec", so keep it out of _OUTPUT_CATEGORY.
+            "pio_settings",
             "cppdefs",
         ),
     ),
@@ -958,6 +963,15 @@ _ADVANCED_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
 )
 
+
+# Section names modeled by at least one registered run-time settings tier (e.g.
+# pio_settings, only on RunTimeSettingsV0_6_0) -- used by _SettingsEditor to skip
+# a section that's version-gated behind a namelist schema boundary but absent
+# from the *active* settings_cls, rather than rendering a type-inferred widget
+# whose edits an extra="ignore" top-level model would silently discard. A
+# section NEVER modeled by any tier (e.g. cppdefs) is not in this set and keeps
+# rendering via type-inference as before -- see version_gated_section_names().
+_VERSION_GATED_SECTIONS = version_gated_section_names()
 
 # cppdefs fields exposed per accordion pane -- everything else in cppdefs (obc_*/
 # marbl/use_pio/cdr_forcing/co2_tvarying/sal_restore/tides) is resolver-derived and
@@ -1039,6 +1053,20 @@ class _SettingsEditor:
             blocks = []
             for section in members:
                 if section not in model_settings:
+                    continue
+                if (
+                    section not in self._settings_cls.model_fields
+                    and section in _VERSION_GATED_SECTIONS
+                ):
+                    # section is modeled by some registered settings tier (e.g.
+                    # pio_settings on RunTimeSettingsV0_6_0) but not by the
+                    # active settings_cls -- e.g. a pre-0.6.0 roms_ref override
+                    # with a ModelSpec whose model_settings still carries the
+                    # key. Rendering a type-inferred widget here would let the
+                    # user edit a value the active (extra="ignore") schema
+                    # silently discards downstream. cppdefs is NOT in
+                    # _VERSION_GATED_SECTIONS (no tier ever models it) and so
+                    # is unaffected -- it keeps rendering via type-inference.
                     continue
                 include, exclude = _split_fields(title, section)
                 box, fields = self._build_section(
@@ -1246,7 +1274,7 @@ _EXTRAP_OPTS = [""] + [e.value for e in ExtrapMethod]
 # Per-bgc-source interp-method override: blank = inherit the section's own default
 # (BgcSourceItem.bgc_interpolation_method=None) -- same blank-sentinel convention as
 # _PREFILL_OPTS/_REGRID_OPTS/_EXTRAP_OPTS above.
-_BGC_INTERP_OPTS_WITH_DEFAULT = [""] + _BGC_INTERP_METHODS
+_BGC_INTERP_OPTS_WITH_DEFAULT = ["", *_BGC_INTERP_METHODS]
 _FORCING_CATEGORIES = ("surface", "tidal", "river")
 # Row categories managed by _ForcingEditor's generic add/remove-row machinery
 # (_rows/_make_row/_add/_remove/_render). "ic_bgc" and "boundary_bgc" are pseudo-
@@ -1533,6 +1561,125 @@ def _stage_uploaded_netcdf(filename: str, content: bytes) -> Path:
     dest = dest_dir / filename
     dest.write_bytes(content)
     return dest
+
+
+def _cdr_forcing_from_netcdf(path: str | Path, grid: Any) -> Any:
+    """Reconstruct a roms-tools ``CDRForcing`` from a pre-made CDR-forcing
+    netCDF, for the CDR plot widget's "netcdf" mode (there is no
+    ``CDRForcing.from_netcdf`` in roms-tools -- this is the wizard's own
+    best-effort inverse of ``CDRForcingDatasetBuilder.build()``, see
+    ``roms_tools.setup.cdr_forcing``).
+
+    Every variable is selected by dimension name (``ncdr``/``ntracers``/
+    ``time``), never by positional axis order, since the builder doesn't
+    guarantee one. Two things this can't recover exactly, both acceptable for
+    a plot-only reconstruction:
+
+    * The builder interpolates every release onto the *union* of all releases'
+      original times before writing the file, so the file carries one shared
+      ``time`` axis -- a reconstructed release's ``times`` is that shared
+      axis, not necessarily whatever the original release actually used.
+    * A tracer-perturbation file with no ``tracer_name`` coordinate at all
+      (unusual -- normal output always carries one) has no way to know which
+      tracer a flux series belongs to; it's arbitrarily labeled "ALK".
+
+    Raises a ``ValueError`` prefixed ``"could not reconstruct releases from
+    <path>: ..."`` for any failure, including the ones ``rt.CDRForcing``'s own
+    validators would otherwise raise a more confusing pydantic error for (e.g.
+    a single-time-point file, which fails its strict ``start_time <
+    end_time``).
+    """
+    import pandas as pd
+    import roms_tools as rt
+    import xarray as xr
+
+    path = Path(path)
+    try:
+        with xr.open_dataset(path) as ds:
+            if "release_name" not in ds.coords:
+                raise ValueError(
+                    "no 'release_name' coordinate found -- is this really a "
+                    "CDR-forcing file?"
+                )
+            release_names = [str(n) for n in ds["release_name"].values]
+            times = [t.to_pydatetime() for t in pd.to_datetime(ds["time"].values)]
+            if len(times) < 2 or times[0] >= times[-1]:
+                raise ValueError(
+                    "fewer than two distinct times on the shared 'time' axis -- "
+                    "a CDRForcing requires start_time < end_time"
+                )
+            tracer_names = (
+                [str(t) for t in ds["tracer_name"].values]
+                if "tracer_name" in ds.coords
+                else None
+            )
+            is_tracer_perturbation = "cdr_trcflx" in ds.data_vars
+            is_volume = "cdr_volume" in ds.data_vars
+            if not (is_tracer_perturbation or is_volume):
+                raise ValueError(
+                    "neither 'cdr_trcflx' nor 'cdr_volume' found -- "
+                    "unrecognized CDR-forcing layout"
+                )
+
+            releases: list[Any] = []
+            for i, name in enumerate(release_names):
+                common = {
+                    "name": name,
+                    "lat": float(ds["cdr_lat"].isel(ncdr=i).item()),
+                    "lon": float(ds["cdr_lon"].isel(ncdr=i).item()),
+                    "depth": float(ds["cdr_dep"].isel(ncdr=i).item()),
+                    "hsc": float(ds["cdr_hsc"].isel(ncdr=i).item()),
+                    "vsc": float(ds["cdr_vsc"].isel(ncdr=i).item()),
+                    "times": times,
+                }
+                if is_tracer_perturbation:
+                    var = ds["cdr_trcflx"].isel(ncdr=i)
+                    if tracer_names is not None and "ALK" in tracer_names:
+                        # ALK-only: this reconstruction only feeds the plot
+                        # widget's "Tracer flux (ALK)" option.
+                        idx = tracer_names.index("ALK")
+                        tracer_fluxes = {"ALK": var.isel(ntracers=idx).values.tolist()}
+                    elif tracer_names is not None:
+                        tracer_fluxes = {
+                            tn: var.isel(ntracers=j).values.tolist()
+                            for j, tn in enumerate(tracer_names)
+                        }
+                    elif "ntracers" in var.dims:
+                        # No tracer_name coordinate at all -- can't identify the
+                        # tracer(s); best-effort label the first as "ALK".
+                        tracer_fluxes = {"ALK": var.isel(ntracers=0).values.tolist()}
+                    else:
+                        tracer_fluxes = {"ALK": var.values.tolist()}
+                    releases.append(
+                        rt.TracerPerturbation(
+                            **common,
+                            tracer_fluxes=tracer_fluxes,
+                            release_type="tracer_perturbation",
+                        )
+                    )
+                else:
+                    volume_fluxes = ds["cdr_volume"].isel(ncdr=i).values.tolist()
+                    tracer_var = ds.get("cdr_tracer")
+                    if tracer_var is not None and tracer_names:
+                        tracer_concentrations = {
+                            tn: tracer_var.isel(ncdr=i, ntracers=j).values.tolist()
+                            for j, tn in enumerate(tracer_names)
+                        }
+                    else:
+                        tracer_concentrations = {}
+                    releases.append(
+                        rt.VolumeRelease(
+                            **common,
+                            volume_fluxes=volume_fluxes,
+                            tracer_concentrations=tracer_concentrations,
+                            release_type="volume",
+                        )
+                    )
+        return rt.CDRForcing(
+            grid=grid, start_time=times[0], end_time=times[-1], releases=releases
+        )
+    except Exception as exc:
+        raise ValueError(f"could not reconstruct releases from {path}: {exc}") from exc
 
 
 class _ForcingEditor:
@@ -2610,9 +2757,7 @@ class _ForcingEditor:
             "river",
         ]
         pane_boxes = {"initial_conditions": ic_box, "boundary": boundary_box}
-        panes = [
-            pane_boxes.get(cat, self._containers.get(cat)) for cat in cat_order
-        ]
+        panes = [pane_boxes.get(cat, self._containers.get(cat)) for cat in cat_order]
         acc = W.Accordion(children=panes, selected_index=None)
         for i, cat in enumerate(cat_order):
             acc.set_title(i, _CATEGORY_TITLES.get(cat, cat))
@@ -2747,6 +2892,11 @@ class ForgeBlueprintWizard:
             accept=".yml,.yaml", multiple=False, description="…or upload"
         )
         self.load_status = W.HTML("")
+        # True only while load_status holds a load *failure* (an exception from
+        # _on_load_path/_load_bytes) -- distinguishes that from a load *success*
+        # message (_set_load_status, which may itself carry an amber "N invalid
+        # settings value(s)" warning that must NOT be swept away by _rebuild).
+        self._load_status_is_error = False
 
         # --- spec selectors ---
         self.model_dd = W.Dropdown(
@@ -2858,6 +3008,22 @@ class ForgeBlueprintWizard:
             indent=False,
             tooltip="Build ROMS against the ParallelIO library: inputs are written as "
             "classic-format (CDF-5) netCDF and ROMS reads/writes joined files.",
+        )
+        self.auto_tiling_chk = W.Checkbox(
+            value=False,
+            description="auto tiling",
+            indent=False,
+            tooltip="Pick the MPI tiling at runtime from the land mask "
+            "(ucla-roms >= 0.5.0 MPI_MASKING). Requires PIO -- forces it on and "
+            "locks it. In development.",
+        )
+        self.n_cores = W.IntText(
+            value=1,
+            description="n_cores:",
+            style={"description_width": "90px"},
+            layout=W.Layout(width="200px", display="none"),
+            tooltip="Total MPI ranks; the tiling itself is chosen at runtime "
+            "from the land mask when auto tiling is on.",
         )
         self.roms_ref = W.Text(
             value="",  # populated from the selected Model's pinned default below
@@ -3133,10 +3299,108 @@ class ForgeBlueprintWizard:
         # compared in _rebuild() to detect a deviation (composition.forcing.modified)
         self._forcing_seed: dict[str, Any] | None = None
 
-        # --- CDR (Carbon Dioxide Removal) forcing: uploaded roms-tools YAML ---
-        # Parsed dict lives on the instance (not a widget) since FileUpload can't be
-        # repopulated with the original file on load; _gather()/_populate_from read
-        # and write this directly.
+        # --- CDR (Carbon Dioxide Removal) forcing -----------------------------
+        # A top-level, independently composable spec (CdrSpec/Composition.cdr) --
+        # NOT part of Forcing. ``cdr_dd`` picks a named CdrSpec from the catalog
+        # (mirrors forcing_dd/output_dd/domain_dd); ``cdr_mode_dd`` picks which of
+        # the five CdrSpec.mode variants is active and shows/hides the matching
+        # sub-panel below (see ``_apply_cdr_mode``). Picking a catalog CdrSpec
+        # loads its mode + fields; hand-editing anything afterward is reported via
+        # composition.cdr.modified (a snapshot diff against ``_cdr_seed``, mirroring
+        # domain/forcing -- the dropdown itself never auto-reverts to "<custom>").
+        _cdr_names = list(self.catalog.cdr_names)
+        self.cdr_dd = W.Dropdown(
+            options=self._dd_options(_cdr_names, "cdr", prefix=["<custom>"]),
+            value="<custom>",
+            description="CDR spec:",
+            style={"description_width": "110px"},
+            tooltip="Select a named CdrSpec from the catalog to seed the CDR mode "
+            "and fields below, or leave as <custom> to author one by hand.",
+        )
+        # snapshot of _cdr_snapshot() at the last catalog pick; None means no
+        # catalog CdrSpec is currently selected (mirrors _domain_seed/_forcing_seed).
+        self._cdr_seed: dict[str, Any] | None = None
+
+        self.cdr_mode_dd = W.Dropdown(
+            options=[
+                ("None", "none"),
+                ("Simple perturbation", "simple"),
+                ("Import ROMS-tools YAML", "yaml"),
+                ("Import netCDF", "netcdf"),
+                ("Upscaled CDR forcing", "upscaled"),
+            ],
+            value="none",
+            description="Mode:",
+            style={"description_width": "110px"},
+            tooltip=_tip("cdr", "mode"),
+        )
+        # The mode _apply_cdr_mode() last actually applied -- lets it detect a
+        # real transition (for leaving-mode cleanup) whether invoked via the
+        # dropdown's own .observe or a direct call (e.g. from _populate_from,
+        # which must call it explicitly since suspended observers are no-ops).
+        self._cdr_mode_active: str | None = None
+
+        def _cdr_field(value, desc, unit, *, width="300px"):
+            """A FloatText plus an adjacent units label -- ipywidgets' own
+            ``description`` has no room for a units suffix on top of a label.
+
+            ``width`` is the WHOLE widget (label + input): the 170px
+            description_width is carved out of it, so it must comfortably
+            exceed 170px or the input box collapses to zero width.
+            """
+            w = W.FloatText(
+                value=value,
+                description=desc,
+                style={"description_width": "170px"},
+                layout=W.Layout(width=width),
+            )
+            return w, W.HBox([w, W.HTML(f"<span style='color:#666'>{unit}</span>")])
+
+        # --- CDR mode "simple": a single hand-authored tracer-perturbation
+        # release, compiled into a roms-tools CDRForcing kwargs dict at gather
+        # time (see _simple_cdr_forcing_dict). ---
+        self.cdr_simple_name = W.Text(
+            value="my_cdr",
+            description="Name:",
+            style={"description_width": "170px"},
+            layout=W.Layout(width="340px"),
+        )
+        self.cdr_simple_lat, _cdr_lat_row = _cdr_field(0.0, "Latitude:", "°N")
+        self.cdr_simple_lon, _cdr_lon_row = _cdr_field(0.0, "Longitude:", "°E")
+        self.cdr_simple_depth, _cdr_depth_row = _cdr_field(1.0, "Depth:", "m")
+        self.cdr_simple_hsc, _cdr_hsc_row = _cdr_field(
+            10.0, "Gaussian Scale (horizontal):", "m"
+        )
+        self.cdr_simple_vsc, _cdr_vsc_row = _cdr_field(
+            10.0, "Gaussian Scale (vertical):", "m"
+        )
+        self.cdr_simple_flux, _cdr_flux_row = _cdr_field(
+            2 * 10**6, "ALK tracer flux:", "meq/s", width="320px"
+        )
+        self.cdr_simple_start = W.DatePicker(
+            description="Start:", style={"description_width": "170px"}
+        )
+        self.cdr_simple_end = W.DatePicker(
+            description="End:", style={"description_width": "170px"}
+        )
+        self.cdr_simple_box = W.VBox(
+            [
+                self.cdr_simple_name,
+                _cdr_lat_row,
+                _cdr_lon_row,
+                _cdr_depth_row,
+                _cdr_hsc_row,
+                _cdr_vsc_row,
+                _cdr_flux_row,
+                self.cdr_simple_start,
+                self.cdr_simple_end,
+            ]
+        )
+
+        # --- CDR mode "yaml": an uploaded roms-tools CDRForcing.to_yaml() dump.
+        # Parsed dict lives on the instance (not a widget) since FileUpload can't
+        # be repopulated with the original file on load; _gather()/_populate_from
+        # read and write this directly. ---
         self._cdr_forcing: dict[str, Any] | None = None
         self.cdr_upload = W.FileUpload(
             accept=".yml,.yaml",
@@ -3149,10 +3413,22 @@ class ForgeBlueprintWizard:
         )
         self.cdr_clear_btn = W.Button(description="Clear CDR", icon="times")
         self.cdr_status = W.HTML("")
+        _cdr_yaml_help = W.HTML(
+            "<span style='color:#666'>Follow the <a href="
+            "'https://roms-tools.readthedocs.io/en/latest/cdr_forcing.html' "
+            "target='_blank'>roms-tools CDR forcing documentation</a> to build a "
+            "<code>CDRForcing</code> and export it with <code>to_yaml()</code>, "
+            "then upload that file here.</span>"
+        )
+        self.cdr_yaml_box = W.VBox(
+            [
+                _cdr_yaml_help,
+                W.HBox([self.cdr_upload, self.cdr_clear_btn]),
+                self.cdr_status,
+            ]
+        )
 
-        # --- CDR forcing: user-provided pre-made netCDF (mutually exclusive with
-        # the uploaded YAML above -- attaching one clears the other, see
-        # _attach_cdr_file_from_path / _on_cdr_upload). ---
+        # --- CDR mode "netcdf": a user-supplied pre-made CDR-forcing netCDF. ---
         self._cdr_forcing_file: dict[str, Any] | None = None
         self.cdr_file_path = W.Text(
             value="",
@@ -3168,6 +3444,87 @@ class ForgeBlueprintWizard:
             accept=".nc", multiple=False, description="…or upload"
         )
         self.cdr_file_status = W.HTML("")
+        _cdr_netcdf_help = W.HTML(
+            "<span style='color:#666'>Follow the <a href="
+            "'https://roms-tools.readthedocs.io/en/latest/cdr_forcing.html' "
+            "target='_blank'>roms-tools CDR forcing documentation</a> to build and "
+            "<code>save()</code> the forcing as netCDF (or otherwise produce a "
+            "CDR-forcing netCDF), then attach or upload it here.</span>"
+        )
+        self.cdr_netcdf_box = W.VBox(
+            [
+                _cdr_netcdf_help,
+                W.HBox(
+                    [
+                        self.cdr_file_path,
+                        self.cdr_file_attach_btn,
+                        self.cdr_file_clear_btn,
+                    ]
+                ),
+                self.cdr_file_upload,
+                self.cdr_file_status,
+            ]
+        )
+
+        # --- CDR mode "upscaled": nothing to configure -- ROMS reads CDR forcing
+        # supplied at runtime from a child domain's upscaled signal; the blueprint
+        # carries a placeholder path C-Star's orchestrator replaces. No dataset
+        # exists at authoring time, so no plot either. ---
+        self.cdr_upscaled_box = W.VBox(
+            [
+                W.HTML(
+                    "<span style='color:#666'>ROMS will read CDR forcing supplied "
+                    "at runtime from a child domain's upscaled signal. The "
+                    "blueprint carries a placeholder path that C-Star's "
+                    "orchestrator replaces at run time -- nothing to configure "
+                    "here.</span>"
+                )
+            ]
+        )
+
+        # --- CDR plotting (WP6): visible for simple/yaml/netcdf only. The built
+        # roms-tools CDRForcing (plus the grid it was built against) and rendered
+        # PNGs are cached on the instance -- see _rebuild()'s cache-invalidation
+        # comment -- so switching plot type/release re-renders without rebuilding.
+        self._cdr_plot_object: Any = None  # last-built rt.CDRForcing, or None
+        self._cdr_plot_grid: Any = None  # the rt.Grid it was built against
+        self._cdr_plot_cache: dict[tuple[str, str | None], bytes] = {}
+        # snapshot of _cdr_plot_inputs_fingerprint() at the last cache clear --
+        # lets _invalidate_cdr_plot_cache skip clearing on rebuilds triggered by
+        # plot-unrelated edits (e.g. the description field).
+        self._cdr_plot_fingerprint: tuple | None = None
+        self.cdr_plot_btn = W.Button(description="Generate plot", icon="area-chart")
+        self.cdr_plot_status = W.HTML("")
+        self.cdr_plot_type_dd = W.Dropdown(
+            options=[
+                ("Release locations", "locations"),
+                ("Distribution", "distribution"),
+                ("Tracer flux (ALK)", "tracer_flux"),
+            ],
+            value="locations",
+            description="Plot:",
+            style={"description_width": "110px"},
+        )
+        self.cdr_plot_release_dd = W.Dropdown(
+            options=[], description="Release:", style={"description_width": "110px"}
+        )
+        self.cdr_plot_release_dd.layout.display = "none"  # shown only if >1 release
+        self.cdr_plot_img = W.Image(
+            format="png",
+            layout=W.Layout(min_width="400px", max_width="600px"),
+        )
+        self.cdr_plot_box = W.VBox(
+            [
+                W.HTML("<b>Generate plots</b>"),
+                W.HBox([self.cdr_plot_btn, self.cdr_plot_status]),
+                W.HBox([self.cdr_plot_type_dd, self.cdr_plot_release_dd]),
+                self.cdr_plot_img,
+            ],
+            # Sits to the RIGHT of the per-mode panels (same side-by-side HBox
+            # arrangement as the grid plot) -- the padding separates the columns.
+            layout=W.Layout(padding="0 0 0 20px"),
+        )
+        self.cdr_plot_box.layout.display = "none"  # only for simple/yaml/netcdf
 
         # --- output settings spec (OutputSpec selection) ---
         # The output sections themselves are edited in the Advanced settings accordion;
@@ -3288,6 +3645,9 @@ class ForgeBlueprintWizard:
         self.save_forcing_name, self.save_forcing_btn, self.save_forcing_status = (
             _spec_save_row("(new ForcingSpec name)")
         )
+        self.save_cdr_name, self.save_cdr_btn, self.save_cdr_status = _spec_save_row(
+            "(new CdrSpec name)"
+        )
 
         # --- run (invokes the C-Star CLI on the just-saved blueprint) ---
         from cstar_forge.config import system as _detected_system
@@ -3321,13 +3681,33 @@ class ForgeBlueprintWizard:
         self.workplan_btn = W.Button(description="Save workplan", icon="sitemap")
         self.workplan_status = W.HTML("")
 
+        # Keep the run log pinned to the LATEST lines instead of snapping to the
+        # top on every append. Two cooperating pieces (verified live in voila):
+        # 1. display=flex + column-reverse on this node anchors its scroll
+        #    position at the flex start, which column-reverse puts at the bottom.
+        # 2. The stylesheet below stops the inner .jp-OutputArea from being its
+        #    own scroll container: JupyterLab CSS bounds its height and gives it
+        #    overflow auto, so IT would do the scrolling (resetting to the top on
+        #    each append) while this node never overflows. flex: 0 0 auto lets it
+        #    grow to its content so the scrolling happens on this node instead.
+        #    (Layout can only style this node itself, hence a real stylesheet.)
+        # Safe because _run_async only ever calls append_stdout, and the frontend
+        # merges consecutive same-stream outputs into a single block -- a second
+        # output type (stderr, display_data) would render above it, reversed.
         self.run_output = W.Output(
             layout=W.Layout(
                 border="1px solid #ccc",
                 padding="6px",
                 max_height="380px",
                 overflow="auto",
+                display="flex",
+                flex_flow="column-reverse",
             )
+        )
+        self.run_output.add_class("forge-run-log")
+        self._run_log_style = W.HTML(
+            "<style>.forge-run-log > .jp-OutputArea "
+            "{ flex: 0 0 auto; height: auto; max-height: none; }</style>"
         )
 
         self.roms_ref.value = self._model_default_roms_ref()
@@ -3335,8 +3715,10 @@ class ForgeBlueprintWizard:
         self.bgc_dd.value = self._model_default_bgc_mode()
         self.use_pio_chk.value = self._model_default_use_pio()
         self._sync_marbl_ref_visibility()
+        self._sync_auto_tiling()
         self._build_forcing_editor(self.catalog.forcing_data(self.forcing_dd.value))
         self._forcing_seed = self._forcing_editor.gather()
+        self._apply_cdr_mode()
         self._wire()
         self._rebuild()
 
@@ -3352,10 +3734,13 @@ class ForgeBlueprintWizard:
         self.save_model_btn.on_click(self._on_save_model)
         self.save_domain_btn.on_click(self._on_save_domain)
         self.save_forcing_btn.on_click(self._on_save_forcing)
+        self.save_cdr_btn.on_click(self._on_save_cdr)
         self.run_btn.on_click(self._on_run)
         self.workplan_btn.on_click(self._on_save_workplan)
         self.load_btn.on_click(self._on_load_path)
         self.upload.observe(self._on_upload, names="value")
+        self.cdr_dd.observe(self._on_cdr_spec, names="value")
+        self.cdr_mode_dd.observe(self._on_cdr_mode_change, names="value")
         self.cdr_upload.observe(self._on_cdr_upload, names="value")
         self.cdr_clear_btn.on_click(self._on_cdr_clear)
         self.grid_file_attach_btn.on_click(self._on_grid_file_attach)
@@ -3364,8 +3749,24 @@ class ForgeBlueprintWizard:
         self.cdr_file_attach_btn.on_click(self._on_cdr_file_attach)
         self.cdr_file_clear_btn.on_click(self._on_cdr_file_clear)
         self.cdr_file_upload.observe(self._on_cdr_file_upload, names="value")
+        self.cdr_plot_btn.on_click(self._on_cdr_plot_generate)
+        self.cdr_plot_type_dd.observe(self._on_cdr_plot_option_change, names="value")
+        self.cdr_plot_release_dd.observe(self._on_cdr_plot_option_change, names="value")
+        for w in (
+            self.cdr_simple_name,
+            self.cdr_simple_lat,
+            self.cdr_simple_lon,
+            self.cdr_simple_depth,
+            self.cdr_simple_hsc,
+            self.cdr_simple_vsc,
+            self.cdr_simple_flux,
+            self.cdr_simple_start,
+            self.cdr_simple_end,
+        ):
+            w.observe(self._rebuild, names="value")
         self.model_dd.observe(self._on_model_change, names="value")
         self.bgc_dd.observe(self._sync_marbl_ref_visibility, names="value")
+        self.auto_tiling_chk.observe(self._sync_auto_tiling, names="value")
         self.nest_domain_dd.observe(self._on_nest_domain, names="value")
         self.parent_domain_dd.observe(self._on_parent_domain, names="value")
         self.parent_plot_btn.on_click(self._on_parent_plot)
@@ -3378,6 +3779,8 @@ class ForgeBlueprintWizard:
             self.npx,
             self.npy,
             self.use_pio_chk,
+            self.auto_tiling_chk,
+            self.n_cores,
             self.bgc_dd,
             self.roms_ref,
             self.marbl_ref,
@@ -3716,6 +4119,25 @@ class ForgeBlueprintWizard:
         # MARBL ref is inert without MARBL, so hide it (value is kept, not cleared)
         self.marbl_ref.layout.display = "" if self.bgc_dd.value == "marbl" else "none"
 
+    def _sync_auto_tiling(self, _change=None):
+        # Auto tiling picks n_procs_x/y at runtime from the land mask, so those
+        # boxes become meaningless (disabled) and n_cores takes over; it also
+        # requires PIO, so use_pio is forced on and locked while it's active.
+        on = self.auto_tiling_chk.value
+        if on and _change is not None and _change.get("old") is False:
+            # Real off->on toggle (user click, or a load path flipping the
+            # checkbox): seed n_cores from the explicit grid already entered,
+            # so the user doesn't multiply by hand. Load paths restore a saved
+            # n_cores AFTER setting the checkbox, so this seed never clobbers
+            # it; direct _sync_auto_tiling() calls (_change=None) never seed.
+            self.n_cores.value = int(self.npx.value) * int(self.npy.value)
+        self.npx.disabled = on
+        self.npy.disabled = on
+        self.n_cores.layout.display = "" if on else "none"
+        if on:
+            self.use_pio_chk.value = True
+        self.use_pio_chk.disabled = on
+
     def _on_model_change(self, _change):
         # a different model has different defaults -> existing overrides no longer apply.
         # Forcing/Output are independent catalog dimensions from the model (a ForcingSpec/
@@ -3884,12 +4306,18 @@ class ForgeBlueprintWizard:
         self.forcing_box.children = [self._forcing_editor.widget]
 
     def _on_forcing_spec(self, _change):
-        """Selecting a ForcingSpec reseeds the forcing editor (and any embedded
-        CDR forcing -- see ``_split_forcing_data``).
+        """Selecting a ForcingSpec reseeds the forcing editor. CDR is its own
+        independently composable spec (CdrSpec, see ``self.cdr_mode_dd``) and is
+        normally untouched by a ForcingSpec pick -- the one exception is a
+        *legacy* ForcingSpec predating the CdrSpec split that still embeds a
+        ``cdr_forcing`` block (see ``_split_forcing_data``); that embedded dict is
+        routed into the CDR box as if it had been uploaded as a YAML.
         """
         if getattr(self, "_suspended", False):
             return
-        fi, cdr = _split_forcing_data(self.catalog.forcing_data(self.forcing_dd.value))
+        fi, legacy_cdr = _split_forcing_data(
+            self.catalog.forcing_data(self.forcing_dd.value)
+        )
         self._build_forcing_editor(fi)
         if self.parent_enable.value:
             # A child grid (has a parent) gets its boundaries from the parent's
@@ -3900,23 +4328,14 @@ class ForgeBlueprintWizard:
             # spec's real IC block, which would silently undo the "(none)"
             # default a parent toggle already applied.
             self._clear_initial_conditions()
-        self._cdr_forcing = cdr
-        if cdr and self._cdr_forcing_file is not None:
-            # A ForcingSpec carrying CDR forcing is mutually exclusive with an
-            # attached CDR file (Forcing's own validator forbids both).
-            self._cdr_forcing_file = None
-            self.cdr_file_path.value = ""
-            self.cdr_file_upload.value = ()
-            self.cdr_file_status.value = (
-                "<span style='color:#666'>(cleared -- mutually exclusive with "
-                "the ForcingSpec's CDR forcing)</span>"
+        if legacy_cdr:
+            self.cdr_mode_dd.value = "yaml"
+            self._apply_cdr_mode()
+            self._cdr_forcing = legacy_cdr
+            self.cdr_status.value = (
+                f"<span style='color:#080'>✓ CDR loaded from legacy ForcingSpec "
+                f"embed: {len(legacy_cdr.get('releases', []))} release(s)</span>"
             )
-        self.cdr_status.value = (
-            f"<span style='color:#080'>✓ CDR loaded from ForcingSpec: "
-            f"{len(cdr.get('releases', []))} release(s)</span>"
-            if cdr
-            else ""
-        )
         self._forcing_seed = self._forcing_editor.gather()
         self._rebuild()
 
@@ -3959,10 +4378,19 @@ class ForgeBlueprintWizard:
         # "model_default" origin -- ModelSpec no longer provides either as a fallback).
         forcing = SpecRef(name=self.forcing_dd.value, origin="catalog")
         output = SpecRef(name=self.output_dd.value, origin="catalog")
+        # CDR is independently composable (CdrSpec) and, unlike domain, has no
+        # meaningful "custom name" of its own when unpicked -- <custom> just
+        # means "hand-authored, not saved as a spec" (name=None).
+        cdr = (
+            SpecRef(name=self.cdr_dd.value, origin="catalog")
+            if self.cdr_dd.value != "<custom>"
+            else SpecRef(name=None, origin="custom")
+        )
         return Composition(
             model=SpecRef(name=self.model_dd.value, origin="catalog"),
             domain=dom,
             forcing=forcing,
+            cdr=cdr,
             output=output,
         )
 
@@ -4000,18 +4428,23 @@ class ForgeBlueprintWizard:
                     kw.pop(k, None)
                 overrides2 = {k: v for k, v in overrides2.items() if _is_output_key(*k)}
             elif spec == "forcing":
-                fi, cdr = _split_forcing_data(self.catalog.forcing_data(new_name))
+                # CDR is its own independently composable spec (CdrSpec, see
+                # self.cdr_mode_dd) -- picking a ForcingSpec never touches it, so
+                # kw["cdr"] (already set by _gather()) is left as-is here.
+                fi, _legacy_cdr = _split_forcing_data(
+                    self.catalog.forcing_data(new_name)
+                )
                 if self.parent_enable.value:
                     # Mirror the _gather() durable clear so re-verifying against a
                     # freshly-picked ForcingSpec doesn't spuriously show "modified"
                     # for a child grid whose boundary forcing is always stripped.
                     fi.setdefault("forcing", {})["boundary"] = None
                 kw["forcing_inputs"] = fi
-                kw["cdr_forcing"] = cdr
-                # Mutually exclusive with cdr_forcing_file (Forcing's own
-                # validator) -- a live _gather() may carry the file key even
-                # though the freshly-picked ForcingSpec's cdr wins here.
-                kw.pop("cdr_forcing_file", None)
+            elif spec == "cdr":
+                # catalog.cdr_data() carries a "description" key CdrSpec forbids
+                # (extra="forbid") -- build_forge_blueprint's cdr= path pops it,
+                # same as the other catalog-dict-shaped kwargs above.
+                kw["cdr"] = self.catalog.cdr_data(new_name)
             elif spec == "domain":
                 d = self.catalog.domain_data(new_name)
                 kw["grid_kwargs"] = d.get("grid_kwargs", {})
@@ -4237,8 +4670,17 @@ class ForgeBlueprintWizard:
             if saved_dt is not None:
                 self.dt.value = float(saved_dt)
             part = data.get("partitioning", {}) or {}
-            self.npx.value = int(part.get("n_procs_x", self.npx.value))
-            self.npy.value = int(part.get("n_procs_y", self.npy.value))
+            saved_npx = part.get("n_procs_x")
+            if saved_npx is not None:
+                self.npx.value = int(saved_npx)
+            saved_npy = part.get("n_procs_y")
+            if saved_npy is not None:
+                self.npy.value = int(saved_npy)
+            self.auto_tiling_chk.value = bool(part.get("auto_tiling", False))
+            saved_n_cores = part.get("n_cores")
+            if saved_n_cores is not None:
+                self.n_cores.value = int(saved_n_cores)
+            self._sync_auto_tiling()
             for key, picker in (("start_time", self.start), ("end_time", self.end)):
                 if data.get(key):
                     picker.value = datetime.fromisoformat(str(data[key])).date()
@@ -4297,6 +4739,8 @@ class ForgeBlueprintWizard:
             "dt": self.dt.value,
             "npx": self.npx.value,
             "npy": self.npy.value,
+            "auto_tiling": self.auto_tiling_chk.value,
+            "n_cores": self.n_cores.value,
             "topo_source": self.topo_source.value,
             "topo_path": self.topo_path.value,
             "nest_enable": self.nest_enable.value,
@@ -4389,6 +4833,7 @@ class ForgeBlueprintWizard:
             self.load_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
             )
+            self._load_status_is_error = True
             return
         self._set_load_status(cfg, self._populate_from(cfg))
 
@@ -4409,6 +4854,7 @@ class ForgeBlueprintWizard:
             self.load_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
             )
+            self._load_status_is_error = True
             return
         self._set_load_status(cfg, self._populate_from(cfg))
 
@@ -4420,6 +4866,231 @@ class ForgeBlueprintWizard:
                 "settings value(s) in the file</span>"
             )
         self.load_status.value = msg
+        self._load_status_is_error = False
+
+    # ---- CDR spec selection + mode -------------------------------------------
+    def _on_cdr_spec(self, _change):
+        """Selecting a CdrSpec loads its mode + fields into the box."""
+        if getattr(self, "_suspended", False):
+            return
+        name = self.cdr_dd.value
+        if name == "<custom>":
+            self._cdr_seed = None
+            self._rebuild()
+            return
+        data = self.catalog.cdr_data(name)
+        # Set the mode under _suspend() (its observer would run _apply_cdr_mode
+        # itself) so the single explicit call below is the only apply -- and its
+        # "simple" seeding runs before _populate_cdr_simple overwrites it.
+        with self._suspend():
+            self.cdr_mode_dd.value = data.get("mode", "none")
+        self._apply_cdr_mode()
+        mode = data.get("mode", "none")
+        if mode == "simple":
+            self._populate_cdr_simple(data.get("cdr_forcing") or {})
+        elif mode == "yaml":
+            cdr = data.get("cdr_forcing")
+            self._cdr_forcing = cdr
+            self.cdr_status.value = (
+                f"<span style='color:#080'>✓ CDR loaded from spec '{name}': "
+                f"{len(cdr.get('releases', []))} release(s)</span>"
+                if cdr
+                else ""
+            )
+        elif mode == "netcdf":
+            cff = data.get("cdr_forcing_file")
+            self._cdr_forcing_file = cff
+            if cff:
+                self.cdr_file_path.value = cff.get("location", "")
+                self.cdr_file_status.value = _user_file_status_html(cff)
+        self._cdr_seed = self._cdr_snapshot()
+        self._rebuild()
+
+    def _cdr_snapshot(self) -> dict[str, Any]:
+        """The CDR-defining state at the moment of a catalog CdrSpec pick.
+        Compared against the current state in `_rebuild()` to detect an edit made
+        after selection (`composition.cdr.modified`) -- mirrors
+        `_domain_snapshot`/`_forcing_seed`.
+        """
+        return self._current_cdr_dict()
+
+    def _on_cdr_mode_change(self, _change):
+        if getattr(self, "_suspended", False):
+            return
+        self._apply_cdr_mode()
+
+    def _apply_cdr_mode(self) -> None:
+        """Show/hide the per-mode sub-panel for the current ``cdr_mode_dd`` value,
+        seed defaults on first activation of "simple", clear stale state left
+        over from whichever mode is being left, invalidate the plot cache (a
+        mode switch always changes what would be plotted), and rebuild.
+
+        Called both from ``cdr_mode_dd``'s own ``.observe`` (via
+        ``_on_cdr_mode_change``) and directly wherever ``cdr_mode_dd.value`` is
+        set programmatically under `_suspend()` (e.g. `_populate_from`,
+        `_on_cdr_spec`) -- suspended observers are no-ops, so those callers must
+        invoke this themselves.
+        """
+        old_mode = self._cdr_mode_active
+        mode = self.cdr_mode_dd.value
+        if old_mode == "yaml" and mode != "yaml":
+            self._cdr_forcing = None
+            self._clear_cdr_upload_value()
+            self.cdr_status.value = ""
+        if old_mode == "netcdf" and mode != "netcdf":
+            self._cdr_forcing_file = None
+            self.cdr_file_path.value = ""
+            self.cdr_file_upload.value = ()
+            self.cdr_file_status.value = ""
+        self._cdr_mode_active = mode
+
+        self.cdr_simple_box.layout.display = "" if mode == "simple" else "none"
+        self.cdr_yaml_box.layout.display = "" if mode == "yaml" else "none"
+        self.cdr_netcdf_box.layout.display = "" if mode == "netcdf" else "none"
+        self.cdr_upscaled_box.layout.display = "" if mode == "upscaled" else "none"
+        self.cdr_plot_box.layout.display = (
+            "" if mode in ("simple", "yaml", "netcdf") else "none"
+        )
+
+        if mode == "simple" and old_mode != "simple":
+            # Seed from the grid center / run window at the moment of activation
+            # only -- no live re-sync afterward (see the "simple" panel spec).
+            with self._suspend():
+                self.cdr_simple_lat.value = float(self.grid_w["center_lat"].value)
+                self.cdr_simple_lon.value = float(self.grid_w["center_lon"].value)
+                if self.start.value is not None:
+                    self.cdr_simple_start.value = self.start.value
+                if self.end.value is not None:
+                    self.cdr_simple_end.value = self.end.value
+
+        self._invalidate_cdr_plot_cache()
+        self._rebuild()
+
+    def _cdr_plot_inputs_fingerprint(self) -> tuple[str, tuple]:
+        """A cheap, comparable snapshot of everything the CDR plot depends on:
+        the current CDR selection (mode + compiled/attached config) and the grid
+        geometry the ``rt.CDRForcing`` would be built against.
+        """
+        return (
+            repr(self._current_cdr_dict()),
+            tuple(sorted((k, repr(w.value)) for k, w in self.grid_w.items())),
+        )
+
+    def _invalidate_cdr_plot_cache(self) -> None:
+        """Drop the built ``rt.CDRForcing``/grid and every rendered plot PNG --
+        but only when a plot-affecting input actually changed.
+
+        Hooked into ``_rebuild()`` itself (see its own comment) rather than onto
+        each individual CDR/grid widget -- the file's least-invasive idiom for
+        "any of several unrelated inputs invalidates this": ``_rebuild()`` already
+        fires on every CDR-panel edit, every mode switch (via ``_apply_cdr_mode``),
+        and every grid-geometry edit (``watched``/``_on_grid_kwarg_change`` both
+        end in a rebuild). Because ``_rebuild()`` ALSO fires for edits that can't
+        affect the plot (e.g. the description field), the fingerprint check below
+        skips the clear when nothing plot-affecting changed -- an already-rendered
+        plot survives unrelated edits instead of silently blanking.
+        """
+        fingerprint = self._cdr_plot_inputs_fingerprint()
+        if fingerprint == getattr(self, "_cdr_plot_fingerprint", None):
+            return
+        self._cdr_plot_fingerprint = fingerprint
+        self._cdr_plot_object = None
+        self._cdr_plot_grid = None
+        self._cdr_plot_cache = {}
+        self.cdr_plot_img.value = b""
+        self.cdr_plot_status.value = ""
+        self.cdr_plot_release_dd.options = []
+        self.cdr_plot_release_dd.layout.display = "none"
+
+    def _current_cdr_dict(self) -> dict[str, Any]:
+        """The current CDR selection as a ``cdr=`` kwarg dict for
+        ``build_forge_blueprint`` (shape matches :class:`CdrSpec`, and --
+        ``cdr_forcing``/``cdr_forcing_file`` always both present, unused ones
+        ``None`` -- matches ``catalog.cdr_data()`` too, so ``_cdr_snapshot()``
+        can compare directly against a freshly-picked catalog entry). Used by
+        ``_gather()``, ``_cdr_snapshot()``, and the plot widget (simple/yaml
+        share this dict's ``cdr_forcing`` as the ``rt.CDRForcing`` kwargs).
+        """
+        mode = self.cdr_mode_dd.value
+        cdr_forcing = None
+        cdr_forcing_file = None
+        if mode == "simple":
+            cdr_forcing = self._simple_cdr_forcing_dict()
+        elif mode == "yaml":
+            cdr_forcing = self._cdr_forcing
+        elif mode == "netcdf":
+            cdr_forcing_file = self._cdr_forcing_file
+        return {
+            "mode": mode,
+            "cdr_forcing": cdr_forcing,
+            "cdr_forcing_file": cdr_forcing_file,
+        }
+
+    def _simple_cdr_forcing_dict(self) -> dict[str, Any]:
+        """Compile the "simple" panel into a roms-tools ``CDRForcing`` kwargs
+        dict: a single tracer-perturbation release, a flat two-point ALK pulse
+        (the same static flux at both the run's start and end) -- see the CDR
+        Overhaul plan's "simple mode compile" note. Values are ISO-8601 strings
+        (not ``datetime`` objects) so the dict stays YAML/JSON-serializable on
+        the blueprint; both ``rt.CDRForcing`` (pydantic) and ``CdrSpec`` parse
+        an ISO string back into a datetime on their own.
+        """
+        start = self.cdr_simple_start.value or self.start.value
+        end = self.cdr_simple_end.value or self.end.value
+        start_iso = (
+            datetime.combine(start, datetime.min.time()).isoformat()
+            if start is not None
+            else None
+        )
+        end_iso = (
+            datetime.combine(end, datetime.min.time()).isoformat()
+            if end is not None
+            else None
+        )
+        flux = float(self.cdr_simple_flux.value)
+        return {
+            "start_time": start_iso,
+            "end_time": end_iso,
+            "releases": [
+                {
+                    "name": self.cdr_simple_name.value,
+                    "lat": float(self.cdr_simple_lat.value),
+                    "lon": float(self.cdr_simple_lon.value),
+                    "depth": float(self.cdr_simple_depth.value),
+                    "hsc": float(self.cdr_simple_hsc.value),
+                    "vsc": float(self.cdr_simple_vsc.value),
+                    "times": [start_iso, end_iso],
+                    "tracer_fluxes": {"ALK": [flux, flux]},
+                    "release_type": "tracer_perturbation",
+                }
+            ],
+        }
+
+    def _populate_cdr_simple(self, cdr_forcing: dict[str, Any]) -> None:
+        """Reverse-derive the "simple" panel's widget values from a compiled CDR
+        forcing dict (the shape ``_simple_cdr_forcing_dict`` produces) -- the
+        load-back half of "simple" mode's round trip.
+        """
+        releases = cdr_forcing.get("releases") or []
+        release = releases[0] if releases else {}
+        with self._suspend():
+            self.cdr_simple_name.value = release.get("name", "my_cdr")
+            self.cdr_simple_lat.value = float(release.get("lat", 0.0))
+            self.cdr_simple_lon.value = float(release.get("lon", 0.0))
+            self.cdr_simple_depth.value = float(release.get("depth", 1.0))
+            self.cdr_simple_hsc.value = float(release.get("hsc", 10.0))
+            self.cdr_simple_vsc.value = float(release.get("vsc", 10.0))
+            fluxes = (release.get("tracer_fluxes") or {}).get("ALK")
+            flux = fluxes[0] if isinstance(fluxes, list) else fluxes
+            self.cdr_simple_flux.value = float(flux) if flux is not None else 2 * 10**6
+            times = release.get("times") or []
+            if times:
+                self.cdr_simple_start.value = datetime.fromisoformat(
+                    str(times[0])
+                ).date()
+                self.cdr_simple_end.value = datetime.fromisoformat(
+                    str(times[-1])
+                ).date()
 
     # ---- CDR forcing upload ----------------------------------------------------
     def _on_cdr_upload(self, change):
@@ -4518,7 +5189,7 @@ class ForgeBlueprintWizard:
             # Mutually exclusive with an uploaded CDR YAML (Forcing's own
             # validator forbids both) -- the file attach wins here.
             self._cdr_forcing = None
-            self.cdr_upload.value = ()
+            self._clear_cdr_upload_value()
             self.cdr_status.value = ""
             cleared_note = (
                 "<br><span style='color:#666'>(cleared the uploaded CDR "
@@ -4555,6 +5226,147 @@ class ForgeBlueprintWizard:
         self.cdr_file_upload.value = ()
         self.cdr_file_status.value = ""
         self._rebuild()
+
+    # ---- CDR plotting (WP6) ----------------------------------------------------
+    # The built rt.CDRForcing/grid (self._cdr_plot_object/_cdr_plot_grid) and every
+    # rendered PNG (self._cdr_plot_cache, keyed by (plot_type, release_name)) are
+    # cached on the instance -- invalidated in one place, _rebuild() (see its own
+    # comment and _invalidate_cdr_plot_cache's docstring). Switching plot type or
+    # release therefore re-renders (or reuses a cached PNG) WITHOUT rebuilding --
+    # _on_cdr_plot_option_change/_render_cdr_plot below never call _rebuild().
+    def _build_cdr_forcing_for_plot(self) -> Any:
+        """Build (or return the cached) roms-tools ``CDRForcing`` for the
+        current CDR mode. Raises if the current mode has nothing plottable yet
+        (upscaled/none never reach here -- the plot panel is hidden for them)
+        or the current selection is incomplete (e.g. yaml mode with nothing
+        uploaded).
+        """
+        if self._cdr_plot_object is not None:
+            return self._cdr_plot_object
+        import roms_tools as rt
+
+        mode = self.cdr_mode_dd.value
+        current = self._current_cdr_dict()
+        grid = self._build_grid_from_widgets()
+        if mode == "simple":
+            cdr = rt.CDRForcing(grid=grid, **current["cdr_forcing"])
+        elif mode == "yaml":
+            if not current["cdr_forcing"]:
+                raise ValueError("No CDR forcing uploaded yet.")
+            cdr = rt.CDRForcing(grid=grid, **current["cdr_forcing"])
+        elif mode == "netcdf":
+            cff = current["cdr_forcing_file"]
+            if not cff:
+                raise ValueError("No CDR-forcing netCDF attached yet.")
+            cdr = _cdr_forcing_from_netcdf(cff["location"], grid)
+        else:
+            raise ValueError(f"CDR plotting is not available in mode {mode!r}.")
+        self._cdr_plot_object = cdr
+        self._cdr_plot_grid = grid
+        return cdr
+
+    def _sync_cdr_plot_release_options(self) -> None:
+        """After a (re)build, refresh the release dropdown (shown only when the
+        forcing has more than one release) and hide "Tracer flux (ALK)" for a
+        volume-type forcing (``plot_tracer_flux`` raises for those -- ALK-only
+        per the CDR Overhaul design brief).
+        """
+        cdr = self._cdr_plot_object
+        names = [r.name for r in cdr.releases]
+        is_volume = cdr.release_type == "volume"
+        options = [
+            ("Release locations", "locations"),
+            ("Distribution", "distribution"),
+            *([] if is_volume else [("Tracer flux (ALK)", "tracer_flux")]),
+        ]
+        with self._suspend():
+            self.cdr_plot_release_dd.options = names
+            if names:
+                self.cdr_plot_release_dd.value = names[0]
+            self.cdr_plot_release_dd.layout.display = "" if len(names) > 1 else "none"
+            old_type = self.cdr_plot_type_dd.value
+            self.cdr_plot_type_dd.options = options
+            self.cdr_plot_type_dd.value = (
+                old_type if old_type in dict(options).values() else options[0][1]
+            )
+        if is_volume:
+            self.cdr_plot_status.value = (
+                "<span style='color:#b58900'>⚠ volume-type CDR forcing -- "
+                "tracer flux plotting (ALK-only) isn't available.</span>"
+            )
+
+    def _render_cdr_plot(self) -> None:
+        """Render the current plot-type/release selection, from the cached
+        ``rt.CDRForcing`` and a cached PNG when one already exists for this
+        exact (plot_type, release) pair.
+        """
+        cdr = self._cdr_plot_object
+        if cdr is None:
+            return
+        plot_type = self.cdr_plot_type_dd.value
+        release_name = (
+            self.cdr_plot_release_dd.value if self.cdr_plot_release_dd.options else None
+        )
+        key = (plot_type, release_name if plot_type == "distribution" else None)
+        cached = self._cdr_plot_cache.get(key)
+        if cached is None:
+            import io
+
+            import matplotlib.pyplot as plt
+
+            plt.ioff()
+            # None of plot_locations/plot_distribution/plot_tracer_flux call
+            # plt.show() as of this roms-tools version, but neutralize it
+            # anyway (cheap insurance against a future version that does --
+            # see _on_nest_plot for why this matters under the inline backend).
+            _real_show, plt.show = plt.show, lambda *a, **k: None
+            try:
+                if plot_type == "locations":
+                    cdr.plot_locations()
+                elif plot_type == "distribution":
+                    if release_name is None:
+                        raise ValueError("No release to plot a distribution for.")
+                    cdr.plot_distribution(release_name)
+                elif plot_type == "tracer_flux":
+                    cdr.plot_tracer_flux("ALK")
+                else:
+                    raise ValueError(f"Unknown CDR plot type {plot_type!r}.")
+                fig = plt.gcf()
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", dpi=80, bbox_inches="tight")
+                plt.close(fig)
+            finally:
+                plt.show = _real_show
+                plt.ion()
+            cached = buf.getvalue()
+            self._cdr_plot_cache[key] = cached
+        self.cdr_plot_img.value = cached
+
+    def _on_cdr_plot_generate(self, _btn):
+        self.cdr_plot_status.value = "<i>building…</i>"
+        try:
+            self._build_cdr_forcing_for_plot()
+            # Clear the building marker BEFORE the sync step: _sync may set a
+            # volume-type ⚠ that must survive, and the ✓ below only fills an
+            # empty status (leaving the marker in place would stick forever).
+            self.cdr_plot_status.value = ""
+            self._sync_cdr_plot_release_options()
+            self._render_cdr_plot()
+            if not self.cdr_plot_status.value:
+                self.cdr_plot_status.value = "<span style='color:#080'>✓</span>"
+        except Exception as exc:
+            self._cdr_plot_object = None
+            self._cdr_plot_grid = None
+            self.cdr_plot_status.value = (
+                f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
+            )
+
+    def _on_cdr_plot_option_change(self, _change):
+        if getattr(self, "_suspended", False):
+            return
+        if self._cdr_plot_object is None:
+            return
+        self._render_cdr_plot()
 
     def _populate_from(self, cfg: ForgeBlueprint):
         """Set the widgets from a loaded ForgeBlueprint, then re-resolve once.
@@ -4616,11 +5428,22 @@ class ForgeBlueprintWizard:
             if loaded_v_sponge is not None:
                 self.v_sponge.value = float(loaded_v_sponge)
             self._v_sponge_touched = loaded_v_sponge is not None
-            self.npx.value = cfg.domain.partitioning.n_procs_x
-            self.npy.value = cfg.domain.partitioning.n_procs_y
+            if cfg.domain.partitioning.n_procs_x is not None:
+                self.npx.value = cfg.domain.partitioning.n_procs_x
+            if cfg.domain.partitioning.n_procs_y is not None:
+                self.npy.value = cfg.domain.partitioning.n_procs_y
             self.use_pio_chk.value = bool(
                 (cfg.model_settings.get("cppdefs") or {}).get("use_pio", False)
             )
+            self.auto_tiling_chk.value = cfg.domain.partitioning.auto_tiling
+            loaded_n_cores = cfg.domain.partitioning.n_cores
+            if loaded_n_cores is not None:
+                self.n_cores.value = int(loaded_n_cores)
+            # auto_tiling_chk.observe fires synchronously above regardless of
+            # _suspend() (which only sets a flag other handlers check -- see
+            # _Suspender), so the disabled/visible state is already correct;
+            # call again explicitly for robustness in case that ever changes.
+            self._sync_auto_tiling()
             self.bgc_dd.value = (
                 "marbl"
                 if bool((cfg.model_settings.get("cppdefs") or {}).get("marbl", True))
@@ -4658,38 +5481,46 @@ class ForgeBlueprintWizard:
                 self._reattach_grid_file(cfg.domain.grid_file)
             else:
                 self._detach_grid_file()
-            # CDR: FileUpload can't be repopulated with the original file, but the
-            # parsed dict persists on the instance and re-emits via _gather(), so
-            # load stays non-lossy.
-            self._cdr_forcing = cfg.forcing.cdr_forcing or None
-            self._clear_cdr_upload_value()
-            self.cdr_status.value = (
-                f"<span style='color:#080'>✓ CDR loaded: "
-                f"{len(self._cdr_forcing.get('releases', []))} release(s)</span>"
-                if self._cdr_forcing
-                else ""
-            )
-            # CDR file: trust the stored hash (never recompute); a missing file
-            # is a warning, not a blocker -- Save must still round-trip losslessly.
-            cff = cfg.forcing.cdr_forcing_file
-            if cff is not None:
-                self._cdr_forcing_file = {
-                    "location": cff.location,
-                    "content_hash": cff.content_hash,
-                }
-                self.cdr_file_path.value = cff.location
-                missing = not Path(cff.location).expanduser().exists()
-                self.cdr_file_status.value = _user_file_status_html(
-                    self._cdr_forcing_file
-                ) + (
-                    "<br><span style='color:#b00'>⚠ file not found at this path</span>"
-                    if missing
+            # CDR: a top-level, independently composable section (CdrSpec) -- see
+            # ``self.cdr_mode_dd``/``_apply_cdr_mode``. FileUpload can't be
+            # repopulated with the original file, but the parsed dict persists on
+            # the instance and re-emits via _gather(), so load stays non-lossy.
+            self.cdr_mode_dd.value = cfg.cdr.mode
+            self._apply_cdr_mode()
+            if cfg.cdr.mode == "simple":
+                self._populate_cdr_simple(cfg.cdr.cdr_forcing or {})
+            elif cfg.cdr.mode == "yaml":
+                self._cdr_forcing = cfg.cdr.cdr_forcing or None
+                self._clear_cdr_upload_value()
+                self.cdr_status.value = (
+                    f"<span style='color:#080'>✓ CDR loaded: "
+                    f"{len(self._cdr_forcing.get('releases', []))} release(s)</span>"
+                    if self._cdr_forcing
                     else ""
                 )
-            else:
-                self._cdr_forcing_file = None
-                self.cdr_file_path.value = ""
-                self.cdr_file_status.value = ""
+            elif cfg.cdr.mode == "netcdf":
+                # Trust the stored hash (never recompute); a missing file is a
+                # warning, not a blocker -- Save must still round-trip losslessly.
+                cff = cfg.cdr.cdr_forcing_file
+                if cff is not None:
+                    self._cdr_forcing_file = {
+                        "location": cff.location,
+                        "content_hash": cff.content_hash,
+                    }
+                    self.cdr_file_path.value = cff.location
+                    missing = not Path(cff.location).expanduser().exists()
+                    self.cdr_file_status.value = _user_file_status_html(
+                        self._cdr_forcing_file
+                    ) + (
+                        "<br><span style='color:#b00'>⚠ file not found at this "
+                        "path</span>"
+                        if missing
+                        else ""
+                    )
+                else:
+                    self._cdr_forcing_file = None
+                    self.cdr_file_path.value = ""
+                    self.cdr_file_status.value = ""
             # dt: prefer the first-class domain.dt field; fall back to the
             # model_settings leaf for a pre-domain.dt file (backward compat --
             # older blueprints only ever wrote it there).
@@ -4735,6 +5566,28 @@ class ForgeBlueprintWizard:
                 self.output_dd.value = oname
             elif _output_values:
                 self.output_dd.value = _output_values[0]
+            # CDR spec selection: unlike forcing/output, "<custom>" (no catalog
+            # entry) is a normal, common state (mode="none" is the default) --
+            # fall back to "<custom>"/no seed rather than the first catalog
+            # entry. The mode/fields above already reflect the loaded file's
+            # actual CDR state; only the seed is (re)computed here, against the
+            # catalog spec (not the just-loaded values) so a file that matches
+            # its recorded CdrSpec loads as unmodified and a hand-edited one
+            # loads as modified -- mirrors the forcing_seed block above.
+            cname = cfg.composition.cdr.name
+            _cdr_values = self._dd_values(self.cdr_dd)
+            if cname is not None and cname in _cdr_values:
+                self.cdr_dd.value = cname
+                try:
+                    seed = self.catalog.cdr_data(cname)
+                    self._cdr_seed = {
+                        k: v for k, v in seed.items() if k != "description"
+                    }
+                except Exception:
+                    self._cdr_seed = None
+            else:
+                self.cdr_dd.value = "<custom>"
+                self._cdr_seed = None
         # Reconstruct the overrides layer = diff(loaded model_settings, composed). This
         # captures every manual deviation regardless of the file's recorded provenance,
         # making load fully non-lossy.
@@ -4772,10 +5625,14 @@ class ForgeBlueprintWizard:
             grid_name=self.grid_name.value,
             grid_kwargs=gk,
             open_boundaries={d: w.value for d, w in self.bnd.items()},
-            partitioning={
-                "n_procs_x": int(self.npx.value),
-                "n_procs_y": int(self.npy.value),
-            },
+            partitioning=(
+                {"auto_tiling": True, "n_cores": int(self.n_cores.value)}
+                if self.auto_tiling_chk.value
+                else {
+                    "n_procs_x": int(self.npx.value),
+                    "n_procs_y": int(self.npy.value),
+                }
+            ),
             start_date=datetime.combine(self.start.value, datetime.min.time()),
             end_date=datetime.combine(self.end.value, datetime.min.time()),
             description=self.description.value,
@@ -4844,10 +5701,7 @@ class ForgeBlueprintWizard:
             kw["forcing_inputs"]["forcing"]["boundary"] = None
         kw["output_settings"] = self._output_settings()
         kw["composition"] = self._composition()
-        if self._cdr_forcing:
-            kw["cdr_forcing"] = self._cdr_forcing
-        if self._cdr_forcing_file:
-            kw["cdr_forcing_file"] = self._cdr_forcing_file
+        kw["cdr"] = self._current_cdr_dict()
         return kw
 
     def _populate_nesting(self, cfg: ForgeBlueprint):
@@ -4874,7 +5728,21 @@ class ForgeBlueprintWizard:
     def _rebuild(self, *_):
         if getattr(self, "_suspended", False):
             return
+        # CDR plot cache: _rebuild() is the one hook that reliably fires for
+        # every CDR-panel edit, every mode switch, and every grid-geometry edit
+        # (see _invalidate_cdr_plot_cache's own docstring for why this spot was
+        # chosen over a bespoke .observe on each CDR/grid widget).
+        self._invalidate_cdr_plot_cache()
+        # Captured before self.config is reassigned below -- used to detect a
+        # real rename (vs. an unrelated edit re-running _rebuild) for the
+        # save_path filename re-sync further down.
+        prev_name = self.config.name if self.config is not None else None
         self.preview.clear_output(wait=True)
+        # self.validation reflects the *last successful* resolve; every early
+        # return below (missing dates, a build/validation exception) leaves a
+        # stale ✓/⚠ message sitting under self.derived's fresh error otherwise
+        # -- clear it once up front so only the success path below re-sets it.
+        self.validation.value = ""
         if self.start.value is None or self.end.value is None:
             self.config = None
             self.derived.value = "<i>Set start and end dates…</i>"
@@ -4905,8 +5773,9 @@ class ForgeBlueprintWizard:
         # layer applied on top (effective = composed ⊕ overrides). The editor is
         # rebuilt when the *model* changes (its field set depends on the model) or
         # when the effective ucla-roms ref crosses a schema boundary (e.g. editing
-        # the roms_ref override across the 0.5.0 line with the same model selected)
-        # -- see run_time_settings_for_ref / RunTimeSettingsV0_5_0.
+        # the roms_ref override across the 0.5.0 or 0.6.0 line with the same model
+        # selected) -- see run_time_settings_for_ref / RunTimeSettingsV0_5_0 /
+        # RunTimeSettingsV0_6_0.
         composed = cfg.model_settings
         # Computed once per rebuild (each call re-reads the ModelSpec YAML) and
         # reused for the validation call below.
@@ -4971,6 +5840,11 @@ class ForgeBlueprintWizard:
             self._forcing_seed is not None
             and self._forcing_editor.gather() != self._forcing_seed
         )
+        cdr_modified = (
+            self.cdr_dd.value != "<custom>"
+            and self._cdr_seed is not None
+            and self._cdr_snapshot() != self._cdr_seed
+        )
 
         comp = cfg.composition.model_copy(
             update={
@@ -4984,6 +5858,9 @@ class ForgeBlueprintWizard:
                 "forcing": cfg.composition.forcing.model_copy(
                     update={"modified": forcing_modified}
                 ),
+                "cdr": cfg.composition.cdr.model_copy(
+                    update={"modified": cdr_modified}
+                ),
                 "output": cfg.composition.output.model_copy(
                     update={"modified": output_modified}
                 ),
@@ -4992,6 +5869,16 @@ class ForgeBlueprintWizard:
         cfg = cfg.model_copy(update={"model_settings": effective, "composition": comp})
 
         self.config = cfg
+        # A validly-resolving config means whatever state (fixed dropdowns, a
+        # corrected field, ...) got us here has superseded any earlier failed
+        # Load -- don't leave that stale red error sitting around forever. But
+        # load_status also carries a load *success* message (_set_load_status,
+        # possibly with an amber "N invalid settings value(s)" warning found
+        # nowhere else in the UI) -- only clear it when it's currently holding
+        # an error, never a success message.
+        if self._load_status_is_error:
+            self.load_status.value = ""
+            self._load_status_is_error = False
         # Backfill the Export name/save-path fields with the current derived default
         # until the user edits either -- their edit "locks in" that field (see
         # _on_name_change/_on_save_path_change). Under _suspend() so these
@@ -5002,6 +5889,27 @@ class ForgeBlueprintWizard:
                     self.name.value = cfg.name
                 if not self._save_path_touched:
                     self.save_path.value = self._default_blueprint_path(cfg.name)
+        # Independent of the backfill above (and of _name_touched): the derived
+        # name can also change from a grid/procs/model edit with Name left on
+        # auto-derive but Save-to customized to a specific directory -- that
+        # combination skips the backfill (save_path IS touched) entirely, so
+        # without this the filename would never re-sync. Re-sync only on a
+        # genuine rename, and only when the current filename still exactly
+        # tracks the *previous* derived name (i.e. the user hasn't customized
+        # the filename itself) -- preserves the user's directory and any
+        # deliberately-custom filename. Under _suspend() so this doesn't
+        # itself flip _save_path_touched or recurse.
+        if (
+            self._save_path_touched
+            and prev_name is not None
+            and cfg.name != prev_name
+            and Path(self.save_path.value).name == f"{prev_name}.forge_blueprint.yaml"
+        ):
+            with self._suspend():
+                self.save_path.value = str(
+                    Path(self.save_path.value).parent
+                    / f"{cfg.name}.forge_blueprint.yaml"
+                )
         self.download_link.value = self._download_html(cfg)
         # Surface (never silently ship) provisional open-boundary defaults: the
         # checkboxes currently reflect whatever's live, but that's only a real
@@ -5549,7 +6457,6 @@ class ForgeBlueprintWizard:
             self.catalog.register_forcing(
                 name,
                 self._forcing_editor.gather(),
-                cdr_forcing=self._cdr_forcing,
                 description=self.description.value,
             )
         except FileExistsError as exc:
@@ -5576,6 +6483,59 @@ class ForgeBlueprintWizard:
             )
         else:
             self.save_forcing_status.value = (
+                f"<span style='color:#b58900'>Saved '{name}', but round-trip "
+                "differs — spec kept as modified.</span>"
+            )
+
+    def _on_save_cdr(self, _):
+        name = self.save_cdr_name.value.strip()
+        if not _valid_spec_name(name):
+            self.save_cdr_status.value = "<span style='color:#b00'>Invalid name.</span>"
+            return
+        if self.config is None:
+            self.save_cdr_status.value = (
+                "<span style='color:#b00'>Config invalid — nothing to save.</span>"
+            )
+            return
+        mode = self.cdr_mode_dd.value
+        if mode == "none":
+            self.save_cdr_status.value = (
+                "<span style='color:#b58900'>Mode is 'None' — nothing to save.</span>"
+            )
+            return
+        current = self._current_cdr_dict()
+        try:
+            self.catalog.register_cdr(
+                name,
+                description=self.description.value,
+                mode=mode,
+                cdr_forcing=current["cdr_forcing"],
+                cdr_forcing_file=current["cdr_forcing_file"],
+            )
+        except FileExistsError as exc:
+            self.save_cdr_status.value = f"<span style='color:#b00'>{exc}</span>"
+            return
+        except Exception as exc:
+            self.save_cdr_status.value = (
+                f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
+            )
+            return
+        ok = self._verify_spec_roundtrip("cdr", name)
+        with self._suspend():
+            old_value = self.cdr_dd.value
+            self.cdr_dd.options = self._dd_options(
+                list(self.catalog.cdr_names), "cdr", prefix=["<custom>"]
+            )
+            self.cdr_dd.value = name if ok else old_value
+            if ok:
+                self._cdr_seed = self._cdr_snapshot()
+        if ok:
+            self._rebuild()
+            self.save_cdr_status.value = (
+                f"<span style='color:#080'>Saved '{name}' ✓ (now unmodified).</span>"
+            )
+        else:
+            self.save_cdr_status.value = (
                 f"<span style='color:#b58900'>Saved '{name}', but round-trip "
                 "differs — spec kept as modified.</span>"
             )
@@ -5736,7 +6696,9 @@ class ForgeBlueprintWizard:
 
         cfg = self.config
         # No cpus override for the forge step: the scheduler falls back to
-        # ForgeBlueprint.cpus_needed, which is the grid-sized estimate.
+        # ForgeBlueprint.cpus_needed (the grid-sized estimate), and because
+        # ForgeBlueprint.single_node is True, C-Star pins the step to one node
+        # and clamps that estimate to the partition's CPUs per node.
         forge_step = Step(
             name="forge",
             application="forge",
@@ -5752,8 +6714,9 @@ class ForgeBlueprintWizard:
             ),
             # A deferred blueprint cannot be inspected at submit time, so the
             # scheduler defaults the step to 1 CPU -- size it from the
-            # partitioning explicitly.
-            compute_overrides={"cpus": cfg.n_procs},
+            # partitioning explicitly, nested under the launcher namespace
+            # C-Star's SLURM adapter reads.
+            compute_overrides={"slurm": {"num_cpus": cfg.n_procs}},
         )
         return Workplan(
             name=cfg.name,
@@ -5963,22 +6926,16 @@ class ForgeBlueprintWizard:
                 nesting_accordion,
                 section("Forcing", self.forcing_box),
                 section(
-                    "CDR forcing (optional)",
-                    W.HBox([self.cdr_upload, self.cdr_clear_btn]),
-                    self.cdr_status,
+                    "Partitioning",
                     W.HBox(
                         [
-                            self.cdr_file_path,
-                            self.cdr_file_attach_btn,
-                            self.cdr_file_clear_btn,
+                            self.npx,
+                            self.npy,
+                            self.n_cores,
+                            self.use_pio_chk,
+                            self.auto_tiling_chk,
                         ]
                     ),
-                    self.cdr_file_upload,
-                    self.cdr_file_status,
-                ),
-                section(
-                    "Partitioning",
-                    W.HBox([self.npx, self.npy, self.use_pio_chk]),
                 ),
                 section(
                     "Run window",
@@ -5986,6 +6943,26 @@ class ForgeBlueprintWizard:
                     self.end,
                     self.model_ref_date,
                     self.description,
+                ),
+                section(
+                    "CDR forcing",
+                    self.cdr_dd,
+                    self.cdr_mode_dd,
+                    # Per-mode panels on the left, plot column on the right --
+                    # the same side-by-side arrangement as the Grid section.
+                    W.HBox(
+                        [
+                            W.VBox(
+                                [
+                                    self.cdr_simple_box,
+                                    self.cdr_yaml_box,
+                                    self.cdr_netcdf_box,
+                                    self.cdr_upscaled_box,
+                                ]
+                            ),
+                            self.cdr_plot_box,
+                        ]
+                    ),
                 ),
                 section(
                     "Advanced settings (model defaults — collapsed; click to edit)",
@@ -6032,6 +7009,9 @@ class ForgeBlueprintWizard:
                             self.save_forcing_status,
                         ]
                     ),
+                    W.HBox(
+                        [self.save_cdr_name, self.save_cdr_btn, self.save_cdr_status]
+                    ),
                 ),
                 section(
                     "Export",
@@ -6045,6 +7025,7 @@ class ForgeBlueprintWizard:
                     self.run_warning,
                     self.run_later_note,
                     W.HBox([self.run_btn, self.run_status]),
+                    self._run_log_style,
                     self.run_output,
                 ),
                 section(
