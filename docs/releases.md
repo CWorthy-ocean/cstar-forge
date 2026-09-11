@@ -1,5 +1,21 @@
 # Release notes
 
+## Unreleased
+
+### Breaking Changes
+
+* This update breaks previous forge_blueprint structure ([#151](https://github.com/CWorthy-ocean/cstar-forge/pull/151))
+
+### New Features
+
+* Support for multiple BGC data sources, including new sources and the ability to mix-and-match fields. ([#151](https://github.com/CWorthy-ocean/cstar-forge/pull/151))
+
+### Bug Fixes
+
+### Improvements
+
+### Miscellaneous
+
 ## 0.7.3
 
 ### New Features
