@@ -15,13 +15,27 @@
 * New `roms-marbl-0.7-default` ModelSpec pinning ucla-roms `0.7.0`; `pio-dev` (pinned to `main`) picks up the new schema through the existing latest-schema fallback. Existing ModelSpecs are unchanged. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
 * The bundled OutputSpecs (`daily-restarts`, `weekly-restarts`, `monthly-restarts`, `standard`) carry both sections with defaults (off, hourly, 24 records per file). Because OutputSpecs are shared across ModelSpecs, sections a blueprint's pinned ucla-roms release cannot model are pruned at resolve time, so a 0.6-pinned blueprint never stores an inert `cdr_tracer_output` block. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
 * Wizard: both streams appear in the "Carbon dioxide removal (CDR)" advanced pane, only when the selected ModelSpec's pin admits them. Their fields hide with the stream's master switch, and averaged/instantaneous and monthly/periodic render as dropdowns like the existing CDR output. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* `domain.grid_kwargs_parent` / `domain.grid_kwargs_child` may carry `topography_source` and/or `topography_path` (Forge inputs, popped before `rt.Grid`). Resolution (see `ForgeExecutor._nested_topography_pair`, documented on the `Domain` fields): ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
+  * neither key -> inherit the domain pair (previous behaviour);
+  * `topography_source` only -> that dataset at its default (staged/fetched) location -- the domain *path* is deliberately NOT inherited;
+  * `topography_path` only -> the domain dataset, read from that file;
+  * both -> as given.
+* Executor resolves and stages topography per grid (deduped per `(name, path)`); the `ensure_source_data` "explicit path -> drop from the staging pass" rule now considers every grid's pair (recorded before the kwargs are rewritten). ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
+* Resolver notes a nested grid's own topography dataset into `resolved_datasets`/`datasets` so the executor stages it. ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
+* Wizard: "parent topo" / "child topo" dropdowns (sentinel `(same as this grid)`) + path fields in the Parent/Child grid sections. A *Parent from* / *Child from* catalog pick copies the spec's topography (explicit `ETOPO5` when the spec has none -- never silently this grid's). `_gather` emits the keys, load-back restores them, the domain modified-snapshot covers them. ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
+* Wizard grid / parent / nesting plots (and derive-from-grid) build each grid with **its** topography when the file exists locally, falling back to ETOPO5 with a visible status note otherwise -- previously every wizard-side build used roms-tools' default ETOPO5, which is why the Iceland2 parent problem never showed in the preview. ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
 
 ### Bug Fixes
+
+* Advanced-settings list fields (e.g. `marbl_bgc.marbl_tracers_to_write`): typing a trailing comma was reverted on every keystroke (`on_edit -> _rebuild -> _SettingsEditor.sync()` re-joined the parsed list). `sync()` now leaves the text alone when it already parses to the synced value. ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
+* River `CUSTOM_FILE` rows / grid file / CDR netcdf: a path typed or uploaded but never submitted via **Attach** left the file unattached (e.g. `river source is 'CUSTOM_FILE' but custom_file is not set`). The path fields now attach on Enter/focus-out (`continuous_update=False` + observer, deduped against the attached location); the river row also attaches a typed-but-unsubmitted path from `_gather_item` as a last resort. An explicit Attach click still always re-hashes. ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
 
 ### Improvements
 
 * The wizard's CDR output-stream visibility rules are table-driven (`cdr_output`, `cdr_tracer_output`, `cdr_gas_exch_output` share one code path), so a future ucla-roms output stream is one table entry rather than hand-written show/hide logic. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
 * The run-time settings tier is selected most-specific-first (0.7.0, then 0.6.0, then 0.5.0), so a subclass never falls back to a superclass's kwargs. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* `ForgeExecutor._build_grid`: roms-tools' "NaN values found in regridded topography" is re-raised naming which grid (parent / this grid / child) failed, its kwargs, an approximate lon/lat footprint and its resolved `topography_source`. ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
+* "No file attached yet -- enter a path and press Enter (or click Attach / upload)" hint in the status slot wherever the blueprint is invalid without a file (CUSTOM_FILE river row; CDR mode `netcdf`, incl. after Clear). ([#166](https://github.com/CWorthy-ocean/cstar-forge/pull/166))
 
 ### Miscellaneous
 
