@@ -31,6 +31,10 @@ dependencies = [
     "dask",
     "distributed",
     "threadpoolctl",
+    # numba is imported directly in cstar_forge/forge/input_data.py (BLAS/numba
+    # thread-count clamping around dask writes) -- not just a roms-tools
+    # transitive dependency.
+    "numba",
     "fsspec",
     "pydantic",
     "numpy",
@@ -47,10 +51,16 @@ dependencies = [
     "ujson",
     "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.13.3",
-    # >=4.1.0: first release with unified BGC v2.1 dataset support, which forge
-    # requires (cstar-ocean's own pin is looser because it doesn't).
-    "roms_tools>=4.1.1,<5",
+    # >=0.13.6: first cstar-ocean release whose own roms_tools pin admits 5.x; older
+    # releases pin roms_tools<5 and cannot be installed alongside this package.
+    "cstar-ocean>=0.13.6",
+    # >=5.0: the BoundaryForcing/InitialConditions monolithic wrapper API (multiple
+    # BGC sources in one constructor call) forge now builds on directly -- a breaking
+    # because it doesn't use these classes).
+    # roms-tools 5.0.0 is unreleased (and C-Star still pins roms_tools<5) --
+    # environment.yml and pixi.lock regeneration is deferred until 5.0.0 is on
+    # conda-forge; do not hand-edit either generated file in the meantime.
+    "roms_tools>=5.0,<6",
 ]
 
 # Registers the `cstar forge ...` subcommand group with C-Star's CLI
@@ -95,6 +105,10 @@ dev = [
     # no longer imports it (namelist writing moved to cstar.roms.namelist in
     # C-Star), so it's a test-only, not runtime, dependency.
     "f90nml",
+    # tests/test_forge_blueprint_wizard.py imports ipywidgets unconditionally; without
+    # it a `pip install -e ".[dev]"` cannot run the suite (it is otherwise only in the
+    # `app` extra).
+    "ipywidgets",
 ]
 
 [tool.pixi.workspace]
@@ -113,8 +127,8 @@ cstar-forge = { path = ".", editable = true }
 # stack it and forge depend on) go here so xesmf/esmf and friends come
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
-roms-tools = ">=4.1.1,<5"
-cstar-ocean = ">=0.13.3"
+roms-tools = ">=5.0,<6"
+cstar-ocean = ">=0.13.6"
 dask = "*"
 distributed = "*"
 numpy = "*"
@@ -161,7 +175,13 @@ rsync = "*"
 [tool.pixi.environments]
 default = { features = ["editable"], solve-group = "default" }
 dev = { features = ["editable", "dev", "app"], solve-group = "default" }
-user = { features = ["user"] }
+# no-default-feature: the default feature carries the [project] dependencies as
+# pypi requirements (pixi adds them automatically for a pyproject manifest) plus the
+# workspace conda pins, both of which track the *unreleased* forge in this checkout.
+# The pure-conda user environment must instead follow the released conda-forge
+# cstar-forge's own metadata, or it becomes unsolvable whenever a dependency floor
+# runs ahead of the last release (e.g. roms-tools >=5.0 vs the released <5 pin).
+user = { features = ["user"], no-default-feature = true }
 # dev + local build toolchain, for laptops/workstations compiling ROMS.
 # Own solve (NOT solve-group "default"): mpich/netcdf-fortran would otherwise
 # steer the shared solve toward MPI variants of hdf5/netcdf for plain dev too.
