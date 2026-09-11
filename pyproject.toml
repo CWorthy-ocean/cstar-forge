@@ -51,7 +51,9 @@ dependencies = [
     "ujson",
     "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    "cstar-ocean>=0.13.3",
+    # >=0.13.6: first cstar-ocean release whose own roms_tools pin admits 5.x; older
+    # releases pin roms_tools<5 and cannot be installed alongside this package.
+    "cstar-ocean>=0.13.6",
     # >=5.0: the BoundaryForcing/InitialConditions monolithic wrapper API (multiple
     # BGC sources in one constructor call) forge now builds on directly -- a breaking
     # because it doesn't use these classes).
@@ -122,7 +124,7 @@ cstar-forge = { path = ".", editable = true }
 # from conda-forge, which is the only place they build reliably.
 python = ">=3.12,<3.14"
 roms-tools = ">=5.0,<6"
-cstar-ocean = ">=0.13.3"
+cstar-ocean = ">=0.13.6"
 dask = "*"
 distributed = "*"
 numpy = "*"
