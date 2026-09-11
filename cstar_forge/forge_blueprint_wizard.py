@@ -202,6 +202,32 @@ HELP_TEXT: dict[str, str] = {
         "parent_domain_dd",
     ): "Optionally prefill the parent grid kwargs from a cataloged DomainSpec. "
     "You can still edit any parent-grid field after selecting.",
+    (
+        "nesting",
+        "parent_topo_source",
+    ): "Topography dataset the PARENT grid is rebuilt with (for align_grids: this "
+    "grid's mask/bathymetry is blended toward the parent's along the nesting "
+    "boundaries), so it should match what the parent run was actually built "
+    "with. '(same as this grid)' inherits this grid's topo source AND path; "
+    "picking a dataset here uses that dataset at its default location unless a "
+    "parent topo path is also given. Prefilled from the parent DomainSpec.",
+    (
+        "nesting",
+        "parent_topo_path",
+    ): "Explicit topography file for the PARENT grid (on the executor machine). "
+    "Blank: the parent dataset's default location -- or, with '(same as this "
+    "grid)', this grid's topo path.",
+    (
+        "nesting",
+        "child_topo_source",
+    ): "Topography dataset the CHILD grid is built with when extracting nesting "
+    "data. '(same as this grid)' inherits this grid's topo source AND path.",
+    (
+        "nesting",
+        "child_topo_path",
+    ): "Explicit topography file for the CHILD grid (on the executor machine). "
+    "Blank: the child dataset's default location -- or, with '(same as this "
+    "grid)', this grid's topo path.",
     # ---- partitioning ----------------------------------------------------------
     (
         "domain",
@@ -2990,6 +3016,62 @@ def _drain_stream_buffer(
     return lines, remainder
 
 
+# Nested-grid topography: the parent/child grid kwargs may carry their own
+# ``topography_source``/``topography_path`` (Forge inputs, popped before rt.Grid --
+# see ForgeExecutor._nested_topography_pair for the inheritance rule). The
+# dropdown's first entry is the "inherit this grid's pair" sentinel.
+_NESTED_TOPO_INHERIT = "(same as this grid)"
+_TOPO_SOURCES = ["ETOPO5", "SRTM15", "EMOD"]
+
+
+def _nested_topo_kwargs(source_value: str, path_value: str) -> dict[str, str]:
+    """The ``topography_source``/``topography_path`` keys a nested grid's
+    widgets contribute to its grid_kwargs dict (empty = inherit the domain's).
+    """
+    out: dict[str, str] = {}
+    if source_value and source_value != _NESTED_TOPO_INHERIT:
+        out["topography_source"] = source_value
+    if path_value.strip():
+        out["topography_path"] = path_value.strip()
+    return out
+
+
+def _effective_nested_topo(
+    source_value: str, path_value: str, domain_source: str, domain_path: str
+) -> tuple[str, str]:
+    """Mirror of ``ForgeExecutor._nested_topography_pair`` on widget values:
+    ``(name, path)`` a nested grid resolves to, with ``""`` for no path.
+    """
+    path = path_value.strip()
+    if source_value == _NESTED_TOPO_INHERIT:
+        return domain_source, (path or domain_path.strip())
+    return source_value, path
+
+
+def _plot_topography_source(name: str, path: str) -> tuple[dict[str, str] | None, str]:
+    """What a wizard-side grid build (plots / derive-from-grid) can use for
+    ``rt.Grid(topography_source=...)`` on THIS machine, plus a status note.
+
+    Returns ``(None, "")`` for default ETOPO5 (roms-tools fetches it itself) and
+    ``({'name','path'}, "")`` when ``path`` exists locally. A non-default dataset
+    whose file isn't available here (the common laptop case -- the path is an
+    executor-side path) falls back to ETOPO5 with a visible note, rather than
+    failing the plot: the executor is the hard gate, this is a preview.
+    """
+    path = (path or "").strip()
+    if path:
+        local = Path(path).expanduser()
+        if local.exists():
+            return {"name": name, "path": str(local)}, ""
+    if name == "ETOPO5" and not path:
+        return None, ""
+    why = f"file not found here: {path}" if path else "no local file"
+    return None, (
+        f" <span style='color:#b58900'>(plotted with default ETOPO5 topography; "
+        f"{name}: {why})</span>"
+    )
+
+
 class ForgeBlueprintWizard:
     """Build/curate a :class:`ForgeBlueprint` interactively. ``self.config`` holds the
     latest successfully-resolved config (``None`` while inputs are invalid).
@@ -3221,6 +3303,22 @@ class ForgeBlueprintWizard:
                 layout=W.Layout(width="200px"),
                 tooltip=_tip("grid", k) + " (child/inner grid)",
             )
+        self.child_topo_source = W.Dropdown(
+            options=[_NESTED_TOPO_INHERIT, *_TOPO_SOURCES],
+            value=_NESTED_TOPO_INHERIT,
+            description="child topo:",
+            style={"description_width": "90px"},
+            layout=W.Layout(width="260px"),
+            tooltip=_tip("nesting", "child_topo_source"),
+        )
+        self.child_topo_path = W.Text(
+            value="",
+            description="child topo path:",
+            style={"description_width": "110px"},
+            layout=W.Layout(width="360px"),
+            placeholder="(default)",
+            tooltip=_tip("nesting", "child_topo_path"),
+        )
         self.nest_period = W.FloatText(
             value=3600.0,
             description="extract period (s):",
@@ -3285,6 +3383,22 @@ class ForgeBlueprintWizard:
                 layout=W.Layout(width="200px"),
                 tooltip=_tip("grid", k) + " (parent/outer grid)",
             )
+        self.parent_topo_source = W.Dropdown(
+            options=[_NESTED_TOPO_INHERIT, *_TOPO_SOURCES],
+            value=_NESTED_TOPO_INHERIT,
+            description="parent topo:",
+            style={"description_width": "90px"},
+            layout=W.Layout(width="260px"),
+            tooltip=_tip("nesting", "parent_topo_source"),
+        )
+        self.parent_topo_path = W.Text(
+            value="",
+            description="parent topo path:",
+            style={"description_width": "110px"},
+            layout=W.Layout(width="360px"),
+            placeholder="(default)",
+            tooltip=_tip("nesting", "parent_topo_path"),
+        )
         # --- parent plot (this grid's boundary within its parent) ---
         self.parent_plot_btn = W.Button(
             description="Refresh plot",
@@ -3938,6 +4052,10 @@ class ForgeBlueprintWizard:
             self.parent_enable,
             *self.child_w.values(),
             *self.parent_w.values(),
+            self.child_topo_source,
+            self.child_topo_path,
+            self.parent_topo_source,
+            self.parent_topo_path,
         ]
         for w in watched:
             w.observe(self._rebuild, names="value")
@@ -4304,12 +4422,17 @@ class ForgeBlueprintWizard:
         name = self.nest_domain_dd.value
         if name == "<custom>":
             return
-        gk = self.catalog.domain_data(name).get("grid_kwargs", {}) or {}
+        data = self.catalog.domain_data(name)
+        gk = data.get("grid_kwargs", {}) or {}
         with self._suspend():
             self.nest_enable.value = True
             for k, w in self.child_w.items():
                 if k in gk:
                     w.value = gk[k]
+            # The child spec's own topography, not this grid's (see
+            # _on_parent_domain for why this matters).
+            self.child_topo_source.value = data.get("topography_source", "ETOPO5")
+            self.child_topo_path.value = data.get("topography_path", "") or ""
         self._rebuild()
         self._on_nest_plot(None)
 
@@ -4318,12 +4441,21 @@ class ForgeBlueprintWizard:
         name = self.parent_domain_dd.value
         if name == "<custom>":
             return
-        gk = self.catalog.domain_data(name).get("grid_kwargs", {}) or {}
+        data = self.catalog.domain_data(name)
+        gk = data.get("grid_kwargs", {}) or {}
         with self._suspend():
             self.parent_enable.value = True
             for k, w in self.parent_w.items():
                 if k in gk:
                     w.value = gk[k]
+            # Carry the parent spec's topography too: the parent is rebuilt so
+            # align_grids can blend this grid toward the parent's mask/bathymetry,
+            # so it must be built from what the PARENT run used -- not this grid's
+            # (typically finer, differently-tiled) dataset, which may not even
+            # cover the larger parent footprint. Explicit, never the inherit
+            # sentinel: the spec said what it was built with.
+            self.parent_topo_source.value = data.get("topography_source", "ETOPO5")
+            self.parent_topo_path.value = data.get("topography_path", "") or ""
         self._clear_boundary_forcing()
         self._clear_initial_conditions()
         self._rebuild()
@@ -4834,6 +4966,7 @@ class ForgeBlueprintWizard:
                 for k, w in self.child_w.items():
                     if k in child:
                         w.value = child[k]
+                self._set_nested_topo_widgets("child", child)
                 period = (data.get("metadata_child") or {}).get("period")
                 if period is not None:
                     self.nest_period.value = float(period)
@@ -4848,6 +4981,7 @@ class ForgeBlueprintWizard:
                 for k, w in self.parent_w.items():
                     if k in parent:
                         w.value = parent[k]
+                self._set_nested_topo_widgets("parent", parent)
         # v_sponge (unlike every other snapshot field) isn't finalized by the
         # widget writes above when untouched -- _rebuild() itself live-derives
         # it from the new grid. Settle that first, then snapshot, then rebuild
@@ -4883,7 +5017,29 @@ class ForgeBlueprintWizard:
             "nest_pressure_fluxes": self.nest_pressure_fluxes.value,
             "parent_enable": self.parent_enable.value,
             "parent_w": {k: w.value for k, w in self.parent_w.items()},
+            "child_topo": (self.child_topo_source.value, self.child_topo_path.value),
+            "parent_topo": (
+                self.parent_topo_source.value,
+                self.parent_topo_path.value,
+            ),
         }
+
+    def _set_nested_topo_widgets(self, which: str, gk: dict[str, Any]) -> None:
+        """Load a nested grid's optional ``topography_source``/``topography_path``
+        (from a blueprint or DomainSpec ``grid_kwargs_parent``/``_child`` dict)
+        into its widgets; absent keys mean "inherit this grid's" (the sentinel /
+        blank). Called inside a ``_suspend()`` block by the populate paths.
+        """
+        src_w = getattr(self, f"{which}_topo_source")
+        path_w = getattr(self, f"{which}_topo_path")
+        src = gk.get("topography_source")
+        if isinstance(src, dict):  # hand-authored roms-tools {'name','path'}
+            path_w.value = str(gk.get("topography_path") or src.get("path") or "")
+            src = src.get("name")
+        else:
+            path_w.value = str(gk.get("topography_path") or "")
+        src = getattr(src, "value", src)
+        src_w.value = str(src) if src in _TOPO_SOURCES else _NESTED_TOPO_INHERIT
 
     def _domain_spec_data(self) -> dict[str, Any]:
         """Build a ``Domain.yaml``-shaped dict from the current widget state (the
@@ -5833,6 +5989,11 @@ class ForgeBlueprintWizard:
                 ck[k] = int(self.child_w[k].value)
             for k in _GRID_FLOAT + _SCOORD:
                 ck[k] = float(self.child_w[k].value)
+            ck.update(
+                _nested_topo_kwargs(
+                    self.child_topo_source.value, self.child_topo_path.value
+                )
+            )
             kw["grid_kwargs_child"] = ck
             kw["metadata_child"] = {"period": float(self.nest_period.value)}
             if self.nest_pressure_fluxes.value:
@@ -5843,6 +6004,11 @@ class ForgeBlueprintWizard:
                 pk[k] = int(self.parent_w[k].value)
             for k in _GRID_FLOAT + _SCOORD:
                 pk[k] = float(self.parent_w[k].value)
+            pk.update(
+                _nested_topo_kwargs(
+                    self.parent_topo_source.value, self.parent_topo_path.value
+                )
+            )
             kw["grid_kwargs_parent"] = pk
         # forcing/output are always required now (no more model-default fallback).
         kw["forcing_inputs"] = self._forcing_editor.gather()
@@ -5867,6 +6033,7 @@ class ForgeBlueprintWizard:
             for k, w in self.child_w.items():
                 if k in child:
                     w.value = child[k]
+            self._set_nested_topo_widgets("child", child)
             period = (cfg.domain.metadata_child or {}).get("period")
             if period is not None:
                 self.nest_period.value = float(period)
@@ -5879,6 +6046,7 @@ class ForgeBlueprintWizard:
             for k, w in self.parent_w.items():
                 if k in parent:
                     w.value = parent[k]
+            self._set_nested_topo_widgets("parent", parent)
 
     def _rebuild(self, *_):
         if getattr(self, "_suspended", False):
@@ -6177,7 +6345,30 @@ class ForgeBlueprintWizard:
             gk["close_narrow_channels"] = True
         if self.mask_shapefile.value.strip():
             gk["mask_shapefile"] = self.mask_shapefile.value.strip()
+        topo, self._grid_build_topo_note = self._this_grid_plot_topography()
+        if topo is not None:
+            gk["topography_source"] = topo
         return Grid(**gk)
+
+    def _this_grid_plot_topography(self) -> tuple[dict[str, str] | None, str]:
+        """This grid's ``topography_source`` for a wizard-side build, or the
+        ETOPO5 fallback + note when the file isn't available here.
+        """
+        return _plot_topography_source(self.topo_source.value, self.topo_path.value)
+
+    def _nested_plot_topography(self, which: str) -> tuple[dict[str, str] | None, str]:
+        """``which`` in ("parent", "child"): that grid's effective topography
+        (its own widgets, or this grid's when set to inherit) for a wizard-side
+        build, with the same local-availability fallback.
+        """
+        name, path = _effective_nested_topo(
+            getattr(self, f"{which}_topo_source").value,
+            getattr(self, f"{which}_topo_path").value,
+            self.topo_source.value,
+            self.topo_path.value,
+        )
+        topo, note = _plot_topography_source(name, path)
+        return topo, note.replace("(plotted", f"({which} grid plotted", 1)
 
     def _apply_grid_derived_properties(self, grid: Any) -> None:
         """Set any untouched v_sponge/open-boundary values from a built grid.
@@ -6268,7 +6459,9 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.plot_img.value = buf.read()
-            self.plot_status.value = "<span style='color:#080'>✓</span>"
+            self.plot_status.value = "<span style='color:#080'>✓</span>" + getattr(
+                self, "_grid_build_topo_note", ""
+            )
         except Exception as exc:
             self.plot_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
@@ -6307,6 +6500,13 @@ class ForgeBlueprintWizard:
             for k in _GRID_FLOAT + _SCOORD:
                 ck[k] = float(self.child_w[k].value)
 
+            gk_topo, note_self = self._this_grid_plot_topography()
+            if gk_topo is not None:
+                gk["topography_source"] = gk_topo
+            ck_topo, note_child = self._nested_plot_topography("child")
+            if ck_topo is not None:
+                ck["topography_source"] = ck_topo
+
             plt.ioff()
             try:
                 parent = Grid(**gk)
@@ -6331,7 +6531,9 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.nest_plot_img.value = buf.read()
-            self.nest_plot_status.value = "<span style='color:#080'>✓</span>"
+            self.nest_plot_status.value = (
+                "<span style='color:#080'>✓</span>" + note_self + note_child
+            )
         except Exception as exc:
             self.nest_plot_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
@@ -6371,6 +6573,17 @@ class ForgeBlueprintWizard:
             for k in _GRID_FLOAT + _SCOORD:
                 pk[k] = float(self.parent_w[k].value)
 
+            # Each grid is built with ITS topography where the file is available
+            # on this machine (mirrors the executor's per-grid resolution), so a
+            # parent that falls outside its dataset's coverage fails here, in the
+            # preview, instead of only at executor time.
+            pk_topo, note_parent = self._nested_plot_topography("parent")
+            if pk_topo is not None:
+                pk["topography_source"] = pk_topo
+            gk_topo, note_self = self._this_grid_plot_topography()
+            if gk_topo is not None:
+                gk["topography_source"] = gk_topo
+
             plt.ioff()
             try:
                 parent = Grid(**pk)
@@ -6390,7 +6603,9 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.parent_plot_img.value = buf.read()
-            self.parent_plot_status.value = "<span style='color:#080'>✓</span>"
+            self.parent_plot_status.value = (
+                "<span style='color:#080'>✓</span>" + note_parent + note_self
+            )
         except Exception as exc:
             self.parent_plot_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
@@ -6960,6 +7175,12 @@ class ForgeBlueprintWizard:
                                             child_box,
                                             W.HBox(
                                                 [
+                                                    self.child_topo_source,
+                                                    self.child_topo_path,
+                                                ]
+                                            ),
+                                            W.HBox(
+                                                [
                                                     self.nest_period,
                                                     self.nest_pressure_fluxes,
                                                 ]
@@ -6991,6 +7212,12 @@ class ForgeBlueprintWizard:
                                             self.parent_help,
                                             self.parent_domain_dd,
                                             parent_box,
+                                            W.HBox(
+                                                [
+                                                    self.parent_topo_source,
+                                                    self.parent_topo_path,
+                                                ]
+                                            ),
                                         ]
                                     ),
                                     W.VBox(

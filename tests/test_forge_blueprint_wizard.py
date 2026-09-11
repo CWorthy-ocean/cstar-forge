@@ -10,6 +10,7 @@ as fast unit tests.
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 
@@ -2853,6 +2854,151 @@ def _new_wizard():
     wiz.start.value = date(2012, 1, 1)
     wiz.end.value = date(2012, 1, 2)
     return wiz
+
+
+class TestNestedTopographyWidgets:
+    """Parent/child grids carry their own topography (see
+    ForgeExecutor._nested_topography_pair); the wizard's parent/child pick copies
+    the spec's topography, gather emits the keys, and load-back restores them.
+    """
+
+    _SPEC: ClassVar[dict] = {
+        "grid_kwargs": {"nx": 30, "ny": 40, "size_x": 300.0, "size_y": 400.0},
+        "topography_source": "SRTM15",
+        "topography_path": "/hpc/data/srtm15_west.nc",
+    }
+
+    def _pick_parent(self, wiz, monkeypatch, spec):
+        monkeypatch.setattr(wiz.catalog, "domain_data", lambda _name: dict(spec))
+        monkeypatch.setattr(wiz, "_on_parent_plot", lambda _b: None)
+        wiz.parent_domain_dd.value = wiz.parent_domain_dd.options[1]
+
+    def test_parent_pick_copies_spec_topography_and_gather_emits_it(self, monkeypatch):
+        wiz = _new_wizard()
+        assert wiz.parent_topo_source.value == "(same as this grid)"
+        self._pick_parent(wiz, monkeypatch, self._SPEC)
+
+        assert wiz.parent_enable.value is True
+        assert wiz.parent_w["nx"].value == 30
+        assert wiz.parent_topo_source.value == "SRTM15"
+        assert wiz.parent_topo_path.value == "/hpc/data/srtm15_west.nc"
+
+        pk = wiz._gather()["grid_kwargs_parent"]
+        assert pk["topography_source"] == "SRTM15"
+        assert pk["topography_path"] == "/hpc/data/srtm15_west.nc"
+        assert wiz.config is not None, wiz.derived.value
+        assert wiz.config.domain.grid_kwargs_parent["topography_source"] == "SRTM15"
+        assert "SRTM15" in wiz.config.datasets
+
+    def test_parent_pick_with_default_topography_is_explicit_etopo5(self, monkeypatch):
+        """A parent spec built with the default dataset says so explicitly: the
+        parent must NOT silently inherit this grid's (e.g. EMOD) topography.
+        """
+        wiz = _new_wizard()
+        wiz.topo_source.value = "EMOD"
+        wiz.topo_path.value = "/hpc/data/EMODnet_C2.nc"
+        spec = {"grid_kwargs": self._SPEC["grid_kwargs"]}  # no topography keys
+        self._pick_parent(wiz, monkeypatch, spec)
+
+        assert wiz.parent_topo_source.value == "ETOPO5"
+        assert wiz.parent_topo_path.value == ""
+        pk = wiz._gather()["grid_kwargs_parent"]
+        assert pk["topography_source"] == "ETOPO5"
+        assert "topography_path" not in pk
+
+    def test_inherit_sentinel_emits_no_keys(self):
+        wiz = _new_wizard()
+        wiz.parent_enable.value = True
+        wiz.nest_enable.value = True
+        kw = wiz._gather()
+        for key in ("grid_kwargs_parent", "grid_kwargs_child"):
+            assert "topography_source" not in kw[key]
+            assert "topography_path" not in kw[key]
+
+    def test_round_trips_through_populate_from(self, monkeypatch):
+        wiz = _new_wizard()
+        self._pick_parent(wiz, monkeypatch, self._SPEC)
+        wiz.nest_enable.value = True
+        wiz.child_topo_path.value = "/hpc/data/child_tile.nc"  # path-only override
+        wiz._rebuild()
+        cfg = wiz.config
+        assert cfg is not None, wiz.derived.value
+        assert (
+            cfg.domain.grid_kwargs_child["topography_path"] == "/hpc/data/child_tile.nc"
+        )
+        assert "topography_source" not in cfg.domain.grid_kwargs_child
+
+        wiz2 = ForgeBlueprintWizard()
+        wiz2._populate_from(cfg)
+
+        assert wiz2.parent_topo_source.value == "SRTM15"
+        assert wiz2.parent_topo_path.value == "/hpc/data/srtm15_west.nc"
+        assert wiz2.child_topo_source.value == "(same as this grid)"
+        assert wiz2.child_topo_path.value == "/hpc/data/child_tile.nc"
+        assert (
+            wiz2._gather()["grid_kwargs_parent"] == wiz._gather()["grid_kwargs_parent"]
+        )
+
+    def test_plot_topography_falls_back_when_file_not_local(self, tmp_path):
+        from cstar_forge.forge_blueprint_wizard import (
+            _effective_nested_topo,
+            _plot_topography_source,
+        )
+
+        assert _plot_topography_source("ETOPO5", "") == (None, "")
+        topo, note = _plot_topography_source("EMOD", "/hpc/only/EMODnet_C2.nc")
+        assert topo is None and "EMOD" in note and "not found here" in note
+        topo, note = _plot_topography_source("EMOD", "")
+        assert topo is None and "no local file" in note
+        local = _write_tiny_netcdf(tmp_path / "topo.nc")
+        assert _plot_topography_source("EMOD", str(local)) == (
+            {"name": "EMOD", "path": str(local)},
+            "",
+        )
+        # inherit: domain pair; source set: domain path is NOT inherited
+        assert _effective_nested_topo("(same as this grid)", "", "EMOD", "/d/e.nc") == (
+            "EMOD",
+            "/d/e.nc",
+        )
+        assert _effective_nested_topo("SRTM15", "", "EMOD", "/d/e.nc") == ("SRTM15", "")
+        assert _effective_nested_topo(
+            "(same as this grid)", "/p.nc", "EMOD", "/d/e.nc"
+        ) == (
+            "EMOD",
+            "/p.nc",
+        )
+
+    def test_parent_plot_builds_parent_with_its_own_topography(
+        self, monkeypatch, tmp_path
+    ):
+        """The parent plot builds the parent grid with the parent's topography
+        (when the file is available here) -- so a parent falling outside its
+        dataset's coverage fails in the preview, not only at executor time.
+        """
+        import roms_tools
+
+        calls: list[dict] = []
+
+        class _G:
+            def __init__(self, **kw):
+                calls.append(kw)
+
+        monkeypatch.setattr(roms_tools, "Grid", _G)
+        monkeypatch.setattr(roms_tools, "plot_nesting", lambda *a, **k: None)
+        wiz = _new_wizard()
+        local = _write_tiny_netcdf(tmp_path / "parent_topo.nc")
+        wiz.parent_enable.value = True
+        wiz.parent_topo_source.value = "EMOD"
+        wiz.parent_topo_path.value = str(local)
+        wiz.topo_source.value = "SRTM15"  # this grid: no local file -> fallback
+
+        wiz._on_parent_plot(None)
+
+        parent_kw, this_kw = calls[0], calls[1]
+        assert parent_kw["topography_source"] == {"name": "EMOD", "path": str(local)}
+        assert "topography_source" not in this_kw
+        assert "SRTM15" in wiz.parent_plot_status.value  # fallback note for this grid
+        assert "EMOD" not in wiz.parent_plot_status.value
 
 
 class TestGridFileAttach:
