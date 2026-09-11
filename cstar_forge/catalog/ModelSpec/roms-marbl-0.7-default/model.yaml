@@ -4,7 +4,6 @@ use_pio: true
 code:
   roms:
     location: https://github.com/CWorthy-ocean/ucla-roms.git
-    # TODO: placeholder -- ucla-roms 0.7.0 is not tagged yet (PR #351); verify before merge
     commit: 0.7.0
   marbl:
     location: https://github.com/CWorthy-ocean/MARBL.git
