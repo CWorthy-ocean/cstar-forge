@@ -5530,6 +5530,7 @@ class TestSaveModifiedSpecsToCatalog:
         assert any(bs.get("serialize_dask") for bs in saved_bgc), (
             f"serialize_dask missing from the written spec: {saved_bgc}"
         )
+        wiz = self._wizard(isolated_catalog)
 
         # And a fresh wizard picking that spec back up still carries it.
         wiz2 = self._wizard(isolated_catalog)
