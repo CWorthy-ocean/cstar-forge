@@ -5,16 +5,29 @@
 ### Breaking Changes
 
 * This update breaks previous forge_blueprint structure ([#151](https://github.com/CWorthy-ocean/cstar-forge/pull/151))
+* ucla-roms 0.7.0 moved the gas-exchange sensitivities `ddic_dco2`/`ddic_dalk` out of the `_cdr` output files into new `_cdrgas` files. Forge does not change this, but anyone reading CDR output filenames directly should expect it once they pin 0.7.0. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
 
 ### New Features
 
 * Support for multiple BGC data sources, including new sources and the ability to mix-and-match fields. ([#151](https://github.com/CWorthy-ocean/cstar-forge/pull/151))
+* `namelist.nml` gains two version-gated output groups for ucla-roms >= 0.7.0: `cdr_tracer_output` (CDR tracer concentrations with per-field-group toggles for tracers, vertical integrals, thickness-weighted fields, sources, alkalinity and DIC) and `cdr_gas_exch_output` (gas-exchange sensitivities). Both carry the ucla-roms reference defaults (averaged, hourly period, off), verified field for field against the tagged 0.7.0 `src/namelist.nml`. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* Enabling either stream requires `bgc_mode: marbl` and raises the `cdr_forcing` cppdef, matching what ucla-roms compiles them under; the resolver rejects the combination otherwise. Unlike the original `cdr_output`, neither stream is ever forced on by an active CDR forcing mode. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* New `roms-marbl-0.7-default` ModelSpec pinning ucla-roms `0.7.0`; `pio-dev` (pinned to `main`) picks up the new schema through the existing latest-schema fallback. Existing ModelSpecs are unchanged. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* The bundled OutputSpecs (`daily-restarts`, `weekly-restarts`, `monthly-restarts`, `standard`) carry both sections with defaults (off, hourly, 24 records per file). Because OutputSpecs are shared across ModelSpecs, sections a blueprint's pinned ucla-roms release cannot model are pruned at resolve time, so a 0.6-pinned blueprint never stores an inert `cdr_tracer_output` block. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* Wizard: both streams appear in the "Carbon dioxide removal (CDR)" advanced pane, only when the selected ModelSpec's pin admits them. Their fields hide with the stream's master switch, and averaged/instantaneous and monthly/periodic render as dropdowns like the existing CDR output. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
 
 ### Bug Fixes
 
 ### Improvements
 
+* The wizard's CDR output-stream visibility rules are table-driven (`cdr_output`, `cdr_tracer_output`, `cdr_gas_exch_output` share one code path), so a future ucla-roms output stream is one table entry rather than hand-written show/hide logic. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* The run-time settings tier is selected most-specific-first (0.7.0, then 0.6.0, then 0.5.0), so a subclass never falls back to a superclass's kwargs. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+
 ### Miscellaneous
+
+* Golden fixtures `golden_namelist_test-tiny-roms070.nml` and `golden_model_settings_test-tiny-roms070.json` for a 0.7.0-pinned blueprint; the 0.5.0/0.6.0 goldens are untouched. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* Docs: `architecture-details.md`, `model-spec-settings.md`, `InputData-intro.md`, `InputData-RomsMarblInputData.md` describe the new sections, the pruning rule, and the opt-in policy; release note added under Unreleased. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
+* Tests cover schema selection at the 0.7.0 boundary, defaults and aliases, override round trip, the MARBL requirement and cppdef flip, pruning for older pins (including that a pruned override cannot flip a cppdef), the restart-divisibility pre-check for the new streams, and the wizard gating and field rules. ([#167](https://github.com/CWorthy-ocean/cstar-forge/pull/167))
 
 ## 0.7.3
 
