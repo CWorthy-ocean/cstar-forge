@@ -105,6 +105,10 @@ dev = [
     # no longer imports it (namelist writing moved to cstar.roms.namelist in
     # C-Star), so it's a test-only, not runtime, dependency.
     "f90nml",
+    # tests/test_forge_blueprint_wizard.py imports ipywidgets unconditionally; without
+    # it a `pip install -e ".[dev]"` cannot run the suite (it is otherwise only in the
+    # `app` extra).
+    "ipywidgets",
 ]
 
 [tool.pixi.workspace]
