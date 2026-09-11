@@ -44,6 +44,11 @@ jobs:
             - nodefaults
           channel_priority: strict
         cache-downloads: true
+        # Key the download cache on environment.yml: the restored pkgs dir carries
+        # micromamba's repodata shard index, which it reuses without refetching.
+        # With the default static key a pin bump to a just-released package failed
+        # with "does not exist" until the stale cache aged out.
+        cache-downloads-key: ${{ hashFiles('environment.yml') }}
         cache-environment: false
         micromamba-version: 'latest'
         environment-file: environment.yml
