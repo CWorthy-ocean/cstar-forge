@@ -1954,20 +1954,44 @@ def test_resolver_threads_river_bgc_source_and_climatology():
     from cstar_forge.domain_catalog import default_catalog as cat
 
     fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
-    fdata["forcing"]["river"][0]["bgc_source"] = {
-        "name": "RIVR2O",
-        "path": "/tmp/rivr2o/*.nc",
-    }
+    fdata["forcing"]["river"][0]["bgc_source"] = {"name": "RIVR2O"}
     fdata["forcing"]["river"][0]["convert_to_climatology"] = "always"
 
     cfg = _build(forcing_inputs=fdata)
     river = cfg.forcing.river[0]
 
-    assert river.bgc_source == {"name": "RIVR2O", "path": "/tmp/rivr2o/*.nc"}
+    assert river.bgc_source == {"name": "RIVR2O"}
     assert river.convert_to_climatology.value == "always"
     assert "RIVR2O" in cfg.datasets
     assert "RIVR2O" in cfg.forcing.resolved_datasets
     assert "CONSTANTS" not in cfg.datasets
+
+
+def test_resolver_river_bgc_source_with_path_not_noted():
+    """An explicit bgc_source path bypasses staging (the executor reads it verbatim,
+    see input_data._resolve_source_block), so RIVR2O must NOT be noted into
+    datasets/resolved_datasets -- otherwise _prepare_rivr2o would demand files at
+    the canonical staged location that are never used. Same rule as `_note` and
+    the river surface_forcing_source loop.
+    """
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["river"][0]["bgc_source"] = {
+        "name": "RIVR2O",
+        "path": "/tmp/rivr2o/*.nc",
+    }
+
+    cfg = _build(forcing_inputs=fdata)
+
+    assert cfg.forcing.river[0].bgc_source == {
+        "name": "RIVR2O",
+        "path": "/tmp/rivr2o/*.nc",
+    }
+    assert "RIVR2O" not in cfg.datasets
+    assert "RIVR2O" not in cfg.forcing.resolved_datasets
 
 
 def test_resolver_threads_river_surface_forcing_source():
@@ -2118,17 +2142,17 @@ def test_sources_to_forcing_override_carries_river_bgc_source():
     )
 
     fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
-    fdata["forcing"]["river"][0]["bgc_source"] = {
-        "name": "RIVR2O",
-        "path": "/tmp/rivr2o/*.nc",
-    }
+    # No explicit path: that is the Forge-staged case in which RIVR2O must be
+    # noted into datasets (an explicit path bypasses staging -- see
+    # test_resolver_river_bgc_source_with_path_not_noted).
+    fdata["forcing"]["river"][0]["bgc_source"] = {"name": "RIVR2O"}
     fdata["forcing"]["river"][0]["convert_to_climatology"] = "always"
 
     cfg = _build(forcing_inputs=fdata, topography_source="EMOD")
 
     ov = sources_to_forcing_override(cfg)
     river_ov = ov["forcing"]["river"][0]
-    assert river_ov["bgc_source"] == {"name": "RIVR2O", "path": "/tmp/rivr2o/*.nc"}
+    assert river_ov["bgc_source"] == {"name": "RIVR2O"}
     assert river_ov["convert_to_climatology"] == "always"
 
     kwargs = forge_blueprint_to_builder_kwargs(cfg)
