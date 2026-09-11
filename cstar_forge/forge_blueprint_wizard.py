@@ -1170,7 +1170,19 @@ class _SettingsEditor:
                         true_label, false_label = labels
                         widget.value = true_label if bool(value) else false_label
                     elif base is list:
-                        widget.value = ", ".join(str(x) for x in (value or []))
+                        # Only rewrite the text when the *parsed* list actually
+                        # differs from the value being synced. A list field is a
+                        # free-text Text widget, and every keystroke round-trips
+                        # through on_edit -> _rebuild -> sync(); re-joining the
+                        # parsed list on each pass would rewrite "a, b," back to
+                        # "a, b" (the trailing separator parses to nothing),
+                        # making it impossible to type a comma at the end of
+                        # the field. Leaving the text alone when it already
+                        # parses to `value` keeps the in-progress text intact
+                        # while a genuine external change (model switch, load,
+                        # override reset) still re-renders the field.
+                        if _read_field_widget(widget, list) != list(value or []):
+                            widget.value = ", ".join(str(x) for x in (value or []))
                     elif value is not None:
                         widget.value = base(value)
                 except (ValueError, TypeError):
@@ -1628,6 +1640,30 @@ def _user_file_status_html(file_dict: dict[str, Any] | None) -> str:
         "<span style='color:#b58900'>⚠ This file must exist at this exact path "
         "on the machine where the executor runs.</span>"
     )
+
+
+# Shown in a user-provided-file status slot until a file is attached, where the
+# blueprint is invalid without one (a CUSTOM_FILE river row; CDR mode "netcdf").
+_FILE_NOT_ATTACHED_HINT = (
+    "<span style='color:#b58900'>No file attached yet -- enter a path and press "
+    "Enter (or click Attach / upload a file). The blueprint is invalid until "
+    "a file is attached.</span>"
+)
+_RIVER_CUSTOM_FILE_HINT = _FILE_NOT_ATTACHED_HINT
+_CDR_FILE_HINT = _FILE_NOT_ATTACHED_HINT
+
+
+def _same_attached_file(attached: dict[str, Any] | None, path_str: str) -> bool:
+    """True when ``path_str`` resolves to the already-attached file dict's
+    location -- the dedupe every path-Text submit observer uses so re-submitting
+    (or programmatically re-setting) the same path doesn't re-hash/re-load.
+    """
+    if not attached:
+        return False
+    try:
+        return attached["location"] == str(Path(path_str).expanduser().resolve())
+    except (OSError, RuntimeError):
+        return False
 
 
 def _stage_uploaded_netcdf(filename: str, content: bytes) -> Path:
@@ -2477,6 +2513,15 @@ class _ForcingEditor:
                     # RiverForcingItem._custom_file_excludes_bgc_source).
                     ws["bgc_source_name"].layout.display = "none"
                     ws["bgc_source_path"].layout.display = "none"
+                    # Until a file is attached the gathered item fails
+                    # RiverForcingItem validation ("custom_file is not set");
+                    # say what to do rather than leave the blank status to be
+                    # explained only by the pydantic dump in the preview.
+                    if (
+                        not ws.get("_custom_file")
+                        and not ws["custom_file_status"].value
+                    ):
+                        ws["custom_file_status"].value = _RIVER_CUSTOM_FILE_HINT
                 else:
                     # Restored from custom-file mode (or never in it): let
                     # include_bgc's own sync decide bgc widget visibility again,
@@ -2528,6 +2573,10 @@ class _ForcingEditor:
                 style=small,
                 layout=W.Layout(width="320px"),
                 tooltip=_tip("river", "custom_file"),
+                # Fire `value` only on Enter / focus-out, not per keystroke, so
+                # the observer below can auto-attach a finished path without
+                # hashing every partially-typed prefix.
+                continuous_update=False,
             )
             w["custom_file_attach_btn"] = W.Button(
                 description="Attach", icon="link", layout=W.Layout(width="90px")
@@ -2537,7 +2586,9 @@ class _ForcingEditor:
             )
             w["custom_file_status"] = W.HTML(_user_file_status_html(w["_custom_file"]))
 
-            def _attach_river_custom_file(path_str: str, ws=w) -> None:
+            def _attach_river_custom_file(
+                path_str: str, ws=w, *, notify: bool = True
+            ) -> None:
                 ws["custom_file_status"].value = "<i>attaching…</i>"
                 try:
                     path = Path(path_str).expanduser().resolve()
@@ -2558,7 +2609,23 @@ class _ForcingEditor:
                 ws["custom_file_status"].value = _user_file_status_html(
                     ws["_custom_file"]
                 )
-                self.on_change()
+                if notify:
+                    self.on_change()
+
+            def _maybe_attach_river_custom_file(ws=w, *, notify: bool = True) -> None:
+                """Attach whatever path is typed in the box, unless it's blank or
+                already the attached file. Called on Enter/focus-out of the path
+                Text and as a last-resort from `_gather_item`, so a user who
+                types (or uploads) a path and moves on without clicking Attach
+                still gets a valid CUSTOM_FILE item instead of a
+                RiverForcingItem validation error for a missing custom_file.
+                """
+                path_str = ws["custom_file_path"].value.strip()
+                if not path_str:
+                    return
+                if _same_attached_file(ws.get("_custom_file"), path_str):
+                    return
+                _attach_river_custom_file(path_str, notify=notify)
 
             def _on_river_custom_file_attach_click(_btn, ws=w) -> None:
                 path_str = ws["custom_file_path"].value.strip()
@@ -2567,7 +2634,12 @@ class _ForcingEditor:
                         "custom_file_status"
                     ].value = "<span style='color:#b00'>Enter a path first.</span>"
                     return
+                # Explicit click always re-hashes (the file may have changed on
+                # disk since the last attach) -- no `_maybe_` dedupe here.
                 _attach_river_custom_file(path_str)
+
+            def _on_river_custom_file_path_submit(_change, ws=w) -> None:
+                _maybe_attach_river_custom_file(ws)
 
             def _on_river_custom_file_upload(change, ws=w) -> None:
                 items = change["new"]
@@ -2581,11 +2653,22 @@ class _ForcingEditor:
                 dest = _stage_uploaded_netcdf(
                     up_item["name"], bytes(up_item["content"])
                 )
+                # Setting the Text value fires the path-submit observer, which
+                # attaches via `_maybe_`; the explicit call below covers the
+                # re-upload-same-name case where the value doesn't change (and
+                # is a no-op dedupe when the observer already attached it).
                 ws["custom_file_path"].value = str(dest)
-                _attach_river_custom_file(str(dest))
+                _maybe_attach_river_custom_file(ws)
 
             w["custom_file_attach_btn"].on_click(_on_river_custom_file_attach_click)
+            w["custom_file_path"].observe(
+                _on_river_custom_file_path_submit, names="value"
+            )
             w["custom_file_upload"].observe(_on_river_custom_file_upload, names="value")
+            # Exposed (underscore-prefixed, so not a layout child -- see _row_box)
+            # for `_gather_item`'s last-resort attach; the closures above are
+            # otherwise unreachable from outside this row.
+            w["_maybe_attach_custom_file"] = _maybe_attach_river_custom_file
             _sync_river_custom_visibility()
         self._apply_row_visibility(w)
         return w
@@ -2675,6 +2758,14 @@ class _ForcingEditor:
             # domain_edge_buffer/bgc_source/options) apply, and the schema
             # forbids most of them from being paired with a source path.
             item: dict[str, Any] = {"source": {"name": w["name"].value}}
+            if not w.get("_custom_file") and w.get("_maybe_attach_custom_file"):
+                # Last resort for a path that was typed but never submitted
+                # (no Enter / focus-out / Attach click before gather ran):
+                # attach it now, without on_change() -- gather is already
+                # running inside the wizard's rebuild. A blank box or a bad
+                # path leaves `_custom_file` unset and the item is emitted
+                # without custom_file, so the schema error still surfaces.
+                w["_maybe_attach_custom_file"](w, notify=False)
             if w.get("_custom_file"):
                 item["custom_file"] = dict(w["_custom_file"])
             return item
@@ -3498,6 +3589,9 @@ class ForgeBlueprintWizard:
             style={"description_width": "110px"},
             layout=W.Layout(width="420px"),
             tooltip=_tip("grid", "grid_file"),
+            # Fire `value` on Enter / focus-out only (not per keystroke) so
+            # _on_grid_file_path_submit can auto-attach a finished path.
+            continuous_update=False,
         )
         self.grid_file_attach_btn = W.Button(description="Attach", icon="link")
         self.grid_file_detach_btn = W.Button(description="Detach", icon="unlink")
@@ -3691,6 +3785,7 @@ class ForgeBlueprintWizard:
             style={"description_width": "110px"},
             layout=W.Layout(width="420px"),
             tooltip=_tip("cdr", "cdr_file"),
+            continuous_update=False,  # see grid_file_path
         )
         self.cdr_file_attach_btn = W.Button(description="Attach", icon="link")
         self.cdr_file_clear_btn = W.Button(description="Clear", icon="times")
@@ -4000,9 +4095,11 @@ class ForgeBlueprintWizard:
         self.cdr_clear_btn.on_click(self._on_cdr_clear)
         self.grid_file_attach_btn.on_click(self._on_grid_file_attach)
         self.grid_file_detach_btn.on_click(self._on_grid_file_detach)
+        self.grid_file_path.observe(self._on_grid_file_path_submit, names="value")
         self.grid_file_upload.observe(self._on_grid_file_upload, names="value")
         self.cdr_file_attach_btn.on_click(self._on_cdr_file_attach)
         self.cdr_file_clear_btn.on_click(self._on_cdr_file_clear)
+        self.cdr_file_path.observe(self._on_cdr_file_path_submit, names="value")
         self.cdr_file_upload.observe(self._on_cdr_file_upload, names="value")
         self.cdr_plot_btn.on_click(self._on_cdr_plot_generate)
         self.cdr_plot_type_dd.observe(self._on_cdr_plot_option_change, names="value")
@@ -4273,7 +4370,26 @@ class ForgeBlueprintWizard:
                 "<span style='color:#b00'>Enter a path first.</span>"
             )
             return
+        # Explicit click always re-loads/re-hashes (the file may have changed on
+        # disk since the last attach) -- no dedupe here.
         self._attach_grid_file_from_path(path_str)
+
+    def _maybe_attach_grid_file(self) -> None:
+        """Attach the path in the grid-file box unless it's blank or already the
+        attached file. Fired on Enter/focus-out of the Text (and after an
+        upload lands), so a user who types/pastes a path and moves on without
+        clicking Attach doesn't silently keep building from the grid_kwargs
+        widgets instead of the file they meant to use.
+        """
+        path_str = self.grid_file_path.value.strip()
+        if not path_str or _same_attached_file(self._grid_file, path_str):
+            return
+        self._attach_grid_file_from_path(path_str)
+
+    def _on_grid_file_path_submit(self, _change) -> None:
+        if getattr(self, "_suspended", False):
+            return
+        self._maybe_attach_grid_file()
 
     def _on_grid_file_upload(self, change):
         items = change["new"]
@@ -4283,8 +4399,10 @@ class ForgeBlueprintWizard:
             items[0] if isinstance(items, (list, tuple)) else next(iter(items.values()))
         )
         dest = _stage_uploaded_netcdf(item["name"], bytes(item["content"]))
+        # Setting the Text fires _on_grid_file_path_submit (attach); the explicit
+        # call covers a same-name re-upload where the value doesn't change.
         self.grid_file_path.value = str(dest)
-        self._attach_grid_file_from_path(str(dest))
+        self._maybe_attach_grid_file()
 
     def _detach_grid_file(self) -> None:
         """Pure state reset (no _rebuild(), no widget-value restore) -- shared
@@ -5262,6 +5380,14 @@ class ForgeBlueprintWizard:
         self.cdr_plot_box.layout.display = (
             "" if mode in ("simple", "yaml", "netcdf") else "none"
         )
+        if (
+            mode == "netcdf"
+            and self._cdr_forcing_file is None
+            and not self.cdr_file_status.value
+        ):
+            # CdrSpec rejects mode="netcdf" without cdr_forcing_file; say what to
+            # do here rather than leave only the pydantic dump in the preview.
+            self.cdr_file_status.value = _CDR_FILE_HINT
 
         if mode == "simple" and old_mode != "simple":
             # Seed from the grid center / run window at the moment of activation
@@ -5518,7 +5644,24 @@ class ForgeBlueprintWizard:
                 "<span style='color:#b00'>Enter a path first.</span>"
             )
             return
+        # Explicit click always re-hashes -- no dedupe here.
         self._attach_cdr_file_from_path(path_str)
+
+    def _maybe_attach_cdr_file(self) -> None:
+        """CDR-file twin of `_maybe_attach_grid_file`: attach the typed path on
+        Enter/focus-out unless blank or already attached. CDR mode "netcdf"
+        requires cdr_forcing_file (CdrSpec), so a typed-but-unattached path
+        used to leave the blueprint invalid with no hint as to why.
+        """
+        path_str = self.cdr_file_path.value.strip()
+        if not path_str or _same_attached_file(self._cdr_forcing_file, path_str):
+            return
+        self._attach_cdr_file_from_path(path_str)
+
+    def _on_cdr_file_path_submit(self, _change) -> None:
+        if getattr(self, "_suspended", False):
+            return
+        self._maybe_attach_cdr_file()
 
     def _on_cdr_file_upload(self, change):
         items = change["new"]
@@ -5528,14 +5671,15 @@ class ForgeBlueprintWizard:
             items[0] if isinstance(items, (list, tuple)) else next(iter(items.values()))
         )
         dest = _stage_uploaded_netcdf(item["name"], bytes(item["content"]))
-        self.cdr_file_path.value = str(dest)
-        self._attach_cdr_file_from_path(str(dest))
+        self.cdr_file_path.value = str(dest)  # fires _on_cdr_file_path_submit
+        self._maybe_attach_cdr_file()  # same-name re-upload: value unchanged
 
     def _on_cdr_file_clear(self, _btn):
         self._cdr_forcing_file = None
         self.cdr_file_path.value = ""
         self.cdr_file_upload.value = ()
-        self.cdr_file_status.value = ""
+        # Still in "netcdf" mode with nothing attached -> invalid until re-attached.
+        self.cdr_file_status.value = _CDR_FILE_HINT
         self._rebuild()
 
     # ---- CDR plotting (WP6) ----------------------------------------------------
@@ -5831,7 +5975,7 @@ class ForgeBlueprintWizard:
                 else:
                     self._cdr_forcing_file = None
                     self.cdr_file_path.value = ""
-                    self.cdr_file_status.value = ""
+                    self.cdr_file_status.value = _CDR_FILE_HINT
             # dt: prefer the first-class domain.dt field; fall back to the
             # model_settings leaf for a pre-domain.dt file (backward compat --
             # older blueprints only ever wrote it there).

@@ -125,6 +125,40 @@ def _suppress_pydantic_warnings():
         yield
 
 
+# roms-tools' topography.nan_check message (roms_tools/setup/topography.py);
+# matched as a substring so a wording tweak upstream degrades to the plain error.
+_TOPO_NAN_MARKER = "NaN values found in regridded topography"
+_GRID_LABELS = {
+    "parent": "parent grid (domain.grid_kwargs_parent)",
+    "self": "grid (domain.grid_kwargs)",
+    "child": "child grid (domain.grid_kwargs_child)",
+}
+
+
+def _describe_grid_kwargs(gk: dict[str, Any]) -> str:
+    """One-line summary of a grid_kwargs dict for error messages: the defining
+    kwargs plus an approximate geographic footprint (spherical arithmetic from
+    center/size, ignoring ``rot`` -- indicative, not exact).
+    """
+    keys = ("nx", "ny", "size_x", "size_y", "center_lon", "center_lat", "rot")
+    parts = [f"{k}={gk[k]}" for k in keys if k in gk]
+    summary = ", ".join(parts)
+    try:
+        import math
+
+        lat = float(gk["center_lat"])
+        lon = float(gk["center_lon"])
+        half_lat = float(gk["size_y"]) / 2.0 / 111.2
+        half_lon = float(gk["size_x"]) / 2.0 / (111.32 * math.cos(math.radians(lat)))
+        summary += (
+            f"; approx. footprint lon [{lon - half_lon:.2f}, {lon + half_lon:.2f}], "
+            f"lat [{lat - half_lat:.2f}, {lat + half_lat:.2f}] (rotation ignored)"
+        )
+    except (KeyError, TypeError, ValueError, ZeroDivisionError):
+        pass
+    return summary
+
+
 class ForgeExecutor(BaseModel):
     """
     Builder for C-Star RomsMarblBlueprint specifications.
@@ -401,6 +435,36 @@ class ForgeExecutor(BaseModel):
         """Directory for generated input NetCDF files (grid, forcing, etc.)."""
         return self._require_host().working_dir / "input_data"
 
+    def _build_grid(self, label: str, grid_kwargs: dict[str, Any]) -> Any:
+        """``rt.Grid(**grid_kwargs)`` for one of the (up to three) grids the
+        executor builds, with the roms-tools "NaN values found in regridded
+        topography" failure re-raised naming WHICH grid failed and its
+        approximate footprint.
+
+        roms-tools' message only says "the ROMS grid ... is not fully contained
+        within the topography dataset" -- but a nested setup builds the parent,
+        this grid and the child, each against its own resolved topography (see
+        ``_nested_topography_pair``), and the parent is typically far larger
+        than the grid the user previewed. Without the label the user is left
+        checking the wrong grid against the wrong dataset's coverage.
+        """
+        with mem_log(f"Grid({label})", enabled=self.verbose):
+            try:
+                return rt.Grid(**grid_kwargs, verbose=self.verbose)
+            except ValueError as exc:
+                if _TOPO_NAN_MARKER not in str(exc):
+                    raise
+                raise ValueError(
+                    f"Building the {_GRID_LABELS.get(label, label)} failed: {exc}\n"
+                    f"  grid: {_describe_grid_kwargs(grid_kwargs)}\n"
+                    f"  topography_source: {grid_kwargs.get('topography_source')}\n"
+                    "  This grid must lie fully inside its topography file's "
+                    "longitude/latitude coverage (plus a few cells' margin) -- "
+                    "check the footprint above against that file's lon/lat range. "
+                    "A nested parent/child grid can name its own topography_source/"
+                    "topography_path inside grid_kwargs_parent/grid_kwargs_child."
+                ) from exc
+
     def _resolve_topography_source(
         self, name: str | None = None, path: str | None = None
     ) -> dict[str, str] | None:
@@ -602,10 +666,8 @@ class ForgeExecutor(BaseModel):
                     k: v for k, v in self.grid_kwargs_child.items() if k != "metadata"
                 }
 
-                with mem_log("Grid(child)", enabled=self.verbose):
-                    self.grid_child = rt.Grid(**grid_kwargs_child, verbose=self.verbose)
-                with mem_log("Grid(self)", enabled=self.verbose):
-                    self.grid = rt.Grid(**self.grid_kwargs, verbose=self.verbose)
+                self.grid_child = self._build_grid("child", grid_kwargs_child)
+                self.grid = self._build_grid("self", self.grid_kwargs)
                 with mem_log("align_grids(self, child)", enabled=self.verbose):
                     self.grid_child = rt.align_grids(
                         self.grid, self.grid_child, verbose=self.verbose
@@ -630,14 +692,9 @@ class ForgeExecutor(BaseModel):
                 }
 
                 # Adapt this grid to its parent, but create nesting data for its child
-                with mem_log("Grid(parent)", enabled=self.verbose):
-                    self.grid_parent = rt.Grid(
-                        **grid_kwargs_parent, verbose=self.verbose
-                    )
-                with mem_log("Grid(child)", enabled=self.verbose):
-                    self.grid_child = rt.Grid(**grid_kwargs_child, verbose=self.verbose)
-                with mem_log("Grid(self)", enabled=self.verbose):
-                    self.grid = rt.Grid(**grid_kwargs, verbose=self.verbose)
+                self.grid_parent = self._build_grid("parent", grid_kwargs_parent)
+                self.grid_child = self._build_grid("child", grid_kwargs_child)
+                self.grid = self._build_grid("self", grid_kwargs)
 
                 with mem_log("align_grids(parent, self)", enabled=self.verbose):
                     self.grid = rt.align_grids(
@@ -661,20 +718,15 @@ class ForgeExecutor(BaseModel):
                 }
 
                 # Adapt this grid to its parent. no nesting data needed
-                with mem_log("Grid(parent)", enabled=self.verbose):
-                    self.grid_parent = rt.Grid(
-                        **grid_kwargs_parent, verbose=self.verbose
-                    )
-                with mem_log("Grid(self)", enabled=self.verbose):
-                    self.grid = rt.Grid(**grid_kwargs, verbose=self.verbose)
+                self.grid_parent = self._build_grid("parent", grid_kwargs_parent)
+                self.grid = self._build_grid("self", grid_kwargs)
 
                 with mem_log("align_grids(parent, self)", enabled=self.verbose):
                     self.grid = rt.align_grids(
                         self.grid_parent, self.grid, verbose=self.verbose
                     )
             else:
-                with mem_log("Grid(self)", enabled=self.verbose):
-                    self.grid = rt.Grid(**self.grid_kwargs, verbose=self.verbose)
+                self.grid = self._build_grid("self", self.grid_kwargs)
 
         # Initialize blueprint with basic structure
         log.debug("model_post_init: initializing blueprint structure for %r", self.name)

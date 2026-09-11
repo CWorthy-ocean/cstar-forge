@@ -839,6 +839,101 @@ class TestNestedGridTopography:
         mock_sd.assert_not_called()
 
 
+class TestGridBuildErrorLabels:
+    """The executor builds up to three grids (parent / this / child) against the
+    same topography; roms-tools' "NaN values found in regridded topography"
+    message doesn't say which one fell outside the dataset. The executor re-raises
+    naming the grid, its kwargs and an approximate footprint.
+    """
+
+    _TOPO_NAN_MSG = (
+        "NaN values found in regridded topography. This likely occurs because the "
+        "ROMS grid, including a small safety margin for interpolation, is not fully "
+        "contained within the topography dataset's longitude/latitude range."
+    )
+
+    def test_parent_grid_nan_failure_names_the_parent(
+        self, mock_grid, minimal_cstar_spec_builder_args, tmp_path
+    ):
+        parent_kwargs = {
+            "nx": 512,
+            "ny": 384,
+            "size_x": 384.0,
+            "size_y": 288.0,
+            "center_lon": -22.6,
+            "center_lat": 63.55,
+            "rot": 0.0,
+            "N": 60,
+            "theta_s": 5.0,
+            "theta_b": 2.0,
+            "hc": 300.0,
+        }
+        args = minimal_cstar_spec_builder_args
+        cfg = build_forge_blueprint(
+            model_dir=_MODEL_DIR,
+            grid_name=args["grid_name"],
+            grid_kwargs=args["grid_kwargs"],
+            grid_kwargs_parent=parent_kwargs,
+            open_boundaries=args["open_boundaries"].model_dump(),
+            partitioning=args["partitioning"].model_dump(),
+            start_date=args["start_date"],
+            end_date=args["end_date"],
+            dt=7200,
+            forcing_inputs=_FORCING_INPUTS,
+            output_settings=_OUTPUT_SETTINGS,
+            topography_source="EMOD",
+            topography_path="/data/EMODnet_C2.nc",
+        )
+
+        def _grid(**kwargs):
+            if kwargs.get("nx") == parent_kwargs["nx"]:
+                raise ValueError(self._TOPO_NAN_MSG)
+            return _create_grid_mock()
+
+        mock_grid.side_effect = _grid
+        host = HostPaths(
+            working_dir=tmp_path, source_data_cache=tmp_path, system="test"
+        )
+
+        # model_post_init runs inside pydantic validation, so the ValueError
+        # surfaces as a ValidationError (exactly as in the user-facing report).
+        with pytest.raises(ValidationError) as excinfo:
+            ForgeExecutor.from_forge_blueprint(cfg, host=host)
+
+        msg = str(excinfo.value)
+        assert "parent grid (domain.grid_kwargs_parent)" in msg
+        assert self._TOPO_NAN_MSG in msg  # roms-tools' own text is preserved
+        assert "size_x=384.0" in msg and "center_lon=-22.6" in msg
+        assert "EMODnet_C2.nc" in msg
+        # Footprint: 192 km at 63.55N is ~3.9 deg of longitude -> west edge ~ -26.5
+        assert "approx. footprint lon [-26.4" in msg or "lon [-26.5" in msg
+
+    def test_unrelated_grid_valueerror_passes_through_unchanged(
+        self, mock_grid, minimal_cstar_spec_builder_args, tmp_path
+    ):
+        args = minimal_cstar_spec_builder_args
+        cfg = build_forge_blueprint(
+            model_dir=_MODEL_DIR,
+            grid_name=args["grid_name"],
+            grid_kwargs=args["grid_kwargs"],
+            open_boundaries=args["open_boundaries"].model_dump(),
+            partitioning=args["partitioning"].model_dump(),
+            start_date=args["start_date"],
+            end_date=args["end_date"],
+            dt=7200,
+            forcing_inputs=_FORCING_INPUTS,
+            output_settings=_OUTPUT_SETTINGS,
+        )
+        mock_grid.side_effect = ValueError("something else entirely")
+        host = HostPaths(
+            working_dir=tmp_path, source_data_cache=tmp_path, system="test"
+        )
+
+        with pytest.raises(ValidationError, match="something else entirely") as ei:
+            ForgeExecutor.from_forge_blueprint(cfg, host=host)
+        assert "Building the" not in str(ei.value)  # not re-labelled
+
+
 class TestForgeExecutorGetDs:
     """Tests for the get_ds method."""
 
