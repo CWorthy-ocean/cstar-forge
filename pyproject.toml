@@ -175,7 +175,13 @@ rsync = "*"
 [tool.pixi.environments]
 default = { features = ["editable"], solve-group = "default" }
 dev = { features = ["editable", "dev", "app"], solve-group = "default" }
-user = { features = ["user"] }
+# no-default-feature: the default feature carries the [project] dependencies as
+# pypi requirements (pixi adds them automatically for a pyproject manifest) plus the
+# workspace conda pins, both of which track the *unreleased* forge in this checkout.
+# The pure-conda user environment must instead follow the released conda-forge
+# cstar-forge's own metadata, or it becomes unsolvable whenever a dependency floor
+# runs ahead of the last release (e.g. roms-tools >=5.0 vs the released <5 pin).
+user = { features = ["user"], no-default-feature = true }
 # dev + local build toolchain, for laptops/workstations compiling ROMS.
 # Own solve (NOT solve-group "default"): mpich/netcdf-fortran would otherwise
 # steer the shared solve toward MPI variants of hdf5/netcdf for plain dev too.

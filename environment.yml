@@ -21,8 +21,8 @@ channels:
 - nodefaults
 dependencies:
 - python >=3.12,<3.14
-- roms-tools >=4.1.1,<5
-- cstar-ocean >=0.13.3
+- roms-tools >=5.0,<6
+- cstar-ocean >=0.13.6
 - dask *
 - distributed *
 - numpy *
@@ -45,10 +45,10 @@ dependencies:
   - mystmd
   - netcdf4
   - f90nml
+  - ipywidgets
   - jupyterlab
   - voila
   - papermill
-  - ipywidgets
   - matplotlib
   - jinja2
   - pandas
@@ -58,6 +58,7 @@ dependencies:
   - dask
   - distributed
   - threadpoolctl
+  - numba
   - fsspec
   - pydantic
   - numpy
@@ -69,5 +70,5 @@ dependencies:
   - nest-asyncio
   - ujson
   - fastparquet
-  - cstar-ocean>=0.13.3
-  - roms-tools>=4.1.1, <5
+  - cstar-ocean>=0.13.6
+  - roms-tools>=5.0, <6
