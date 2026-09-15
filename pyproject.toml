@@ -51,10 +51,15 @@ dependencies = [
     "ujson",
     "fastparquet",
     # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    # >=0.13.7: ships RomsNamelistV0_7_0 (ucla-roms >= 0.7.0's &CDR_TRACER_OUTPUT_SETTINGS /
-    # &CDR_GAS_EXCH_OUTPUT_SETTINGS), which cstar_forge.forge.namelist_model imports
-    # unconditionally; 0.13.6 was also the first release whose roms_tools pin admits 5.x.
-    "cstar-ocean>=0.13.7",
+    # >=0.14.0: the September 2026 breaking release forge is released alongside
+    # (per-step `output` layout replacing `joined_output`, `nest-from` path/step
+    # semantics). Forge imports nothing new from it, but the floor keeps a forge that
+    # writes blueprints for 0.14.0-layout runs from being solved next to an older
+    # C-Star. Earlier hard requirements: 0.13.7 ships RomsNamelistV0_7_0 (ucla-roms
+    # >= 0.7.0's &CDR_TRACER_OUTPUT_SETTINGS / &CDR_GAS_EXCH_OUTPUT_SETTINGS), which
+    # cstar_forge.forge.namelist_model imports unconditionally; 0.13.6 was the first
+    # release whose roms_tools pin admits 5.x.
+    "cstar-ocean>=0.14.0",
     # >=5.0: the BoundaryForcing/InitialConditions monolithic wrapper API (multiple
     # BGC sources in one constructor call) forge now builds on directly -- a breaking
     # because it doesn't use these classes).
@@ -131,7 +136,7 @@ python = ">=3.12,<3.14"
 roms-tools = ">=5.0,<6"
 # Kept in sync with the [project.dependencies] cstar-ocean floor above -- a conda solve
 # landing below it makes cstar_forge.forge.namelist_model unimportable, not just degraded.
-cstar-ocean = ">=0.13.7"
+cstar-ocean = ">=0.14.0"
 dask = "*"
 distributed = "*"
 numpy = "*"
