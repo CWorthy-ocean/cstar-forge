@@ -340,7 +340,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.6-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.14.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -562,7 +562,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.6-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.14.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -1314,7 +1314,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.6-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.14.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -1558,7 +1558,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.0.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.14-py313hd8ed1ab_100.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.6-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.14.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -2367,7 +2367,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/comm-0.2.3-pyhe01879c_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-1.3.0-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.12.13-py312hd8ed1ab_0.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.6-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.14.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -2644,7 +2644,7 @@ environments:
       - conda: https://conda.anaconda.org/conda-forge/noarch/compiler-rt_osx-arm64-21.1.8-hce30654_1.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/copernicusmarine-2.4.1-pyhd8ed1ab_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cpython-3.13.15-py313hd8ed1ab_101.conda
-      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.6-pyhc364b38_0.conda
+      - conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.14.0-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-2026.7.1-pyhc364b38_0.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/dask-core-2026.7.1-pyhc364b38_0.conda
@@ -14443,9 +14443,9 @@ packages:
   run_exports: {}
   size: 397188
   timestamp: 1788387347025
-- conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.13.6-pyhc364b38_0.conda
-  sha256: 6c623a7c763f5ff2cfc11d45819f663ed38fee9230b3ccee44e0fe33ba7f7eaf
-  md5: 402fa3339e17294fa56945e775bb09aa
+- conda: https://conda.anaconda.org/conda-forge/noarch/cstar-ocean-0.14.0-pyhc364b38_0.conda
+  sha256: 25df134806b7c55972eadc90792048c98339c3a9f009f797160f52b7c28848e0
+  md5: 4e2f432199c4a724f41d3cb5005586d4
   depends:
   - python >=3.12
   - fakeredis <2.35
@@ -14466,8 +14466,8 @@ packages:
   purls:
   - pkg:pypi/cstar-ocean?source=compressed-mapping
   run_exports: {}
-  size: 399790
-  timestamp: 1789156690764
+  size: 422759
+  timestamp: 1789428072568
 - conda: https://conda.anaconda.org/conda-forge/noarch/cycler-0.12.1-pyhcf101f3_2.conda
   sha256: bb47aec5338695ff8efbddbc669064a3b10fe34ad881fb8ad5d64fbfa6910ed1
   md5: 4c2a8fef270f6c69591889b93f9f55c1
@@ -25991,7 +25991,7 @@ packages:
   - nest-asyncio
   - ujson
   - fastparquet
-  - cstar-ocean>=0.13.6
+  - cstar-ocean>=0.14.0
   - roms-tools>=5.0,<6
   - jupyterlab ; extra == 'app'
   - voila ; extra == 'app'

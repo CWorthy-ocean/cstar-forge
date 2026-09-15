@@ -510,6 +510,9 @@ section name
   path), `cdr_source=True`, `ncdr_parm=len(cdr.releases)`, `forcing_parameterized=True`,
   `cdr_volume=(cdr.releases.release_type == "volume")`
 - **Run-time (`cdr_output`)**: `do_cdr_output = True`
+- Does NOT touch `cdr_tracer_output`/`cdr_gas_exch_output` (ucla-roms >= 0.7.0) — unlike
+  `cdr_output`, those two streams are never forced on by CDR forcing; a user enables them
+  explicitly (see the OutputSpec)
 
 ### Corrections Forcing (`forcing.corrections`, order=90)
 
@@ -591,7 +594,8 @@ def _build_input_args(
     Merge per-input defaults with runtime arguments.
 
     Uses base_kwargs (always provided from input_list).
-    Resolves "source" and "bgc_source" through SourceData.
+    Resolves "source", "bgc_source", and "surface_forcing_source" through
+    SourceData.
     Merges with extra, where extra overrides defaults.
     """
 ```
@@ -599,8 +603,8 @@ def _build_input_args(
 **Process:**
 1. Get base config: `base_kwargs`, always supplied from an `input_list` entry (there is no
    model-spec fallback)
-2. Resolve source blocks: Convert `source` and `bgc_source` Pydantic models to dicts with paths
-   via `_resolve_source_block()`
+2. Resolve source blocks: Convert `source`, `bgc_source`, and `surface_forcing_source` Pydantic
+   models to dicts with paths via `_resolve_source_block()`
 3. Unpack `options`: an optional `options` passthrough dict in the item config is popped out and
    forwarded verbatim to the roms-tools constructor
 4. Merge: `cfg` (base kwargs) < `item_options` < `extra` (extra always wins — it carries runtime
@@ -658,6 +662,9 @@ def _build_input_args(
   `cdr_frc.cdr_volume`
 - `cdr_output.do_cdr_output`: forced `True` when CDR forcing is generated; also
   independently user-controllable (CDR output does not require CDR forcing)
+- `cdr_tracer_output.do_cdr_tracer_output`/`cdr_gas_exch_output.do_cdr_gas_exch_output`
+  (ucla-roms >= 0.7.0): NOT forced on by CDR forcing generation — both are opt-in extras
+  a user enables explicitly, independent of `cdr_output`
 
 ## ROMS-MARBL Blueprint Element Updates
 

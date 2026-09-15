@@ -42,6 +42,15 @@ _MODEL_DIR_ROMS060 = (
     / "ModelSpec"
     / "roms-marbl-0.6-default"
 )
+# ucla-roms >= 0.7.0 ModelSpec (adds &CDR_TRACER_OUTPUT_SETTINGS/
+# &CDR_GAS_EXCH_OUTPUT_SETTINGS, PR #351) -- used by the versioned-namelist golden
+# test below.
+_MODEL_DIR_ROMS070 = (
+    Path(cstar_forge.__file__).parent
+    / "catalog"
+    / "ModelSpec"
+    / "roms-marbl-0.7-default"
+)
 _GRID_KWARGS = dict(
     nx=6,
     ny=2,
@@ -752,6 +761,94 @@ def test_river_custom_file_excludes_bgc_source():
             include_bgc=True,
             bgc_source={"name": "RIVR2O"},
         )
+
+
+def test_river_surface_forcing_source_defaults():
+    from cstar_forge.forge.forge_blueprint import RiverForcingItem, SourceSpec
+
+    river = RiverForcingItem(source=SourceSpec(name="DAI"))
+    assert river.surface_forcing_source is None
+    assert river.river_temp_smoothing_window_days == 30.0
+
+
+@pytest.mark.parametrize("name", ["ERA5", "era5"])
+def test_river_surface_forcing_source_accepts_era5(name):
+    from cstar_forge.forge.forge_blueprint import RiverForcingItem, SourceSpec
+
+    river = RiverForcingItem(
+        source=SourceSpec(name="DAI"),
+        surface_forcing_source={"name": name, "path": "/x/era5"},
+    )
+    # Normalized: roms-tools compares against the literal "ERA5".
+    assert river.surface_forcing_source == {"name": "ERA5", "path": "/x/era5"}
+
+
+def test_river_surface_forcing_source_rejects_unsupported_name():
+    from cstar_forge.forge.forge_blueprint import RiverForcingItem, SourceSpec
+
+    with pytest.raises(ValueError, match="is not one of"):
+        RiverForcingItem(
+            source=SourceSpec(name="DAI"),
+            surface_forcing_source={"name": "GLORYS"},
+        )
+
+
+def test_river_surface_forcing_source_requires_name():
+    from cstar_forge.forge.forge_blueprint import RiverForcingItem, SourceSpec
+
+    with pytest.raises(ValueError, match="is not one of"):
+        RiverForcingItem(
+            source=SourceSpec(name="DAI"),
+            surface_forcing_source={"path": "/tmp/era5.nc"},
+        )
+
+
+def test_river_custom_file_excludes_surface_forcing_source():
+    from cstar_forge.forge.forge_blueprint import (
+        RiverForcingItem,
+        SourceSpec,
+        UserProvidedFile,
+    )
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        RiverForcingItem(
+            source=SourceSpec(name="CUSTOM_FILE"),
+            custom_file=UserProvidedFile(**_USER_FILE_KWARGS),
+            surface_forcing_source={"name": "ERA5"},
+        )
+
+
+@pytest.mark.parametrize("window", [0, -1.0])
+def test_river_temp_smoothing_window_days_rejects_non_positive(window):
+    from cstar_forge.forge.forge_blueprint import RiverForcingItem, SourceSpec
+
+    with pytest.raises(ValueError, match="must be > 0"):
+        RiverForcingItem(
+            source=SourceSpec(name="DAI"),
+            surface_forcing_source={"name": "ERA5"},
+            river_temp_smoothing_window_days=window,
+        )
+
+
+def test_river_surface_forcing_source_round_trips_through_yaml(tmp_path):
+    from cstar_forge.forge.forge_blueprint import RiverForcingItem, SourceSpec
+
+    cfg = _build()
+    river = RiverForcingItem(
+        source=SourceSpec(name="DAI"),
+        surface_forcing_source={"name": "ERA5", "path": "/x/era5.nc"},
+        river_temp_smoothing_window_days=7.0,
+    )
+    cfg = cfg.model_copy(
+        update={"forcing": cfg.forcing.model_copy(update={"river": [river]})}
+    )
+    p = cfg.to_yaml(tmp_path / "forge_blueprint.yaml")
+    back = ForgeBlueprint.from_yaml(p)
+    assert back.forcing.river[0].surface_forcing_source == {
+        "name": "ERA5",
+        "path": "/x/era5.nc",
+    }
+    assert back.forcing.river[0].river_temp_smoothing_window_days == 7.0
 
 
 class TestCdrSpecValidatorMatrix:
@@ -1688,6 +1785,38 @@ def test_golden_model_settings_test_tiny_roms060():
     )
 
 
+def test_golden_model_settings_test_tiny_roms070():
+    """Behavior-preservation snapshot for the ``roms-marbl-0.7-default`` ModelSpec
+    (ucla-roms >= 0.7.0, adds ``&CDR_TRACER_OUTPUT_SETTINGS``/
+    ``&CDR_GAS_EXCH_OUTPUT_SETTINGS``, PR #351), resolved from the same test-tiny
+    domain/forcing/output setup as ``test_golden_model_settings_test_tiny``.
+
+    Mirrors ``test_golden_model_settings_test_tiny_roms060`` exactly; the only
+    resolved-settings difference from that fixture is the added
+    ``cdr_tracer_output``/``cdr_gas_exch_output`` entries (see
+    ``TestGoldenNamelist.test_golden_namelist_test_tiny_roms070`` in
+    ``tests/test_core.py`` for the versioned-namelist assertion).
+    """
+    import json
+
+    golden_path = (
+        Path(cstar_forge.__file__).parents[1]
+        / "tests"
+        / "fixtures"
+        / "golden_model_settings_test-tiny-roms070.json"
+    )
+    golden = json.loads(golden_path.read_text())
+    cfg = _build(model_dir=_MODEL_DIR_ROMS070)  # test-tiny, dt=7200
+    got = json.loads(json.dumps(cfg.model_settings, sort_keys=True, default=str))
+    assert got == golden, (
+        "Resolved model_settings for test-tiny (roms-marbl-0.7-default) drifted "
+        "from the golden fixture. If this is an intentional schema/default "
+        "change, regenerate tests/fixtures/golden_model_settings_test-tiny-"
+        "roms070.json; otherwise the change is a regression in the settings the "
+        "executor feeds to namelist.nml / cppdefs.opt."
+    )
+
+
 def test_resolver_nesting_enables_extract_data():
     cfg = _build(
         grid_kwargs_child=dict(
@@ -1866,20 +1995,103 @@ def test_resolver_threads_river_bgc_source_and_climatology():
     from cstar_forge.domain_catalog import default_catalog as cat
 
     fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
-    fdata["forcing"]["river"][0]["bgc_source"] = {
-        "name": "RIVR2O",
-        "path": "/tmp/rivr2o/*.nc",
-    }
+    fdata["forcing"]["river"][0]["bgc_source"] = {"name": "RIVR2O"}
     fdata["forcing"]["river"][0]["convert_to_climatology"] = "always"
 
     cfg = _build(forcing_inputs=fdata)
     river = cfg.forcing.river[0]
 
-    assert river.bgc_source == {"name": "RIVR2O", "path": "/tmp/rivr2o/*.nc"}
+    assert river.bgc_source == {"name": "RIVR2O"}
     assert river.convert_to_climatology.value == "always"
     assert "RIVR2O" in cfg.datasets
     assert "RIVR2O" in cfg.forcing.resolved_datasets
     assert "CONSTANTS" not in cfg.datasets
+
+
+def test_resolver_river_bgc_source_with_path_not_noted():
+    """An explicit bgc_source path bypasses staging (the executor reads it verbatim,
+    see input_data._resolve_source_block), so RIVR2O must NOT be noted into
+    datasets/resolved_datasets -- otherwise _prepare_rivr2o would demand files at
+    the canonical staged location that are never used. Same rule as `_note` and
+    the river surface_forcing_source loop.
+    """
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["river"][0]["bgc_source"] = {
+        "name": "RIVR2O",
+        "path": "/tmp/rivr2o/*.nc",
+    }
+
+    cfg = _build(forcing_inputs=fdata)
+
+    assert cfg.forcing.river[0].bgc_source == {
+        "name": "RIVR2O",
+        "path": "/tmp/rivr2o/*.nc",
+    }
+    assert "RIVR2O" not in cfg.datasets
+    assert "RIVR2O" not in cfg.forcing.resolved_datasets
+
+
+def test_resolver_threads_river_surface_forcing_source():
+    """The resolver's river _items() must also thread surface_forcing_source and
+    river_temp_smoothing_window_days into RiverForcingItem (same generic plain-fields
+    loop as bgc_source/convert_to_climatology). A streamable ERA5 source with no
+    explicit path lands in datasets/resolved_datasets so the executor verifies it;
+    an explicit path bypasses staging entirely, same as SourceSpec.path.
+    """
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    # Drop the catalog's own ERA5 surface-physics entry so the assertion below
+    # actually demonstrates the river noting logic, not ERA5 already being noted
+    # for an unrelated reason.
+    fdata["forcing"]["surface"] = [
+        item for item in fdata["forcing"]["surface"] if item["source"]["name"] != "ERA5"
+    ]
+    fdata["forcing"]["river"][0]["surface_forcing_source"] = {"name": "ERA5"}
+    fdata["forcing"]["river"][0]["river_temp_smoothing_window_days"] = 14.0
+
+    cfg = _build(forcing_inputs=fdata)
+    river = cfg.forcing.river[0]
+
+    assert river.surface_forcing_source == {"name": "ERA5"}
+    assert river.river_temp_smoothing_window_days == 14.0
+    assert "ERA5" in cfg.datasets
+    assert "ERA5" in cfg.forcing.resolved_datasets
+
+
+def test_resolver_river_surface_forcing_source_with_path_not_noted():
+    """An explicit path bypasses staging entirely (mirrors SourceSpec.path
+    semantics), so ERA5 must not be noted into resolved_datasets/datasets when a
+    path is already given -- it is never fetched via SourceData in that case.
+    """
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    # Drop the catalog's own ERA5 surface-physics entry so the assertion below
+    # actually demonstrates the path-bypasses-staging logic, not ERA5 already
+    # being noted for an unrelated reason.
+    fdata["forcing"]["surface"] = [
+        item for item in fdata["forcing"]["surface"] if item["source"]["name"] != "ERA5"
+    ]
+    fdata["forcing"]["river"][0]["surface_forcing_source"] = {
+        "name": "ERA5",
+        "path": "/tmp/era5/*.nc",
+    }
+
+    cfg = _build(forcing_inputs=fdata)
+    river = cfg.forcing.river[0]
+
+    assert river.surface_forcing_source == {"name": "ERA5", "path": "/tmp/era5/*.nc"}
+    assert "ERA5" not in cfg.datasets
+    assert "ERA5" not in cfg.forcing.resolved_datasets
 
 
 def test_resolver_ic_bgc_esper_source_excluded_from_datasets():
@@ -1971,23 +2183,51 @@ def test_sources_to_forcing_override_carries_river_bgc_source():
     )
 
     fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
-    fdata["forcing"]["river"][0]["bgc_source"] = {
-        "name": "RIVR2O",
-        "path": "/tmp/rivr2o/*.nc",
-    }
+    # No explicit path: that is the Forge-staged case in which RIVR2O must be
+    # noted into datasets (an explicit path bypasses staging -- see
+    # test_resolver_river_bgc_source_with_path_not_noted).
+    fdata["forcing"]["river"][0]["bgc_source"] = {"name": "RIVR2O"}
     fdata["forcing"]["river"][0]["convert_to_climatology"] = "always"
 
     cfg = _build(forcing_inputs=fdata, topography_source="EMOD")
 
     ov = sources_to_forcing_override(cfg)
     river_ov = ov["forcing"]["river"][0]
-    assert river_ov["bgc_source"] == {"name": "RIVR2O", "path": "/tmp/rivr2o/*.nc"}
+    assert river_ov["bgc_source"] == {"name": "RIVR2O"}
     assert river_ov["convert_to_climatology"] == "always"
 
     kwargs = forge_blueprint_to_builder_kwargs(cfg)
     assert kwargs["topography_source"] == "EMOD"
     assert "RIVR2O" in kwargs["source_dataset_keys"]
     assert "EMOD" in kwargs["source_dataset_keys"]
+
+
+def test_sources_to_forcing_override_carries_river_surface_forcing_source():
+    """Same bridge, for surface_forcing_source/river_temp_smoothing_window_days --
+    sources_to_forcing_override dumps RiverForcingItem generically, but confirm
+    both new fields actually survive the round trip rather than assuming it.
+    """
+    import copy
+
+    from cstar_forge.domain_catalog import default_catalog as cat
+    from cstar_forge.forge.forge_blueprint_engine import sources_to_forcing_override
+
+    fdata = copy.deepcopy(cat.forcing_data("glorys-era5-unified"))
+    fdata["forcing"]["river"][0]["surface_forcing_source"] = {
+        "name": "ERA5",
+        "path": "/tmp/era5/*.nc",
+    }
+    fdata["forcing"]["river"][0]["river_temp_smoothing_window_days"] = 21.0
+
+    cfg = _build(forcing_inputs=fdata)
+
+    ov = sources_to_forcing_override(cfg)
+    river_ov = ov["forcing"]["river"][0]
+    assert river_ov["surface_forcing_source"] == {
+        "name": "ERA5",
+        "path": "/tmp/era5/*.nc",
+    }
+    assert river_ov["river_temp_smoothing_window_days"] == 21.0
 
 
 def test_sources_to_forcing_override_carries_river_custom_file():
@@ -2301,6 +2541,8 @@ _OUTPUT_SPEC_STREAMS = (
     ("diagnostics", "output_period", "nrpf"),
     ("frc_output", "output_period", "nrpf"),
     ("cdr_output", "output_period", "nrpf"),
+    ("cdr_tracer_output", "output_period", "nrpf"),
+    ("cdr_gas_exch_output", "output_period", "nrpf"),
     ("upscale_output", "output_period_uscl", "nrpf_uscl"),
     ("zslice", "output_period", "nrpf"),
     ("random_output", "output_period", "nrpf"),
@@ -2347,17 +2589,22 @@ def test_bundled_output_specs_satisfy_roms_divides_rst_precheck(spec_name):
 
 
 @pytest.mark.parametrize("spec_name", ["daily-restarts", "weekly-restarts"])
-def test_roms050_model_spec_streams_satisfy_roms_divides_rst_precheck(spec_name):
-    """roms-marbl-0.5-default's own streams (sponge, particles) must divide the
-    restart period of every periodic-restart precheck-safe OutputSpec, since a
-    resolved blueprint combines the two.
+@pytest.mark.parametrize(
+    "model_spec_name", ["roms-marbl-0.5-default", "roms-marbl-0.7-default"]
+)
+def test_model_spec_streams_satisfy_roms_divides_rst_precheck(
+    model_spec_name, spec_name
+):
+    """Each versioned ModelSpec's own streams (sponge, particles) must divide
+    the restart period of every periodic-restart precheck-safe OutputSpec,
+    since a resolved blueprint combines the two.
     """
     model_settings = yaml.safe_load(
         (
             Path(cstar_forge.__file__).parent
             / "catalog"
             / "ModelSpec"
-            / "roms-marbl-0.5-default"
+            / model_spec_name
             / "model.yaml"
         ).read_text()
     )["model_settings"]
@@ -2366,7 +2613,7 @@ def test_roms050_model_spec_streams_satisfy_roms_divides_rst_precheck(spec_name)
         model_settings,
         _MODEL_SPEC_STREAMS,
         rst,
-        f"roms-marbl-0.5-default + {spec_name}",
+        f"{model_spec_name} + {spec_name}",
     )
 
 
@@ -2507,7 +2754,11 @@ def test_extract_output_settings_helper():
         extract_output_settings,
     )
 
-    cfg = _build()
+    # OUTPUT_SECTIONS now includes cdr_tracer_output/cdr_gas_exch_output
+    # (ucla-roms >= 0.7.0, PR #351), which _prune_version_gated_sections drops
+    # from an older-pinned build's model_settings -- use a 0.7.0-pinned
+    # ModelSpec so every OUTPUT_SECTIONS entry actually survives resolution.
+    cfg = _build(model_dir=_MODEL_DIR_ROMS070)
     out = extract_output_settings(cfg.model_settings)
     assert set(OUTPUT_SECTIONS) <= set(out)
     assert set(out["marbl_bgc"]) == {
@@ -2709,6 +2960,110 @@ def test_cdr_output_requires_marbl():
             forcing_inputs=_PHYSICS_ONLY_FORCING,
             run_time_overrides={"cdr_output": {"do_cdr_output": True}},
         )
+
+
+def test_cdr_tracer_output_requires_marbl():
+    """do_cdr_tracer_output=True with bgc_mode="none" must raise -- ucla-roms
+    only compiles the CDR tracer output module under MARBL && CDR_FORCING.
+    Unlike do_cdr_output, this flag is never derived from cdr_spec.mode, so no
+    active CDR forcing is needed to trigger the check.
+    """
+    with pytest.raises(ValueError, match="do_cdr_tracer_output"):
+        _build(
+            model_dir=_MODEL_DIR_ROMS070,
+            bgc_mode="none",
+            forcing_inputs=_PHYSICS_ONLY_FORCING,
+            run_time_overrides={"cdr_tracer_output": {"do_cdr_tracer_output": True}},
+        )
+
+
+def test_cdr_gas_exch_output_requires_marbl():
+    """do_cdr_gas_exch_output=True with bgc_mode="none" must raise, mirroring
+    test_cdr_tracer_output_requires_marbl.
+    """
+    with pytest.raises(ValueError, match="do_cdr_gas_exch_output"):
+        _build(
+            model_dir=_MODEL_DIR_ROMS070,
+            bgc_mode="none",
+            forcing_inputs=_PHYSICS_ONLY_FORCING,
+            run_time_overrides={
+                "cdr_gas_exch_output": {"do_cdr_gas_exch_output": True}
+            },
+        )
+
+
+def test_cdr_tracer_output_enabled_sets_cppdef():
+    """Enabling do_cdr_tracer_output alone (no CDR forcing; do_cdr_output stays
+    False) still flips cppdefs.cdr_forcing -- it gates compiling the CDR tracer
+    output module.
+    """
+    cfg = _build(
+        model_dir=_MODEL_DIR_ROMS070,
+        run_time_overrides={"cdr_tracer_output": {"do_cdr_tracer_output": True}},
+    )
+    settings = cfg.model_settings
+    assert settings["cdr_tracer_output"]["do_cdr_tracer_output"] is True
+    assert settings["cppdefs"]["cdr_forcing"] is True
+    assert settings["cdr_output"]["do_cdr_output"] is False  # not forced on
+
+
+def test_cdr_gas_exch_output_enabled_sets_cppdef():
+    """Mirrors test_cdr_tracer_output_enabled_sets_cppdef for the gas-exchange
+    output group.
+    """
+    cfg = _build(
+        model_dir=_MODEL_DIR_ROMS070,
+        run_time_overrides={"cdr_gas_exch_output": {"do_cdr_gas_exch_output": True}},
+    )
+    settings = cfg.model_settings
+    assert settings["cdr_gas_exch_output"]["do_cdr_gas_exch_output"] is True
+    assert settings["cppdefs"]["cdr_forcing"] is True
+    assert settings["cdr_output"]["do_cdr_output"] is False
+
+
+def test_active_cdr_forcing_does_not_enable_tracer_gas_exch_output():
+    """Unlike do_cdr_output, an active CDR forcing mode must NOT force
+    do_cdr_tracer_output/do_cdr_gas_exch_output on -- they're opt-in extras a
+    user enables explicitly (see the resolver's CDR tracer/gas-exchange output
+    consistency check).
+    """
+    cfg = _build(model_dir=_MODEL_DIR_ROMS070, cdr_forcing_yaml=_CDR_SAMPLE_YAML)
+    settings = cfg.model_settings
+    assert settings["cdr_output"]["do_cdr_output"] is True  # forced on, as before
+    assert settings["cdr_tracer_output"]["do_cdr_tracer_output"] is False
+    assert settings["cdr_gas_exch_output"]["do_cdr_gas_exch_output"] is False
+
+
+def test_cdr_tracer_gas_exch_output_sections_pruned_before_0_7_0():
+    """A blueprint pinned to ucla-roms 0.6.x (RunTimeSettingsV0_6_0, which has
+    no cdr_tracer_output/cdr_gas_exch_output fields) must not carry either
+    section in model_settings -- see _prune_version_gated_sections in
+    forge_blueprint_resolve.py. The matching 0.7.0-pinned build keeps both.
+    """
+    cfg_060 = _build(model_dir=_MODEL_DIR_ROMS060)
+    assert "cdr_tracer_output" not in cfg_060.model_settings
+    assert "cdr_gas_exch_output" not in cfg_060.model_settings
+
+    cfg_070 = _build(model_dir=_MODEL_DIR_ROMS070)
+    assert "cdr_tracer_output" in cfg_070.model_settings
+    assert "cdr_gas_exch_output" in cfg_070.model_settings
+
+
+def test_pruned_cdr_tracer_output_override_does_not_flip_cppdef_before_0_7_0():
+    """Pruning runs BEFORE the tracer/gas-exchange consistency check: on a
+    0.6.x pin an override enabling do_cdr_tracer_output is dropped (the pin's
+    namelist schema can't emit the group), so it must not leave a stray
+    cppdefs.cdr_forcing=True behind with no section in model_settings to
+    explain it.
+    """
+    cfg = _build(
+        model_dir=_MODEL_DIR_ROMS060,
+        run_time_overrides={"cdr_tracer_output": {"do_cdr_tracer_output": True}},
+    )
+    settings = cfg.model_settings
+    assert "cdr_tracer_output" not in settings
+    assert settings["cppdefs"].get("cdr_forcing", False) is False
+    assert settings["cdr_output"]["do_cdr_output"] is False
 
 
 def test_rst_period_not_divisible_by_dt_raises():

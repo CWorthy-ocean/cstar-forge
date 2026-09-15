@@ -58,6 +58,7 @@ from cstar_forge.forge.forge_blueprint import (
     RiverBgcSource,
     RiverForcingItem,
     RiverSource,
+    RiverTemperatureSource,
     SourceSpec,
     SpecRef,
     SurfaceForcingItem,
@@ -202,6 +203,32 @@ HELP_TEXT: dict[str, str] = {
         "parent_domain_dd",
     ): "Optionally prefill the parent grid kwargs from a cataloged DomainSpec. "
     "You can still edit any parent-grid field after selecting.",
+    (
+        "nesting",
+        "parent_topo_source",
+    ): "Topography dataset the PARENT grid is rebuilt with (for align_grids: this "
+    "grid's mask/bathymetry is blended toward the parent's along the nesting "
+    "boundaries), so it should match what the parent run was actually built "
+    "with. '(same as this grid)' inherits this grid's topo source AND path; "
+    "picking a dataset here uses that dataset at its default location unless a "
+    "parent topo path is also given. Prefilled from the parent DomainSpec.",
+    (
+        "nesting",
+        "parent_topo_path",
+    ): "Explicit topography file for the PARENT grid (on the executor machine). "
+    "Blank: the parent dataset's default location -- or, with '(same as this "
+    "grid)', this grid's topo path.",
+    (
+        "nesting",
+        "child_topo_source",
+    ): "Topography dataset the CHILD grid is built with when extracting nesting "
+    "data. '(same as this grid)' inherits this grid's topo source AND path.",
+    (
+        "nesting",
+        "child_topo_path",
+    ): "Explicit topography file for the CHILD grid (on the executor machine). "
+    "Blank: the child dataset's default location -- or, with '(same as this "
+    "grid)', this grid's topo path.",
     # ---- partitioning ----------------------------------------------------------
     (
         "domain",
@@ -467,6 +494,22 @@ HELP_TEXT: dict[str, str] = {
     "when selecting rivers. Default: 20.",
     (
         "river",
+        "surface_forcing_source_name",
+    ): "Derive river temperature from ERA5 air temperature sampled at each river "
+    "mouth (smoothed, floored at 0 °C) instead of roms-tools' flat constant "
+    "15.6 °C default. Blank keeps the constant.",
+    (
+        "river",
+        "surface_forcing_source_path",
+    ): "Optional explicit ERA5 path/glob. Blank reads the remote ARCO ERA5 archive "
+    "roms-tools defaults to -- no local staging required.",
+    (
+        "river",
+        "river_temp_smoothing_window_days",
+    ): "Rolling-mean window (days) applied to the sampled air temperature, a "
+    "deliberately simple stand-in for a river's thermal inertia. Default: 30.",
+    (
+        "river",
         "custom_file",
     ): "Attach a pre-made river-forcing netCDF instead of building one from a "
     "DAI/GLOFAS source (selected via 'src: CUSTOM_FILE' above). The file must "
@@ -566,6 +609,10 @@ def _base_type(ann, value):
 _BOOL_DROPDOWN_FIELDS: dict[tuple[str, str], tuple[str, str]] = {
     ("cdr_output", "do_avg"): ("averaged", "instantaneous"),
     ("cdr_output", "monthly_averages"): ("monthly", "periodic"),
+    ("cdr_tracer_output", "do_avg"): ("averaged", "instantaneous"),
+    ("cdr_tracer_output", "monthly_averages"): ("monthly", "periodic"),
+    ("cdr_gas_exch_output", "do_avg"): ("averaged", "instantaneous"),
+    ("cdr_gas_exch_output", "monthly_averages"): ("monthly", "periodic"),
 }
 
 
@@ -946,7 +993,7 @@ _ADVANCED_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     (
         "Carbon dioxide removal (CDR)",
-        ("cdr_frc", "cdr_output"),
+        ("cdr_frc", "cdr_output", "cdr_tracer_output", "cdr_gas_exch_output"),
     ),
     (
         _OUTPUT_CATEGORY,
@@ -1009,6 +1056,23 @@ def _split_fields(
     if category_title == _OUTPUT_CATEGORY:
         return frozenset(parts), frozenset()
     return None, frozenset(parts)
+
+
+# Each CDR output stream's master enable flag -- section name -> the field that
+# turns the whole stream on/off. ``_apply_field_rules``/``_register_field_rule_
+# observers`` loop over this table so ``cdr_output`` (ucla-roms's original
+# stream), ``cdr_tracer_output``, and ``cdr_gas_exch_output`` (both added by
+# ucla-roms PR #351, >= 0.7.0) behave identically: every other field of the
+# section (do_avg/monthly_averages/output_period/nrpf, and any stream-specific
+# extras such as cdr_tracer_output's ``wrt_*`` field-group toggles) hides with
+# the master switch, so a new field on a Cfg model is covered without touching
+# this file. Extend here -- not by hand in either method -- when ucla-roms adds
+# another CDR output stream.
+_CDR_STREAM_MASTER_FLAGS: dict[str, str] = {
+    "cdr_output": "do_cdr_output",
+    "cdr_tracer_output": "do_cdr_tracer_output",
+    "cdr_gas_exch_output": "do_cdr_gas_exch_output",
+}
 
 
 class _SettingsEditor:
@@ -1123,7 +1187,19 @@ class _SettingsEditor:
                         true_label, false_label = labels
                         widget.value = true_label if bool(value) else false_label
                     elif base is list:
-                        widget.value = ", ".join(str(x) for x in (value or []))
+                        # Only rewrite the text when the *parsed* list actually
+                        # differs from the value being synced. A list field is a
+                        # free-text Text widget, and every keystroke round-trips
+                        # through on_edit -> _rebuild -> sync(); re-joining the
+                        # parsed list on each pass would rewrite "a, b," back to
+                        # "a, b" (the trailing separator parses to nothing),
+                        # making it impossible to type a comma at the end of
+                        # the field. Leaving the text alone when it already
+                        # parses to `value` keeps the in-progress text intact
+                        # while a genuine external change (model switch, load,
+                        # override reset) still re-renders the field.
+                        if _read_field_widget(widget, list) != list(value or []):
+                            widget.value = ", ".join(str(x) for x in (value or []))
                     elif value is not None:
                         widget.value = base(value)
                 except (ValueError, TypeError):
@@ -1136,7 +1212,7 @@ class _SettingsEditor:
         widget, base = self._widgets[(section, field)]
         return _read_field_widget(widget, base, key=(section, field))
 
-    # ocean_vars/cdr_output cross-field rules -----------------------------------
+    # ocean_vars/CDR output-stream cross-field rules -----------------------------
     def _register_field_rule_observers(self) -> None:
         """Wire the controlling widgets to `_apply_field_rules` for instant
         show/hide + disable feedback, plus the one forcing rule (monthly
@@ -1146,13 +1222,15 @@ class _SettingsEditor:
         def _rerun(_change=None):
             self._apply_field_rules()
 
-        for key in (
+        keys = [
             ("ocean_vars", "wrt_file_rst"),
             ("ocean_vars", "monthly_restarts"),
-            ("cdr_output", "do_cdr_output"),
-            ("cdr_output", "do_avg"),
-            ("cdr_output", "monthly_averages"),
-        ):
+        ]
+        for section, master_flag in _CDR_STREAM_MASTER_FLAGS.items():
+            keys.append((section, master_flag))
+            keys.append((section, "do_avg"))
+            keys.append((section, "monthly_averages"))
+        for key in keys:
             entry = self._widgets.get(key)
             if entry is not None:
                 entry[0].observe(_rerun, names="value")
@@ -1176,13 +1254,19 @@ class _SettingsEditor:
             monthly_entry[0].observe(_force_wrt_on_monthly, names="value")
 
     def _apply_field_rules(self) -> None:
-        """Show/hide and enable/disable ocean_vars/cdr_output widgets from their
-        CURRENT values -- never mutates a value, only visibility/``disabled``.
+        """Show/hide and enable/disable ocean_vars/CDR-output-stream widgets from
+        their CURRENT values -- never mutates a value, only visibility/``disabled``.
 
         Rationale: the dependent fields are meaningless (and ignored by the
         namelist) once their master switch is off, and `output_period_*` has no
         effect once a "monthly" cadence fixes the period implicitly -- hiding/
         disabling them keeps the form from offering a control with no effect.
+        Applies identically to every stream in :data:`_CDR_STREAM_MASTER_FLAGS`
+        (``cdr_output``, ``cdr_tracer_output``, ``cdr_gas_exch_output``): every
+        field of the section other than the master switch hides with it -- the
+        shared do_avg/monthly_averages/output_period/nrpf quartet and any
+        stream-specific extras (``cdr_tracer_output``'s ``wrt_*`` field-group
+        toggles), which are all meaningless once that stream is off.
         """
 
         def _show(entry, on: bool) -> None:
@@ -1201,23 +1285,27 @@ class _SettingsEditor:
             if monthly_r is not None and period_r is not None:
                 period_r[0].disabled = bool(monthly_r[0].value)
 
-        cdr_on = self._widgets.get(("cdr_output", "do_cdr_output"))
-        do_avg = self._widgets.get(("cdr_output", "do_avg"))
-        monthly_avg = self._widgets.get(("cdr_output", "monthly_averages"))
-        period = self._widgets.get(("cdr_output", "output_period"))
-        nrpf = self._widgets.get(("cdr_output", "nrpf"))
-        if cdr_on is not None:
-            on = bool(cdr_on[0].value)
-            _show(do_avg, on)
-            _show(monthly_avg, on)
-            _show(period, on)
-            _show(nrpf, on)
+        for section, master_flag in _CDR_STREAM_MASTER_FLAGS.items():
+            master = self._widgets.get((section, master_flag))
+            if master is None:
+                continue
+            do_avg = self._widgets.get((section, "do_avg"))
+            monthly_avg = self._widgets.get((section, "monthly_averages"))
+            period = self._widgets.get((section, "output_period"))
+            on = bool(master[0].value)
+            # Every non-master field of the stream follows the master switch --
+            # derived from the widgets actually built for the section (i.e. the
+            # Cfg model's fields), not a hardcoded list, so a field added to a
+            # stream's Cfg later is covered automatically.
+            for (sec, field), entry in self._widgets.items():
+                if sec == section and field != master_flag:
+                    _show(entry, on)
             if on and do_avg is not None:
-                is_avg = self.read("cdr_output", "do_avg")
+                is_avg = self.read(section, "do_avg")
                 _show(monthly_avg, is_avg)
                 if period is not None:
                     is_monthly = (
-                        self.read("cdr_output", "monthly_averages")
+                        self.read(section, "monthly_averages")
                         if is_avg and monthly_avg is not None
                         else False
                     )
@@ -1372,6 +1460,7 @@ _IC_SOURCE_OPTS = [e.value for e in InitialConditionsSource] + [_IC_NONE]
 # instead of a sourceless dict, matching `Forcing.boundary: BoundaryForcing | None`.
 _BOUNDARY_NONE = "(none)"
 _RIVER_BGC_SOURCE_OPTS = [""] + [e.value for e in RiverBgcSource]
+_RIVER_TEMP_SOURCE_OPTS = [""] + [e.value for e in RiverTemperatureSource]
 # ESPER source fields (SourceSpec.esper_method/esper_equation); "" = unset (roms-tools
 # default: method="nn", equation=8).
 _ESPER_METHOD_OPTS = ["", "lir", "nn", "mixed"]
@@ -1569,6 +1658,30 @@ def _user_file_status_html(file_dict: dict[str, Any] | None) -> str:
         "<span style='color:#b58900'>⚠ This file must exist at this exact path "
         "on the machine where the executor runs.</span>"
     )
+
+
+# Shown in a user-provided-file status slot until a file is attached, where the
+# blueprint is invalid without one (a CUSTOM_FILE river row; CDR mode "netcdf").
+_FILE_NOT_ATTACHED_HINT = (
+    "<span style='color:#b58900'>No file attached yet -- enter a path and press "
+    "Enter (or click Attach / upload a file). The blueprint is invalid until "
+    "a file is attached.</span>"
+)
+_RIVER_CUSTOM_FILE_HINT = _FILE_NOT_ATTACHED_HINT
+_CDR_FILE_HINT = _FILE_NOT_ATTACHED_HINT
+
+
+def _same_attached_file(attached: dict[str, Any] | None, path_str: str) -> bool:
+    """True when ``path_str`` resolves to the already-attached file dict's
+    location -- the dedupe every path-Text submit observer uses so re-submitting
+    (or programmatically re-setting) the same path doesn't re-hash/re-load.
+    """
+    if not attached:
+        return False
+    try:
+        return attached["location"] == str(Path(path_str).expanduser().resolve())
+    except (OSError, RuntimeError):
+        return False
 
 
 def _stage_uploaded_netcdf(filename: str, content: bytes) -> Path:
@@ -2380,6 +2493,34 @@ class _ForcingEditor:
                 layout=W.Layout(width="220px"),
                 tooltip=_tip("river", "bgc_source_path"),
             )
+            _temp_src = item.get("surface_forcing_source") or {}
+            # Validator accepts any case ("era5"); the dropdown options are upper.
+            _temp_name_val = str(_temp_src.get("name") or "").upper()
+            if _temp_name_val not in _RIVER_TEMP_SOURCE_OPTS:
+                _temp_name_val = ""
+            w["surface_forcing_source_name"] = W.Dropdown(
+                options=_RIVER_TEMP_SOURCE_OPTS,
+                value=_temp_name_val,
+                description="temp. source:",
+                style=small,
+                layout=W.Layout(width="170px"),
+                tooltip=_tip("river", "surface_forcing_source_name"),
+            )
+            w["surface_forcing_source_path"] = W.Text(
+                value=str(_temp_src.get("path") or ""),
+                description="temp. path:",
+                placeholder="(default)",
+                style=small,
+                layout=W.Layout(width="220px"),
+                tooltip=_tip("river", "surface_forcing_source_path"),
+            )
+            w["river_temp_smoothing_window_days"] = W.FloatText(
+                value=float(item.get("river_temp_smoothing_window_days", 30.0)),
+                description="temp. smoothing (days):",
+                style=small,
+                layout=W.Layout(width="220px"),
+                tooltip=_tip("river", "river_temp_smoothing_window_days"),
+            )
 
             # bgc_source only takes effect when include_bgc is checked (roms-tools
             # silently ignores it otherwise — see RiverForcingItem validation).
@@ -2390,6 +2531,20 @@ class _ForcingEditor:
 
             w["include_bgc"].observe(_sync_river_bgc_visibility, names="value")
             _sync_river_bgc_visibility()
+
+            # The smoothing window/path only matter once a temperature source is
+            # picked (mirrors the bgc pair above).
+            def _sync_river_temp_visibility(_change=None, ws=w):
+                on = bool(ws["surface_forcing_source_name"].value)
+                ws["surface_forcing_source_path"].layout.display = "" if on else "none"
+                ws["river_temp_smoothing_window_days"].layout.display = (
+                    "" if on else "none"
+                )
+
+            w["surface_forcing_source_name"].observe(
+                _sync_river_temp_visibility, names="value"
+            )
+            _sync_river_temp_visibility()
 
             # RiverSource.CUSTOM_FILE replaces this whole standard-source row
             # (climatology/bgc/coast-snap/edge-buffer/generic path) with a
@@ -2403,6 +2558,10 @@ class _ForcingEditor:
                     "coast_snap_buffer_km",
                     "domain_edge_buffer",
                     "path",
+                    # Unlike bgc_source_name/surface_forcing_source_path below, the
+                    # temp-source dropdown itself has no other gate -- it's simply
+                    # unconditional on custom-mode, like domain_edge_buffer.
+                    "surface_forcing_source_name",
                 ):
                     ws[key].layout.display = "none" if is_custom else ""
                 for key in (
@@ -2413,16 +2572,30 @@ class _ForcingEditor:
                 ):
                     ws[key].layout.display = "" if is_custom else "none"
                 if is_custom:
-                    # Keep the bgc widgets hidden regardless of include_bgc --
-                    # a custom-file river item carries no bgc_source (see
-                    # RiverForcingItem._custom_file_excludes_bgc_source).
+                    # Keep the bgc/temperature widgets hidden regardless of
+                    # include_bgc/surface_forcing_source_name -- a custom-file
+                    # river item carries neither (see
+                    # RiverForcingItem._custom_file_excludes_bgc_source and
+                    # ._custom_file_excludes_surface_forcing_source).
                     ws["bgc_source_name"].layout.display = "none"
                     ws["bgc_source_path"].layout.display = "none"
+                    ws["surface_forcing_source_path"].layout.display = "none"
+                    ws["river_temp_smoothing_window_days"].layout.display = "none"
+                    # Until a file is attached the gathered item fails
+                    # RiverForcingItem validation ("custom_file is not set");
+                    # say what to do rather than leave the blank status to be
+                    # explained only by the pydantic dump in the preview.
+                    if (
+                        not ws.get("_custom_file")
+                        and not ws["custom_file_status"].value
+                    ):
+                        ws["custom_file_status"].value = _RIVER_CUSTOM_FILE_HINT
                 else:
-                    # Restored from custom-file mode (or never in it): let
-                    # include_bgc's own sync decide bgc widget visibility again,
-                    # rather than unconditionally showing them here.
+                    # Restored from custom-file mode (or never in it): let each
+                    # field's own sync decide widget visibility again, rather
+                    # than unconditionally showing them here.
                     _sync_river_bgc_visibility()
+                    _sync_river_temp_visibility()
 
             w["name"].observe(_sync_river_custom_visibility, names="value")
         # Advanced passthrough: raw roms-tools kwargs not (yet) typed above.
@@ -2469,6 +2642,10 @@ class _ForcingEditor:
                 style=small,
                 layout=W.Layout(width="320px"),
                 tooltip=_tip("river", "custom_file"),
+                # Fire `value` only on Enter / focus-out, not per keystroke, so
+                # the observer below can auto-attach a finished path without
+                # hashing every partially-typed prefix.
+                continuous_update=False,
             )
             w["custom_file_attach_btn"] = W.Button(
                 description="Attach", icon="link", layout=W.Layout(width="90px")
@@ -2478,7 +2655,9 @@ class _ForcingEditor:
             )
             w["custom_file_status"] = W.HTML(_user_file_status_html(w["_custom_file"]))
 
-            def _attach_river_custom_file(path_str: str, ws=w) -> None:
+            def _attach_river_custom_file(
+                path_str: str, ws=w, *, notify: bool = True
+            ) -> None:
                 ws["custom_file_status"].value = "<i>attaching…</i>"
                 try:
                     path = Path(path_str).expanduser().resolve()
@@ -2499,7 +2678,23 @@ class _ForcingEditor:
                 ws["custom_file_status"].value = _user_file_status_html(
                     ws["_custom_file"]
                 )
-                self.on_change()
+                if notify:
+                    self.on_change()
+
+            def _maybe_attach_river_custom_file(ws=w, *, notify: bool = True) -> None:
+                """Attach whatever path is typed in the box, unless it's blank or
+                already the attached file. Called on Enter/focus-out of the path
+                Text and as a last-resort from `_gather_item`, so a user who
+                types (or uploads) a path and moves on without clicking Attach
+                still gets a valid CUSTOM_FILE item instead of a
+                RiverForcingItem validation error for a missing custom_file.
+                """
+                path_str = ws["custom_file_path"].value.strip()
+                if not path_str:
+                    return
+                if _same_attached_file(ws.get("_custom_file"), path_str):
+                    return
+                _attach_river_custom_file(path_str, notify=notify)
 
             def _on_river_custom_file_attach_click(_btn, ws=w) -> None:
                 path_str = ws["custom_file_path"].value.strip()
@@ -2508,7 +2703,12 @@ class _ForcingEditor:
                         "custom_file_status"
                     ].value = "<span style='color:#b00'>Enter a path first.</span>"
                     return
+                # Explicit click always re-hashes (the file may have changed on
+                # disk since the last attach) -- no `_maybe_` dedupe here.
                 _attach_river_custom_file(path_str)
+
+            def _on_river_custom_file_path_submit(_change, ws=w) -> None:
+                _maybe_attach_river_custom_file(ws)
 
             def _on_river_custom_file_upload(change, ws=w) -> None:
                 items = change["new"]
@@ -2522,11 +2722,22 @@ class _ForcingEditor:
                 dest = _stage_uploaded_netcdf(
                     up_item["name"], bytes(up_item["content"])
                 )
+                # Setting the Text value fires the path-submit observer, which
+                # attaches via `_maybe_`; the explicit call below covers the
+                # re-upload-same-name case where the value doesn't change (and
+                # is a no-op dedupe when the observer already attached it).
                 ws["custom_file_path"].value = str(dest)
-                _attach_river_custom_file(str(dest))
+                _maybe_attach_river_custom_file(ws)
 
             w["custom_file_attach_btn"].on_click(_on_river_custom_file_attach_click)
+            w["custom_file_path"].observe(
+                _on_river_custom_file_path_submit, names="value"
+            )
             w["custom_file_upload"].observe(_on_river_custom_file_upload, names="value")
+            # Exposed (underscore-prefixed, so not a layout child -- see _row_box)
+            # for `_gather_item`'s last-resort attach; the closures above are
+            # otherwise unreachable from outside this row.
+            w["_maybe_attach_custom_file"] = _maybe_attach_river_custom_file
             _sync_river_custom_visibility()
         self._apply_row_visibility(w)
         return w
@@ -2613,9 +2824,18 @@ class _ForcingEditor:
             # (the executor stages the file directly -- see
             # RiverForcingItem.custom_file) -- none of the standard-source fields
             # (climatology/include_bgc/convert_to_climatology/coast_snap_buffer_km/
-            # domain_edge_buffer/bgc_source/options) apply, and the schema
+            # domain_edge_buffer/bgc_source/surface_forcing_source/
+            # river_temp_smoothing_window_days/options) apply, and the schema
             # forbids most of them from being paired with a source path.
             item: dict[str, Any] = {"source": {"name": w["name"].value}}
+            if not w.get("_custom_file") and w.get("_maybe_attach_custom_file"):
+                # Last resort for a path that was typed but never submitted
+                # (no Enter / focus-out / Attach click before gather ran):
+                # attach it now, without on_change() -- gather is already
+                # running inside the wizard's rebuild. A blank box or a bad
+                # path leaves `_custom_file` unset and the item is emitted
+                # without custom_file, so the schema error still surfaces.
+                w["_maybe_attach_custom_file"](w, notify=False)
             if w.get("_custom_file"):
                 item["custom_file"] = dict(w["_custom_file"])
             return item
@@ -2705,6 +2925,32 @@ class _ForcingEditor:
                 ):  # blank = derive default path
                     bgc_src["path"] = w["bgc_source_path"].value.strip()
                 item["bgc_source"] = bgc_src
+        if (
+            "surface_forcing_source_name" in w
+            and w["surface_forcing_source_name"].value
+        ):
+            temp_src: dict[str, Any] = {"name": w["surface_forcing_source_name"].value}
+            if (
+                "surface_forcing_source_path" in w
+                and w["surface_forcing_source_path"].value.strip()
+            ):  # blank = the remote ARCO ERA5 archive
+                temp_src["path"] = w["surface_forcing_source_path"].value.strip()
+            item["surface_forcing_source"] = temp_src
+        # Emitted whenever non-default, even with no temperature source selected
+        # (roms-tools ignores it then): dropping it would silently change the
+        # content_hash of a loaded blueprint that carries the value -- same
+        # round-trip-fidelity rule as domain_edge_buffer. Exception: while the
+        # widget is hidden (no source), a stale non-positive value is dropped
+        # rather than emitted -- otherwise the schema's `> 0` check would reject
+        # the blueprint naming a field the user cannot see to fix.
+        if "river_temp_smoothing_window_days" in w:
+            window = float(w["river_temp_smoothing_window_days"].value)
+            visible = bool(
+                w.get("surface_forcing_source_name")
+                and w["surface_forcing_source_name"].value
+            )
+            if window != 30.0 and (visible or window > 0):
+                item["river_temp_smoothing_window_days"] = window
         if "convert_to_climatology" in w:
             item["convert_to_climatology"] = w["convert_to_climatology"].value
         if (
@@ -2957,6 +3203,62 @@ def _drain_stream_buffer(
     return lines, remainder
 
 
+# Nested-grid topography: the parent/child grid kwargs may carry their own
+# ``topography_source``/``topography_path`` (Forge inputs, popped before rt.Grid --
+# see ForgeExecutor._nested_topography_pair for the inheritance rule). The
+# dropdown's first entry is the "inherit this grid's pair" sentinel.
+_NESTED_TOPO_INHERIT = "(same as this grid)"
+_TOPO_SOURCES = ["ETOPO5", "SRTM15", "EMOD"]
+
+
+def _nested_topo_kwargs(source_value: str, path_value: str) -> dict[str, str]:
+    """The ``topography_source``/``topography_path`` keys a nested grid's
+    widgets contribute to its grid_kwargs dict (empty = inherit the domain's).
+    """
+    out: dict[str, str] = {}
+    if source_value and source_value != _NESTED_TOPO_INHERIT:
+        out["topography_source"] = source_value
+    if path_value.strip():
+        out["topography_path"] = path_value.strip()
+    return out
+
+
+def _effective_nested_topo(
+    source_value: str, path_value: str, domain_source: str, domain_path: str
+) -> tuple[str, str]:
+    """Mirror of ``ForgeExecutor._nested_topography_pair`` on widget values:
+    ``(name, path)`` a nested grid resolves to, with ``""`` for no path.
+    """
+    path = path_value.strip()
+    if source_value == _NESTED_TOPO_INHERIT:
+        return domain_source, (path or domain_path.strip())
+    return source_value, path
+
+
+def _plot_topography_source(name: str, path: str) -> tuple[dict[str, str] | None, str]:
+    """What a wizard-side grid build (plots / derive-from-grid) can use for
+    ``rt.Grid(topography_source=...)`` on THIS machine, plus a status note.
+
+    Returns ``(None, "")`` for default ETOPO5 (roms-tools fetches it itself) and
+    ``({'name','path'}, "")`` when ``path`` exists locally. A non-default dataset
+    whose file isn't available here (the common laptop case -- the path is an
+    executor-side path) falls back to ETOPO5 with a visible note, rather than
+    failing the plot: the executor is the hard gate, this is a preview.
+    """
+    path = (path or "").strip()
+    if path:
+        local = Path(path).expanduser()
+        if local.exists():
+            return {"name": name, "path": str(local)}, ""
+    if name == "ETOPO5" and not path:
+        return None, ""
+    why = f"file not found here: {path}" if path else "no local file"
+    return None, (
+        f" <span style='color:#b58900'>(plotted with default ETOPO5 topography; "
+        f"{name}: {why})</span>"
+    )
+
+
 class ForgeBlueprintWizard:
     """Build/curate a :class:`ForgeBlueprint` interactively. ``self.config`` holds the
     latest successfully-resolved config (``None`` while inputs are invalid).
@@ -3188,6 +3490,22 @@ class ForgeBlueprintWizard:
                 layout=W.Layout(width="200px"),
                 tooltip=_tip("grid", k) + " (child/inner grid)",
             )
+        self.child_topo_source = W.Dropdown(
+            options=[_NESTED_TOPO_INHERIT, *_TOPO_SOURCES],
+            value=_NESTED_TOPO_INHERIT,
+            description="child topo:",
+            style={"description_width": "90px"},
+            layout=W.Layout(width="260px"),
+            tooltip=_tip("nesting", "child_topo_source"),
+        )
+        self.child_topo_path = W.Text(
+            value="",
+            description="child topo path:",
+            style={"description_width": "110px"},
+            layout=W.Layout(width="360px"),
+            placeholder="(default)",
+            tooltip=_tip("nesting", "child_topo_path"),
+        )
         self.nest_period = W.FloatText(
             value=3600.0,
             description="extract period (s):",
@@ -3252,6 +3570,22 @@ class ForgeBlueprintWizard:
                 layout=W.Layout(width="200px"),
                 tooltip=_tip("grid", k) + " (parent/outer grid)",
             )
+        self.parent_topo_source = W.Dropdown(
+            options=[_NESTED_TOPO_INHERIT, *_TOPO_SOURCES],
+            value=_NESTED_TOPO_INHERIT,
+            description="parent topo:",
+            style={"description_width": "90px"},
+            layout=W.Layout(width="260px"),
+            tooltip=_tip("nesting", "parent_topo_source"),
+        )
+        self.parent_topo_path = W.Text(
+            value="",
+            description="parent topo path:",
+            style={"description_width": "110px"},
+            layout=W.Layout(width="360px"),
+            placeholder="(default)",
+            tooltip=_tip("nesting", "parent_topo_path"),
+        )
         # --- parent plot (this grid's boundary within its parent) ---
         self.parent_plot_btn = W.Button(
             description="Refresh plot",
@@ -3351,6 +3685,9 @@ class ForgeBlueprintWizard:
             style={"description_width": "110px"},
             layout=W.Layout(width="420px"),
             tooltip=_tip("grid", "grid_file"),
+            # Fire `value` on Enter / focus-out only (not per keystroke) so
+            # _on_grid_file_path_submit can auto-attach a finished path.
+            continuous_update=False,
         )
         self.grid_file_attach_btn = W.Button(description="Attach", icon="link")
         self.grid_file_detach_btn = W.Button(description="Detach", icon="unlink")
@@ -3544,6 +3881,7 @@ class ForgeBlueprintWizard:
             style={"description_width": "110px"},
             layout=W.Layout(width="420px"),
             tooltip=_tip("cdr", "cdr_file"),
+            continuous_update=False,  # see grid_file_path
         )
         self.cdr_file_attach_btn = W.Button(description="Attach", icon="link")
         self.cdr_file_clear_btn = W.Button(description="Clear", icon="times")
@@ -3853,9 +4191,11 @@ class ForgeBlueprintWizard:
         self.cdr_clear_btn.on_click(self._on_cdr_clear)
         self.grid_file_attach_btn.on_click(self._on_grid_file_attach)
         self.grid_file_detach_btn.on_click(self._on_grid_file_detach)
+        self.grid_file_path.observe(self._on_grid_file_path_submit, names="value")
         self.grid_file_upload.observe(self._on_grid_file_upload, names="value")
         self.cdr_file_attach_btn.on_click(self._on_cdr_file_attach)
         self.cdr_file_clear_btn.on_click(self._on_cdr_file_clear)
+        self.cdr_file_path.observe(self._on_cdr_file_path_submit, names="value")
         self.cdr_file_upload.observe(self._on_cdr_file_upload, names="value")
         self.cdr_plot_btn.on_click(self._on_cdr_plot_generate)
         self.cdr_plot_type_dd.observe(self._on_cdr_plot_option_change, names="value")
@@ -3905,6 +4245,10 @@ class ForgeBlueprintWizard:
             self.parent_enable,
             *self.child_w.values(),
             *self.parent_w.values(),
+            self.child_topo_source,
+            self.child_topo_path,
+            self.parent_topo_source,
+            self.parent_topo_path,
         ]
         for w in watched:
             w.observe(self._rebuild, names="value")
@@ -4122,7 +4466,26 @@ class ForgeBlueprintWizard:
                 "<span style='color:#b00'>Enter a path first.</span>"
             )
             return
+        # Explicit click always re-loads/re-hashes (the file may have changed on
+        # disk since the last attach) -- no dedupe here.
         self._attach_grid_file_from_path(path_str)
+
+    def _maybe_attach_grid_file(self) -> None:
+        """Attach the path in the grid-file box unless it's blank or already the
+        attached file. Fired on Enter/focus-out of the Text (and after an
+        upload lands), so a user who types/pastes a path and moves on without
+        clicking Attach doesn't silently keep building from the grid_kwargs
+        widgets instead of the file they meant to use.
+        """
+        path_str = self.grid_file_path.value.strip()
+        if not path_str or _same_attached_file(self._grid_file, path_str):
+            return
+        self._attach_grid_file_from_path(path_str)
+
+    def _on_grid_file_path_submit(self, _change) -> None:
+        if getattr(self, "_suspended", False):
+            return
+        self._maybe_attach_grid_file()
 
     def _on_grid_file_upload(self, change):
         items = change["new"]
@@ -4132,8 +4495,10 @@ class ForgeBlueprintWizard:
             items[0] if isinstance(items, (list, tuple)) else next(iter(items.values()))
         )
         dest = _stage_uploaded_netcdf(item["name"], bytes(item["content"]))
+        # Setting the Text fires _on_grid_file_path_submit (attach); the explicit
+        # call covers a same-name re-upload where the value doesn't change.
         self.grid_file_path.value = str(dest)
-        self._attach_grid_file_from_path(str(dest))
+        self._maybe_attach_grid_file()
 
     def _detach_grid_file(self) -> None:
         """Pure state reset (no _rebuild(), no widget-value restore) -- shared
@@ -4271,12 +4636,17 @@ class ForgeBlueprintWizard:
         name = self.nest_domain_dd.value
         if name == "<custom>":
             return
-        gk = self.catalog.domain_data(name).get("grid_kwargs", {}) or {}
+        data = self.catalog.domain_data(name)
+        gk = data.get("grid_kwargs", {}) or {}
         with self._suspend():
             self.nest_enable.value = True
             for k, w in self.child_w.items():
                 if k in gk:
                     w.value = gk[k]
+            # The child spec's own topography, not this grid's (see
+            # _on_parent_domain for why this matters).
+            self.child_topo_source.value = data.get("topography_source", "ETOPO5")
+            self.child_topo_path.value = data.get("topography_path", "") or ""
         self._rebuild()
         self._on_nest_plot(None)
 
@@ -4285,12 +4655,21 @@ class ForgeBlueprintWizard:
         name = self.parent_domain_dd.value
         if name == "<custom>":
             return
-        gk = self.catalog.domain_data(name).get("grid_kwargs", {}) or {}
+        data = self.catalog.domain_data(name)
+        gk = data.get("grid_kwargs", {}) or {}
         with self._suspend():
             self.parent_enable.value = True
             for k, w in self.parent_w.items():
                 if k in gk:
                     w.value = gk[k]
+            # Carry the parent spec's topography too: the parent is rebuilt so
+            # align_grids can blend this grid toward the parent's mask/bathymetry,
+            # so it must be built from what the PARENT run used -- not this grid's
+            # (typically finer, differently-tiled) dataset, which may not even
+            # cover the larger parent footprint. Explicit, never the inherit
+            # sentinel: the spec said what it was built with.
+            self.parent_topo_source.value = data.get("topography_source", "ETOPO5")
+            self.parent_topo_path.value = data.get("topography_path", "") or ""
         self._clear_boundary_forcing()
         self._clear_initial_conditions()
         self._rebuild()
@@ -4801,6 +5180,7 @@ class ForgeBlueprintWizard:
                 for k, w in self.child_w.items():
                     if k in child:
                         w.value = child[k]
+                self._set_nested_topo_widgets("child", child)
                 period = (data.get("metadata_child") or {}).get("period")
                 if period is not None:
                     self.nest_period.value = float(period)
@@ -4815,6 +5195,7 @@ class ForgeBlueprintWizard:
                 for k, w in self.parent_w.items():
                     if k in parent:
                         w.value = parent[k]
+                self._set_nested_topo_widgets("parent", parent)
         # v_sponge (unlike every other snapshot field) isn't finalized by the
         # widget writes above when untouched -- _rebuild() itself live-derives
         # it from the new grid. Settle that first, then snapshot, then rebuild
@@ -4850,7 +5231,29 @@ class ForgeBlueprintWizard:
             "nest_pressure_fluxes": self.nest_pressure_fluxes.value,
             "parent_enable": self.parent_enable.value,
             "parent_w": {k: w.value for k, w in self.parent_w.items()},
+            "child_topo": (self.child_topo_source.value, self.child_topo_path.value),
+            "parent_topo": (
+                self.parent_topo_source.value,
+                self.parent_topo_path.value,
+            ),
         }
+
+    def _set_nested_topo_widgets(self, which: str, gk: dict[str, Any]) -> None:
+        """Load a nested grid's optional ``topography_source``/``topography_path``
+        (from a blueprint or DomainSpec ``grid_kwargs_parent``/``_child`` dict)
+        into its widgets; absent keys mean "inherit this grid's" (the sentinel /
+        blank). Called inside a ``_suspend()`` block by the populate paths.
+        """
+        src_w = getattr(self, f"{which}_topo_source")
+        path_w = getattr(self, f"{which}_topo_path")
+        src = gk.get("topography_source")
+        if isinstance(src, dict):  # hand-authored roms-tools {'name','path'}
+            path_w.value = str(gk.get("topography_path") or src.get("path") or "")
+            src = src.get("name")
+        else:
+            path_w.value = str(gk.get("topography_path") or "")
+        src = getattr(src, "value", src)
+        src_w.value = str(src) if src in _TOPO_SOURCES else _NESTED_TOPO_INHERIT
 
     def _domain_spec_data(self) -> dict[str, Any]:
         """Build a ``Domain.yaml``-shaped dict from the current widget state (the
@@ -5073,6 +5476,14 @@ class ForgeBlueprintWizard:
         self.cdr_plot_box.layout.display = (
             "" if mode in ("simple", "yaml", "netcdf") else "none"
         )
+        if (
+            mode == "netcdf"
+            and self._cdr_forcing_file is None
+            and not self.cdr_file_status.value
+        ):
+            # CdrSpec rejects mode="netcdf" without cdr_forcing_file; say what to
+            # do here rather than leave only the pydantic dump in the preview.
+            self.cdr_file_status.value = _CDR_FILE_HINT
 
         if mode == "simple" and old_mode != "simple":
             # Seed from the grid center / run window at the moment of activation
@@ -5329,7 +5740,24 @@ class ForgeBlueprintWizard:
                 "<span style='color:#b00'>Enter a path first.</span>"
             )
             return
+        # Explicit click always re-hashes -- no dedupe here.
         self._attach_cdr_file_from_path(path_str)
+
+    def _maybe_attach_cdr_file(self) -> None:
+        """CDR-file twin of `_maybe_attach_grid_file`: attach the typed path on
+        Enter/focus-out unless blank or already attached. CDR mode "netcdf"
+        requires cdr_forcing_file (CdrSpec), so a typed-but-unattached path
+        used to leave the blueprint invalid with no hint as to why.
+        """
+        path_str = self.cdr_file_path.value.strip()
+        if not path_str or _same_attached_file(self._cdr_forcing_file, path_str):
+            return
+        self._attach_cdr_file_from_path(path_str)
+
+    def _on_cdr_file_path_submit(self, _change) -> None:
+        if getattr(self, "_suspended", False):
+            return
+        self._maybe_attach_cdr_file()
 
     def _on_cdr_file_upload(self, change):
         items = change["new"]
@@ -5339,14 +5767,15 @@ class ForgeBlueprintWizard:
             items[0] if isinstance(items, (list, tuple)) else next(iter(items.values()))
         )
         dest = _stage_uploaded_netcdf(item["name"], bytes(item["content"]))
-        self.cdr_file_path.value = str(dest)
-        self._attach_cdr_file_from_path(str(dest))
+        self.cdr_file_path.value = str(dest)  # fires _on_cdr_file_path_submit
+        self._maybe_attach_cdr_file()  # same-name re-upload: value unchanged
 
     def _on_cdr_file_clear(self, _btn):
         self._cdr_forcing_file = None
         self.cdr_file_path.value = ""
         self.cdr_file_upload.value = ()
-        self.cdr_file_status.value = ""
+        # Still in "netcdf" mode with nothing attached -> invalid until re-attached.
+        self.cdr_file_status.value = _CDR_FILE_HINT
         self._rebuild()
 
     # ---- CDR plotting (WP6) ----------------------------------------------------
@@ -5642,7 +6071,7 @@ class ForgeBlueprintWizard:
                 else:
                     self._cdr_forcing_file = None
                     self.cdr_file_path.value = ""
-                    self.cdr_file_status.value = ""
+                    self.cdr_file_status.value = _CDR_FILE_HINT
             # dt: prefer the first-class domain.dt field; fall back to the
             # model_settings leaf for a pre-domain.dt file (backward compat --
             # older blueprints only ever wrote it there).
@@ -5800,6 +6229,11 @@ class ForgeBlueprintWizard:
                 ck[k] = int(self.child_w[k].value)
             for k in _GRID_FLOAT + _SCOORD:
                 ck[k] = float(self.child_w[k].value)
+            ck.update(
+                _nested_topo_kwargs(
+                    self.child_topo_source.value, self.child_topo_path.value
+                )
+            )
             kw["grid_kwargs_child"] = ck
             kw["metadata_child"] = {"period": float(self.nest_period.value)}
             if self.nest_pressure_fluxes.value:
@@ -5810,6 +6244,11 @@ class ForgeBlueprintWizard:
                 pk[k] = int(self.parent_w[k].value)
             for k in _GRID_FLOAT + _SCOORD:
                 pk[k] = float(self.parent_w[k].value)
+            pk.update(
+                _nested_topo_kwargs(
+                    self.parent_topo_source.value, self.parent_topo_path.value
+                )
+            )
             kw["grid_kwargs_parent"] = pk
         # forcing/output are always required now (no more model-default fallback).
         kw["forcing_inputs"] = self._forcing_editor.gather()
@@ -5834,6 +6273,7 @@ class ForgeBlueprintWizard:
             for k, w in self.child_w.items():
                 if k in child:
                     w.value = child[k]
+            self._set_nested_topo_widgets("child", child)
             period = (cfg.domain.metadata_child or {}).get("period")
             if period is not None:
                 self.nest_period.value = float(period)
@@ -5846,6 +6286,7 @@ class ForgeBlueprintWizard:
             for k, w in self.parent_w.items():
                 if k in parent:
                     w.value = parent[k]
+            self._set_nested_topo_widgets("parent", parent)
 
     def _rebuild(self, *_):
         if getattr(self, "_suspended", False):
@@ -5895,9 +6336,9 @@ class ForgeBlueprintWizard:
         # layer applied on top (effective = composed ⊕ overrides). The editor is
         # rebuilt when the *model* changes (its field set depends on the model) or
         # when the effective ucla-roms ref crosses a schema boundary (e.g. editing
-        # the roms_ref override across the 0.5.0 or 0.6.0 line with the same model
-        # selected) -- see run_time_settings_for_ref / RunTimeSettingsV0_5_0 /
-        # RunTimeSettingsV0_6_0.
+        # the roms_ref override across the 0.5.0, 0.6.0, or 0.7.0 line with the
+        # same model selected) -- see run_time_settings_for_ref /
+        # RunTimeSettingsV0_5_0 / RunTimeSettingsV0_6_0 / RunTimeSettingsV0_7_0.
         composed = cfg.model_settings
         # Computed once per rebuild (each call re-reads the ModelSpec YAML) and
         # reused for the validation call below.
@@ -6144,7 +6585,30 @@ class ForgeBlueprintWizard:
             gk["close_narrow_channels"] = True
         if self.mask_shapefile.value.strip():
             gk["mask_shapefile"] = self.mask_shapefile.value.strip()
+        topo, self._grid_build_topo_note = self._this_grid_plot_topography()
+        if topo is not None:
+            gk["topography_source"] = topo
         return Grid(**gk)
+
+    def _this_grid_plot_topography(self) -> tuple[dict[str, str] | None, str]:
+        """This grid's ``topography_source`` for a wizard-side build, or the
+        ETOPO5 fallback + note when the file isn't available here.
+        """
+        return _plot_topography_source(self.topo_source.value, self.topo_path.value)
+
+    def _nested_plot_topography(self, which: str) -> tuple[dict[str, str] | None, str]:
+        """``which`` in ("parent", "child"): that grid's effective topography
+        (its own widgets, or this grid's when set to inherit) for a wizard-side
+        build, with the same local-availability fallback.
+        """
+        name, path = _effective_nested_topo(
+            getattr(self, f"{which}_topo_source").value,
+            getattr(self, f"{which}_topo_path").value,
+            self.topo_source.value,
+            self.topo_path.value,
+        )
+        topo, note = _plot_topography_source(name, path)
+        return topo, note.replace("(plotted", f"({which} grid plotted", 1)
 
     def _apply_grid_derived_properties(self, grid: Any) -> None:
         """Set any untouched v_sponge/open-boundary values from a built grid.
@@ -6235,7 +6699,9 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.plot_img.value = buf.read()
-            self.plot_status.value = "<span style='color:#080'>✓</span>"
+            self.plot_status.value = "<span style='color:#080'>✓</span>" + getattr(
+                self, "_grid_build_topo_note", ""
+            )
         except Exception as exc:
             self.plot_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
@@ -6274,6 +6740,13 @@ class ForgeBlueprintWizard:
             for k in _GRID_FLOAT + _SCOORD:
                 ck[k] = float(self.child_w[k].value)
 
+            gk_topo, note_self = self._this_grid_plot_topography()
+            if gk_topo is not None:
+                gk["topography_source"] = gk_topo
+            ck_topo, note_child = self._nested_plot_topography("child")
+            if ck_topo is not None:
+                ck["topography_source"] = ck_topo
+
             plt.ioff()
             try:
                 parent = Grid(**gk)
@@ -6298,7 +6771,9 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.nest_plot_img.value = buf.read()
-            self.nest_plot_status.value = "<span style='color:#080'>✓</span>"
+            self.nest_plot_status.value = (
+                "<span style='color:#080'>✓</span>" + note_self + note_child
+            )
         except Exception as exc:
             self.nest_plot_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
@@ -6338,6 +6813,17 @@ class ForgeBlueprintWizard:
             for k in _GRID_FLOAT + _SCOORD:
                 pk[k] = float(self.parent_w[k].value)
 
+            # Each grid is built with ITS topography where the file is available
+            # on this machine (mirrors the executor's per-grid resolution), so a
+            # parent that falls outside its dataset's coverage fails here, in the
+            # preview, instead of only at executor time.
+            pk_topo, note_parent = self._nested_plot_topography("parent")
+            if pk_topo is not None:
+                pk["topography_source"] = pk_topo
+            gk_topo, note_self = self._this_grid_plot_topography()
+            if gk_topo is not None:
+                gk["topography_source"] = gk_topo
+
             plt.ioff()
             try:
                 parent = Grid(**pk)
@@ -6357,7 +6843,9 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.parent_plot_img.value = buf.read()
-            self.parent_plot_status.value = "<span style='color:#080'>✓</span>"
+            self.parent_plot_status.value = (
+                "<span style='color:#080'>✓</span>" + note_parent + note_self
+            )
         except Exception as exc:
             self.parent_plot_status.value = (
                 f"<span style='color:#b00'>{type(exc).__name__}: {exc}</span>"
@@ -6927,6 +7415,12 @@ class ForgeBlueprintWizard:
                                             child_box,
                                             W.HBox(
                                                 [
+                                                    self.child_topo_source,
+                                                    self.child_topo_path,
+                                                ]
+                                            ),
+                                            W.HBox(
+                                                [
                                                     self.nest_period,
                                                     self.nest_pressure_fluxes,
                                                 ]
@@ -6958,6 +7452,12 @@ class ForgeBlueprintWizard:
                                             self.parent_help,
                                             self.parent_domain_dd,
                                             parent_box,
+                                            W.HBox(
+                                                [
+                                                    self.parent_topo_source,
+                                                    self.parent_topo_path,
+                                                ]
+                                            ),
                                         ]
                                     ),
                                     W.VBox(
