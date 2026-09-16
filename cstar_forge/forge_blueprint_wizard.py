@@ -1,5 +1,4 @@
-"""
-An ``ipywidgets`` wizard for assembling and reviewing a :class:`ForgeBlueprint`.
+"""An ``ipywidgets`` wizard for assembling and reviewing a :class:`ForgeBlueprint`.
 
 This is a thin UI shell over :func:`cstar_forge.forge_blueprint_resolve.build_forge_blueprint`:
 the widgets only *collect inputs and display the resolved result* — all resolution
@@ -82,6 +81,9 @@ from cstar_forge.forge_blueprint_resolve import (
     load_model_spec_data,
     read_cdr_forcing_yaml,
 )
+from cstar_forge.ui import components
+from cstar_forge.ui.catalog_bar import CatalogBar
+from cstar_forge.ui.labels import known_keys, label_for, section_for
 
 # ===========================================================================
 # Help text — shown as widget tooltips on hover (tooltip= kwarg, all widgets)
@@ -537,8 +539,37 @@ LABEL_TEXT: dict[tuple[str, str], str] = {
 
 
 def _namelist_label(section: str, field_name: str) -> str:
-    """Look up the display label override for a namelist field, else field_name."""
+    """Look up the display label override for a namelist field, else field_name.
+
+    Prefers the glossary entry ``settings.<section>.<field_name>`` (see
+    :mod:`cstar_forge.ui.labels`); falls back to the legacy :data:`LABEL_TEXT`
+    override, then to the raw ``field_name``.
+    """
+    key = f"settings.{section}.{field_name}"
+    if key in known_keys():
+        return label_for(key).label
     return LABEL_TEXT.get((section, field_name), field_name)
+
+
+def _namelist_description_and_tooltip(
+    section: str, field_name: str, tooltip: str
+) -> tuple[str, str]:
+    """The widget ``description``/``tooltip`` pair for one namelist field.
+
+    Starts from :func:`_namelist_label` and the schema-derived ``tooltip``. If
+    the glossary (or :data:`LABEL_TEXT`) overrides the label away from the raw
+    ``field_name``, the raw name is kept discoverable by prefixing it onto the
+    tooltip, and a glossary ``unit``, if present, is appended to the
+    description (e.g. ``"Horizontal viscosity (m²/s)"``).
+    """
+    label = _namelist_label(section, field_name)
+    if label == field_name:
+        return label, tooltip
+    combined_tooltip = f"{field_name} — {tooltip}" if tooltip else field_name
+    glossary_key = f"settings.{section}.{field_name}"
+    unit = label_for(glossary_key).unit if glossary_key in known_keys() else None
+    description = f"{label} ({unit})" if unit else label
+    return description, combined_tooltip
 
 
 def _namelist_tooltip(group_name: str, field_name: str) -> str:
@@ -624,9 +655,9 @@ def _make_field_widget(
     tooltip: str = "",
     bool_dropdown: tuple[str, str] | None = None,
 ):
-    style = {"description_width": "170px"}
-    wide = W.Layout(width="430px")
-    num = W.Layout(width="300px")
+    style = {"description_width": "260px"}
+    wide = W.Layout(width="560px")
+    num = W.Layout(width="380px")
     kw = {"tooltip": tooltip} if tooltip else {}
     if bool_dropdown is not None:
         true_label, false_label = bool_dropdown
@@ -1145,10 +1176,12 @@ class _SettingsEditor:
                 if not fields:
                     continue
                 self._pane_sections.setdefault(title, []).append(section)
+                sec_meta = section_for(f"settings.{section}", default_title=section)
                 blocks.append(
                     W.HTML(
-                        f"<div style='font-weight:600;margin:8px 0 2px;color:#555'>"
-                        f"{section}</div>"
+                        "<div class='forge-settings-sec'>"
+                        f"<span class='ttl'>{sec_meta.title}</span> "
+                        f"<span class='sym'>{section}</span></div>"
                     )
                 )
                 blocks.append(box)
@@ -1323,7 +1356,7 @@ class _SettingsEditor:
         if not isinstance(value, dict):  # scalar section (e.g. gamma2, ubind)
             base = _base_type(None, value)
             tip = _namelist_tooltip(section, section)
-            label = _namelist_label(section, section)
+            label, tip = _namelist_description_and_tooltip(section, section, tip)
             w = _make_field_widget(W, label, base, value, tooltip=tip)
             self._widgets[(section, None)] = (w, base)
             return W.VBox([w]), [None]
@@ -1346,7 +1379,7 @@ class _SettingsEditor:
             )
             base = _base_type(ann, val)
             tip = _namelist_tooltip(section, key)
-            label = _namelist_label(section, key)
+            label, tip = _namelist_description_and_tooltip(section, key, tip)
             bool_dropdown = _BOOL_DROPDOWN_FIELDS.get((section, key))
             w = _make_field_widget(
                 W, label, base, val, tooltip=tip, bool_dropdown=bool_dropdown
@@ -1399,6 +1432,22 @@ _CATEGORY_TITLES: dict[str, str] = {
     "tidal": "Tidal forcing",
     "river": "River forcing",
 }
+
+# Forcing categories a blueprint cannot resolve without (the rest are optional
+# add-ons) -- drives the REQUIRED/optional chip in `_ForcingEditor.retitle`.
+_REQUIRED_FORCING_CATEGORIES = frozenset(
+    {"initial_conditions", "ic_bgc", "surface", "boundary", "boundary_bgc"}
+)
+
+# Sticky-bar step links (card key -> label), in the order the cards appear.
+_STICKY_STEPS = (
+    ("model", "Model"),
+    ("grid", "Grid"),
+    ("forcing", "Forcing"),
+    ("run", "Run"),
+    ("advanced", "Advanced"),
+    ("review", "Review"),
+)
 
 # Valid source names per (category, type).  Drives name dropdowns in the forcing editor.
 # "boundary"/"boundary_bgc" have no `type` dropdown of their own (physics is a
@@ -1467,6 +1516,17 @@ _ESPER_METHOD_OPTS = ["", "lir", "nn", "mixed"]
 _ESPER_EQUATION_OPTS = ["", "8", "16"]
 
 
+def _row_desc(key: str, default: str, *, colon: bool = True) -> str:
+    """Per-row widget description text: the glossary label for
+    ``forcing.row.<key>`` (falling back to ``default``, the historical
+    hardcoded caption), with a trailing colon for text/dropdown/number
+    widgets (``colon=True``, the default) or bare for checkboxes
+    (``colon=False``).
+    """
+    label = label_for(f"forcing.row.{key}", default=default).label
+    return f"{label}:" if colon else label
+
+
 def _add_regrid_widgets(W, w: dict[str, Any], cat: str, item: dict[str, Any], small):
     """Build the shared prefill/regrid_method/extrap_method dropdowns onto row-widget
     dict ``w``, tooltipped for ``cat``. Used by surface, boundary, and tidal forcing —
@@ -1479,7 +1539,7 @@ def _add_regrid_widgets(W, w: dict[str, Any], cat: str, item: dict[str, Any], sm
     w["prefill"] = W.Dropdown(
         options=_PREFILL_OPTS,
         value=_prefill_val,
-        description="prefill:",
+        description=_row_desc("prefill", "prefill"),
         style=small,
         layout=W.Layout(width="200px"),
         tooltip=_tip(cat, "prefill"),
@@ -1490,9 +1550,9 @@ def _add_regrid_widgets(W, w: dict[str, Any], cat: str, item: dict[str, Any], sm
     w["regrid_method"] = W.Dropdown(
         options=_REGRID_OPTS,
         value=_regrid_val,
-        description="regrid:",
+        description=_row_desc("regrid_method", "regrid"),
         style=small,
-        layout=W.Layout(width="150px"),
+        layout=W.Layout(width="190px"),
         tooltip=_tip(cat, "regrid_method"),
     )
     _extrap_val = str(item.get("extrap_method") or "")
@@ -1501,9 +1561,9 @@ def _add_regrid_widgets(W, w: dict[str, Any], cat: str, item: dict[str, Any], sm
     w["extrap_method"] = W.Dropdown(
         options=_EXTRAP_OPTS,
         value=_extrap_val,
-        description="extrap:",
+        description=_row_desc("extrap_method", "extrap"),
         style=small,
-        layout=W.Layout(width="170px"),
+        layout=W.Layout(width="190px"),
         tooltip=_tip(cat, "extrap_method"),
     )
 
@@ -1557,10 +1617,10 @@ def _add_bgc_source_widgets(W, w: dict[str, Any], cat: str, src: dict[str, Any],
     """
     w["constants"] = W.Textarea(
         value=_dump_constants(src.get("constants")),
-        description="constants:",
+        description=_row_desc("constants", "constants"),
         placeholder="key=value pairs, e.g. Fe=3.0e-3, ALK=2300",
-        style={"description_width": "90px"},
-        layout=W.Layout(width="280px", height="48px"),
+        style=small,
+        layout=W.Layout(width="320px", height="48px"),
         tooltip=_tip(cat, "constants"),
     )
     _method_val = str(src.get("esper_method") or "")
@@ -1569,9 +1629,9 @@ def _add_bgc_source_widgets(W, w: dict[str, Any], cat: str, src: dict[str, Any],
     w["esper_method"] = W.Dropdown(
         options=_ESPER_METHOD_OPTS,
         value=_method_val,
-        description="esper method:",
+        description=_row_desc("esper_method", "esper method"),
         style=small,
-        layout=W.Layout(width="170px"),
+        layout=W.Layout(width="190px"),
         tooltip=_tip(cat, "esper_method"),
     )
     _equation_val = str(src.get("esper_equation") or "")
@@ -1580,9 +1640,9 @@ def _add_bgc_source_widgets(W, w: dict[str, Any], cat: str, src: dict[str, Any],
     w["esper_equation"] = W.Dropdown(
         options=_ESPER_EQUATION_OPTS,
         value=_equation_val,
-        description="esper eqn:",
+        description=_row_desc("esper_equation", "esper eqn"),
         style=small,
-        layout=W.Layout(width="140px"),
+        layout=W.Layout(width="170px"),
         tooltip=_tip(cat, "esper_equation"),
     )
 
@@ -1630,8 +1690,8 @@ def _options_editor(W, value: Any, description: str = "options:"):
         value=_dump_options(value),
         description=description,
         placeholder=_OPTIONS_PLACEHOLDER,
-        style={"description_width": "70px"},
-        layout=W.Layout(width="360px", height="48px"),
+        style={"description_width": "initial"},
+        layout=W.Layout(width="420px", height="48px"),
     )
 
 
@@ -2253,7 +2313,7 @@ class _ForcingEditor:
         W = self.W
         src = item.get("source") or {}
         w: dict[str, Any] = {}
-        small = {"description_width": "70px"}
+        small = {"description_width": "initial"}
 
         # Source name: Dropdown driven by category + type (for surface, which still
         # mixes physics/bgc/restoring in one list) or fixed. "boundary_bgc" (bgc-only
@@ -2273,16 +2333,16 @@ class _ForcingEditor:
             value=_name_val
             if _name_val in (_name_opts or [""])
             else (_name_opts or [""])[0],
-            description="src:",
+            description=_row_desc("name", "src"),
             style=small,
-            layout=W.Layout(width="160px"),
+            layout=W.Layout(width="200px"),
             tooltip=_tip(cat, "name"),
         )
 
         # Optional custom dataset path; blank -> backend derives the default path.
         w["path"] = W.Text(
             value=str(src.get("path") or ""),
-            description="path:",
+            description=_row_desc("path", "path"),
             placeholder="(default)",
             style=small,
             layout=W.Layout(width="260px"),
@@ -2297,9 +2357,9 @@ class _ForcingEditor:
             w["type"] = W.Dropdown(
                 options=_type_opts,
                 value=_type_val,
-                description="type:",
+                description=_row_desc("type", "type"),
                 style=small,
-                layout=W.Layout(width="160px"),
+                layout=W.Layout(width="200px"),
                 tooltip=_tip(cat, "type"),
             )
 
@@ -2319,7 +2379,7 @@ class _ForcingEditor:
         if cat in ("surface", "boundary_bgc", "ic_bgc"):
             w["climatology"] = W.Checkbox(
                 value=bool(src.get("climatology", False)),
-                description="climatology",
+                description=_row_desc("climatology", "climatology", colon=False),
                 indent=False,
                 # Wider than the default so the longer label isn't clipped.
                 layout=W.Layout(width="130px"),
@@ -2347,9 +2407,9 @@ class _ForcingEditor:
             w["glorys_layout"] = W.Dropdown(
                 options=_GLORYS_LAYOUT_OPTS,
                 value=_layout_val,
-                description="layout:",
+                description=_row_desc("glorys_layout", "layout"),
                 style=small,
-                layout=W.Layout(width="150px"),
+                layout=W.Layout(width="190px"),
                 tooltip=_tip(cat, "glorys_layout"),
             )
 
@@ -2366,9 +2426,9 @@ class _ForcingEditor:
             _tip_cat = "boundary" if cat == "boundary_bgc" else "ic_bgc"
             w["use_vars"] = W.Text(
                 value=", ".join(item.get("use_vars") or []),
-                description="use_vars:",
+                description=_row_desc("use_vars", "use_vars"),
                 style=small,
-                layout=W.Layout(width="200px"),
+                layout=W.Layout(width="260px"),
                 placeholder="ALK,DIC,...",
                 tooltip=_tip(_tip_cat, "use_vars"),
             )
@@ -2383,9 +2443,9 @@ class _ForcingEditor:
             w["bgc_interpolation_method"] = W.Dropdown(
                 options=_BGC_INTERP_OPTS_WITH_DEFAULT,
                 value=_interp_val,
-                description="bgc interp:",
+                description=_row_desc("bgc_interpolation_method", "bgc interp"),
                 style=small,
-                layout=W.Layout(width="180px"),
+                layout=W.Layout(width="200px"),
                 tooltip=_tip(
                     "ic" if cat == "ic_bgc" else "boundary", "bgc_interpolation_method"
                 )
@@ -2394,29 +2454,29 @@ class _ForcingEditor:
         if cat == "surface":
             w["correct_radiation"] = W.Checkbox(
                 value=bool(item.get("correct_radiation", False)),
-                description="corr_rad",
+                description=_row_desc("correct_radiation", "corr_rad", colon=False),
                 indent=False,
                 tooltip=_tip("surface", "correct_radiation"),
             )
             w["wind_dropoff"] = W.Checkbox(
                 value=bool(item.get("wind_dropoff", False)),
-                description="wind_dropoff",
+                description=_row_desc("wind_dropoff", "wind_dropoff", colon=False),
                 indent=False,
                 tooltip=_tip("surface", "wind_dropoff"),
             )
             w["coarse_grid_mode"] = W.Dropdown(
                 options=_COARSE_MODES,
                 value=item.get("coarse_grid_mode", "auto"),
-                description="coarse:",
+                description=_row_desc("coarse_grid_mode", "coarse"),
                 style=small,
-                layout=W.Layout(width="150px"),
+                layout=W.Layout(width="190px"),
                 tooltip=_tip("surface", "coarse_grid_mode"),
             )
             w["restoring_forces"] = W.Text(
                 value=", ".join(item.get("restoring_forces") or []),
-                description="restore:",
+                description=_row_desc("restoring_forces", "restore"),
                 style=small,
-                layout=W.Layout(width="150px"),
+                layout=W.Layout(width="220px"),
                 placeholder="sss,sst",
                 tooltip=_tip("surface", "restoring_forces"),
             )
@@ -2424,16 +2484,16 @@ class _ForcingEditor:
         if cat == "tidal":
             w["ntides"] = W.IntText(
                 value=int(item.get("ntides") or 0),
-                description="ntides:",
+                description=_row_desc("ntides", "ntides"),
                 style=small,
-                layout=W.Layout(width="130px"),
+                layout=W.Layout(width="220px"),
                 tooltip=_tip("tidal", "ntides"),
             )
             _add_regrid_widgets(W, w, "tidal", item, small)
         if cat == "river":
             w["climatology"] = W.Checkbox(
                 value=bool(src.get("climatology", False)),
-                description="climatology",
+                description=_row_desc("climatology", "climatology", colon=False),
                 indent=False,
                 # Wider than the default so the longer label isn't clipped.
                 layout=W.Layout(width="130px"),
@@ -2441,7 +2501,7 @@ class _ForcingEditor:
             )
             w["include_bgc"] = W.Checkbox(
                 value=bool(item.get("include_bgc", False)),
-                description="bgc",
+                description=_row_desc("include_bgc", "bgc", colon=False),
                 indent=False,
                 tooltip=_tip("river", "include_bgc"),
             )
@@ -2454,23 +2514,23 @@ class _ForcingEditor:
                 value=_ctc_val
                 if _ctc_val in _ctc_opts
                 else ClimatologyMode.IF_ANY_MISSING.value,
-                description="clim mode:",
+                description=_row_desc("convert_to_climatology", "clim mode"),
                 style=small,
-                layout=W.Layout(width="180px"),
+                layout=W.Layout(width="210px"),
                 tooltip=_tip("river", "convert_to_climatology"),
             )
             w["coast_snap_buffer_km"] = W.FloatText(
                 value=float(item.get("coast_snap_buffer_km") or 0.0),
-                description="coast snap km:",
+                description=_row_desc("coast_snap_buffer_km", "coast snap km"),
                 style=small,
-                layout=W.Layout(width="180px"),
+                layout=W.Layout(width="260px"),
                 tooltip=_tip("river", "coast_snap_buffer_km"),
             )
             w["domain_edge_buffer"] = W.IntText(
                 value=int(item.get("domain_edge_buffer", 20)),
-                description="edge buffer:",
+                description=_row_desc("domain_edge_buffer", "edge buffer"),
                 style=small,
-                layout=W.Layout(width="160px"),
+                layout=W.Layout(width="180px"),
                 tooltip=_tip("river", "domain_edge_buffer"),
             )
             _bgc_src = item.get("bgc_source") or {}
@@ -2480,14 +2540,14 @@ class _ForcingEditor:
             w["bgc_source_name"] = W.Dropdown(
                 options=_RIVER_BGC_SOURCE_OPTS,
                 value=_bgc_name_val,
-                description="bgc src:",
+                description=_row_desc("bgc_source_name", "bgc src"),
                 style=small,
-                layout=W.Layout(width="150px"),
+                layout=W.Layout(width="170px"),
                 tooltip=_tip("river", "bgc_source_name"),
             )
             w["bgc_source_path"] = W.Text(
                 value=str(_bgc_src.get("path") or ""),
-                description="bgc path:",
+                description=_row_desc("bgc_source_path", "bgc path"),
                 placeholder="(default)",
                 style=small,
                 layout=W.Layout(width="220px"),
@@ -2501,24 +2561,26 @@ class _ForcingEditor:
             w["surface_forcing_source_name"] = W.Dropdown(
                 options=_RIVER_TEMP_SOURCE_OPTS,
                 value=_temp_name_val,
-                description="temp. source:",
+                description=_row_desc("surface_forcing_source_name", "temp. source"),
                 style=small,
-                layout=W.Layout(width="170px"),
+                layout=W.Layout(width="210px"),
                 tooltip=_tip("river", "surface_forcing_source_name"),
             )
             w["surface_forcing_source_path"] = W.Text(
                 value=str(_temp_src.get("path") or ""),
-                description="temp. path:",
+                description=_row_desc("surface_forcing_source_path", "temp. path"),
                 placeholder="(default)",
                 style=small,
-                layout=W.Layout(width="220px"),
+                layout=W.Layout(width="240px"),
                 tooltip=_tip("river", "surface_forcing_source_path"),
             )
             w["river_temp_smoothing_window_days"] = W.FloatText(
                 value=float(item.get("river_temp_smoothing_window_days", 30.0)),
-                description="temp. smoothing (days):",
+                description=_row_desc(
+                    "river_temp_smoothing_window_days", "temp. smoothing (days)"
+                ),
                 style=small,
-                layout=W.Layout(width="220px"),
+                layout=W.Layout(width="260px"),
                 tooltip=_tip("river", "river_temp_smoothing_window_days"),
             )
 
@@ -2605,7 +2667,9 @@ class _ForcingEditor:
         # single `options` passthrough (already on the ic_*/boundary_* scalar
         # widgets), so no per-row editor for either.
         if cat not in ("ic_bgc", "boundary_bgc"):
-            w["options"] = _options_editor(W, item.get("options"))
+            w["options"] = _options_editor(
+                W, item.get("options"), description=_row_desc("options", "options")
+            )
         remove = W.Button(
             description="✕", layout=W.Layout(width="36px"), tooltip="Remove this item"
         )
@@ -2637,7 +2701,7 @@ class _ForcingEditor:
             w["_custom_file"] = dict(_cf) if _cf else None
             w["custom_file_path"] = W.Text(
                 value=str((_cf or {}).get("location") or ""),
-                description="file:",
+                description=_row_desc("custom_file_path", "file"),
                 placeholder="path to a pre-made river-forcing netCDF",
                 style=small,
                 layout=W.Layout(width="320px"),
@@ -2648,7 +2712,9 @@ class _ForcingEditor:
                 continuous_update=False,
             )
             w["custom_file_attach_btn"] = W.Button(
-                description="Attach", icon="link", layout=W.Layout(width="90px")
+                description=label_for("buttons.attach", "Attach").label,
+                icon="link",
+                layout=W.Layout(width="90px"),
             )
             w["custom_file_upload"] = W.FileUpload(
                 accept=".nc", multiple=False, description="…or upload"
@@ -3055,33 +3121,92 @@ class _ForcingEditor:
 
     @property
     def widget(self):
+        if getattr(self, "_acc", None) is not None:
+            return self._acc
         W = self.W
+        ic_fields = components.field_grid(
+            W,
+            [
+                components.field_row(W, "ic.ic_name", self.ic_name),
+                components.field_row(W, "ic.ic_layout", self.ic_layout),
+                components.field_row(W, "ic.ic_path", self.ic_path),
+                components.field_row(W, "ic.ic_validate", self.ic_validate),
+            ],
+        )
+        ic_interp = components.subsection(
+            W,
+            "forcing.ic.interpolation",
+            components.field_grid(
+                W,
+                [
+                    components.field_row(W, "ic.ic_bgc_interp", self.ic_bgc_interp),
+                    components.field_row(W, "ic.ic_flex_time", self.ic_flex_time),
+                    components.field_row(W, "ic.ic_prefill", self.ic_prefill),
+                    components.field_row(
+                        W, "ic.ic_regrid_method", self.ic_regrid_method
+                    ),
+                    components.field_row(
+                        W, "ic.ic_extrap_method", self.ic_extrap_method
+                    ),
+                ],
+            ),
+        )
         ic_box = W.VBox(
             [
-                W.HTML("<i>initial conditions</i>"),
-                W.HBox([self.ic_name, self.ic_layout]),
-                self.ic_path,
-                W.HBox([self.ic_bgc_interp, self.ic_flex_time, self.ic_validate]),
-                W.HBox([self.ic_prefill, self.ic_regrid_method, self.ic_extrap_method]),
-                self.ic_options,
+                ic_fields,
+                ic_interp,
+                components.field_row(
+                    W, "ic.ic_options", self.ic_options, width="520px"
+                ),
             ]
         )
         # Structural mirror of ic_box -- BoundaryForcing.source is a required
         # scalar, just like InitialConditions.source (see gather()/__init__).
+        boundary_fields = components.field_grid(
+            W,
+            [
+                components.field_row(W, "boundary.boundary_name", self.boundary_name),
+                components.field_row(
+                    W, "boundary.boundary_layout", self.boundary_layout
+                ),
+                components.field_row(W, "boundary.boundary_path", self.boundary_path),
+                components.field_row(
+                    W, "boundary.boundary_validate", self.boundary_validate
+                ),
+            ],
+        )
+        boundary_interp = components.subsection(
+            W,
+            "forcing.boundary.interpolation",
+            components.field_grid(
+                W,
+                [
+                    components.field_row(
+                        W, "boundary.boundary_bgc_interp", self.boundary_bgc_interp
+                    ),
+                    components.field_row(
+                        W, "boundary.boundary_prefill", self.boundary_prefill
+                    ),
+                    components.field_row(
+                        W,
+                        "boundary.boundary_regrid_method",
+                        self.boundary_regrid_method,
+                    ),
+                    components.field_row(
+                        W,
+                        "boundary.boundary_extrap_method",
+                        self.boundary_extrap_method,
+                    ),
+                ],
+            ),
+        )
         boundary_box = W.VBox(
             [
-                W.HTML("<i>boundary forcing</i>"),
-                W.HBox([self.boundary_name, self.boundary_layout]),
-                self.boundary_path,
-                W.HBox([self.boundary_bgc_interp, self.boundary_validate]),
-                W.HBox(
-                    [
-                        self.boundary_prefill,
-                        self.boundary_regrid_method,
-                        self.boundary_extrap_method,
-                    ]
+                boundary_fields,
+                boundary_interp,
+                components.field_row(
+                    W, "boundary.boundary_options", self.boundary_options, width="520px"
                 ),
-                self.boundary_options,
             ]
         )
         # "boundary_bgc" is inserted right after "boundary" for logical adjacency,
@@ -3102,7 +3227,29 @@ class _ForcingEditor:
             acc.set_title(i, _CATEGORY_TITLES.get(cat, cat))
         # The IC<->boundary bgc sync buttons now live at the bottom of the
         # "ic_bgc"/"boundary_bgc" panes themselves (see `_render`), not here.
+        self._acc = acc
+        self._cat_order = cat_order
         return acc
+
+    def retitle(self, summary_for) -> None:
+        """Refresh each pane's accordion title with a live summary and a
+        REQUIRED/optional chip (see :func:`cstar_forge.ui.components.accordion_title`).
+
+        ``summary_for(cat)`` returns the short (<= 60 char) summary text for
+        category ``cat``; a no-op before ``widget`` has been built.
+        """
+        if getattr(self, "_acc", None) is None:
+            return
+        for i, cat in enumerate(self._cat_order):
+            chip_text = (
+                "REQUIRED" if cat in _REQUIRED_FORCING_CATEGORIES else "optional"
+            )
+            self._acc.set_title(
+                i,
+                components.accordion_title(
+                    _CATEGORY_TITLES.get(cat, cat), summary_for(cat), chip_text
+                ),
+            )
 
 
 # Preselected in the Model dropdown when present in the catalog (falls back to
@@ -3270,6 +3417,8 @@ class ForgeBlueprintWizard:
         self.W = W
         self.catalog = catalog or _get_catalog()
         self.config: ForgeBlueprint | None = None
+        # Cache for the `widget` property -- built once, see `widget`.
+        self._root: Any | None = None
 
         models = list(self.catalog.model_names)
         domains = list(self.catalog.domain_names)
@@ -3361,7 +3510,9 @@ class ForgeBlueprintWizard:
             )
         self.scoord_chk = W.Checkbox(
             value=True,
-            description="specify s-coord (theta_s/theta_b/hc)",
+            description=label_for(
+                "scoord_chk", "specify s-coord (theta_s/theta_b/hc)"
+            ).label,
             indent=False,
             tooltip="When checked, theta_s, theta_b, and hc are passed to roms-tools "
             "to set the vertical stretching. Required for ROMS simulations.",
@@ -3371,7 +3522,7 @@ class ForgeBlueprintWizard:
         self.bnd = {
             d: W.Checkbox(
                 value=(d in ("east", "north")),
-                description=d,
+                description=d.capitalize(),
                 indent=False,
                 tooltip=f"Enable the {d} open boundary for ocean exchange.",
             )
@@ -3390,7 +3541,7 @@ class ForgeBlueprintWizard:
             "(spacing / 10) unless you edit it or it was saved into a DomainSpec.",
         )
         self.derive_btn = W.Button(
-            description="Derive from grid",
+            description=label_for("buttons.derive", "Derive from grid").label,
             icon="refresh",
             layout=W.Layout(width="160px"),
             tooltip="Build the grid and set any untouched v_sponge/open-boundary "
@@ -3522,15 +3673,15 @@ class ForgeBlueprintWizard:
         # --- nesting plot (parent+child boundary overlay, separate from the Grid
         # section's parent-only plot) ---
         self.nest_plot_btn = W.Button(
-            description="Refresh plot",
+            description=label_for("buttons.refresh_plot", "Refresh plot").label,
             icon="refresh",
             tooltip="Build the parent and child grids from current settings and "
             "render both via plot_nesting (parent+child boundary overlay).",
         )
-        self.nest_plot_status = W.HTML("")
+        self.nest_plot_status = W.HTML("Click Refresh preview to draw the grids.")
         self.nest_plot_img = W.Image(
             format="png",
-            layout=W.Layout(min_width="400px", max_width="600px"),
+            layout=W.Layout(min_width="400px", max_width="600px", display="none"),
         )
 
         # --- parent (optional: this grid is a child nested inside a parent) ---
@@ -3588,15 +3739,15 @@ class ForgeBlueprintWizard:
         )
         # --- parent plot (this grid's boundary within its parent) ---
         self.parent_plot_btn = W.Button(
-            description="Refresh plot",
+            description=label_for("buttons.refresh_plot", "Refresh plot").label,
             icon="refresh",
             tooltip="Build the parent grid and this grid from current settings and "
             "render both via plot_nesting (parent+this-grid boundary overlay).",
         )
-        self.parent_plot_status = W.HTML("")
+        self.parent_plot_status = W.HTML("Click Refresh preview to draw the grids.")
         self.parent_plot_img = W.Image(
             format="png",
-            layout=W.Layout(min_width="400px", max_width="600px"),
+            layout=W.Layout(min_width="400px", max_width="600px", display="none"),
         )
 
         # --- run window ---
@@ -3689,8 +3840,12 @@ class ForgeBlueprintWizard:
             # _on_grid_file_path_submit can auto-attach a finished path.
             continuous_update=False,
         )
-        self.grid_file_attach_btn = W.Button(description="Attach", icon="link")
-        self.grid_file_detach_btn = W.Button(description="Detach", icon="unlink")
+        self.grid_file_attach_btn = W.Button(
+            description=label_for("buttons.attach", "Attach").label, icon="link"
+        )
+        self.grid_file_detach_btn = W.Button(
+            description=label_for("buttons.detach", "Detach").label, icon="unlink"
+        )
         self.grid_file_upload = W.FileUpload(
             accept=".nc", multiple=False, description="…or upload"
         )
@@ -3705,7 +3860,7 @@ class ForgeBlueprintWizard:
             tooltip=_tip("run", "dt"),
         )
         self.dt_btn = W.Button(
-            description="Compute dt (CFL)",
+            description=label_for("buttons.compute_dt", "Compute dt (CFL)").label,
             icon="calculator",
             tooltip=_tip("timestep", "dt_btn"),
         )
@@ -3713,15 +3868,15 @@ class ForgeBlueprintWizard:
 
         # --- grid plot ---
         self.plot_btn = W.Button(
-            description="Refresh plot",
+            description=label_for("buttons.refresh_plot", "Refresh plot").label,
             icon="refresh",
             tooltip="Build the grid from current settings and render it. Updates "
             "automatically when a domain is selected from the catalog.",
         )
-        self.plot_status = W.HTML("")
+        self.plot_status = W.HTML("Click Refresh preview to draw the grid.")
         self.plot_img = W.Image(
             format="png",
-            layout=W.Layout(min_width="400px", max_width="600px"),
+            layout=W.Layout(min_width="400px", max_width="600px", display="none"),
         )
 
         # --- output / preview ---
@@ -3883,8 +4038,14 @@ class ForgeBlueprintWizard:
             tooltip=_tip("cdr", "cdr_file"),
             continuous_update=False,  # see grid_file_path
         )
-        self.cdr_file_attach_btn = W.Button(description="Attach", icon="link")
-        self.cdr_file_clear_btn = W.Button(description="Clear", icon="times")
+        self.cdr_file_attach_btn = W.Button(
+            description=label_for("buttons.attach", "Attach").label, icon="link"
+        )
+        # "Clear" removes the attached file exactly like "Detach" elsewhere (grid,
+        # river custom-file) -- same verb pair everywhere, not a distinct action.
+        self.cdr_file_clear_btn = W.Button(
+            description=label_for("buttons.detach", "Detach").label, icon="times"
+        )
         self.cdr_file_upload = W.FileUpload(
             accept=".nc", multiple=False, description="…or upload"
         )
@@ -3938,7 +4099,10 @@ class ForgeBlueprintWizard:
         # lets _invalidate_cdr_plot_cache skip clearing on rebuilds triggered by
         # plot-unrelated edits (e.g. the description field).
         self._cdr_plot_fingerprint: tuple | None = None
-        self.cdr_plot_btn = W.Button(description="Generate plot", icon="area-chart")
+        self.cdr_plot_btn = W.Button(
+            description=label_for("buttons.refresh_plot", "Refresh plot").label,
+            icon="area-chart",
+        )
         self.cdr_plot_status = W.HTML("")
         self.cdr_plot_type_dd = W.Dropdown(
             options=[
@@ -3956,7 +4120,7 @@ class ForgeBlueprintWizard:
         self.cdr_plot_release_dd.layout.display = "none"  # shown only if >1 release
         self.cdr_plot_img = W.Image(
             format="png",
-            layout=W.Layout(min_width="400px", max_width="600px"),
+            layout=W.Layout(min_width="400px", max_width="600px", display="none"),
         )
         self.cdr_plot_box = W.VBox(
             [
@@ -4042,7 +4206,7 @@ class ForgeBlueprintWizard:
             value="forge_blueprint.yaml",
             description="Save to:",
             style={"description_width": "110px"},
-            layout=W.Layout(width="420px"),
+            layout=W.Layout(width="520px"),
         )
         self.save_btn = W.Button(description="Save to disk", icon="save")
         self.save_status = W.HTML("")
@@ -4058,7 +4222,7 @@ class ForgeBlueprintWizard:
             description="Name:",
             placeholder="(derived from model/grid/procs)",
             style={"description_width": "110px"},
-            layout=W.Layout(width="420px"),
+            layout=W.Layout(width="320px"),
             tooltip=_tip("export", "name"),
         )
         self.name.observe(self._on_name_change, names="value")
@@ -4154,6 +4318,29 @@ class ForgeBlueprintWizard:
             "<style>.forge-run-log > .jp-OutputArea "
             "{ flex: 0 0 auto; height: auto; max-height: none; }</style>"
         )
+
+        # --- redesigned-UI status widgets (sticky bar, per-card chips, banners) ---
+        # Built eagerly, before anything below can trigger a `_rebuild` (via
+        # `_apply_cdr_mode`/`_build_forcing_editor`) -- `_rebuild` ->
+        # `_update_status` touches them on every edit, including from tests
+        # that never access `.widget` at all.
+        self.sticky_bar = W.HTML("")
+        self.sticky_bar.add_class("forge-sticky-html")
+        self.card_chips: dict[str, Any] = {
+            key: W.HTML("")
+            for key in ("model", "grid", "forcing", "run", "advanced", "review")
+        }
+        self.grid_lock_banner = components.banner_widget(
+            W,
+            "warn",
+            "<b>Grid fields are locked</b> because a pre-made grid file is "
+            "attached. Detach it to edit the grid here.",
+        )
+        self.grid_lock_banner.layout.display = "none"
+        self.forcing_banner = components.banner_widget(W, "info", "")
+        # A second, plain HTML mirror of `download_link` for the Review card --
+        # `download_link` itself lives once, in the sticky bar (see `widget`).
+        self.download_link_review = W.HTML("")
 
         self.roms_ref.value = self._model_default_roms_ref()
         self.marbl_ref.value = self._model_default_marbl_ref()
@@ -4391,6 +4578,7 @@ class ForgeBlueprintWizard:
             self.parent_enable,
         ):
             w.disabled = locked
+        self.grid_lock_banner.layout.display = "" if locked else "none"
 
     def _populate_grid_widgets_from_grid(self, grid: Any) -> None:
         """Display a loaded grid file's own attributes on the (now-locked) grid
@@ -5531,6 +5719,7 @@ class ForgeBlueprintWizard:
         self._cdr_plot_grid = None
         self._cdr_plot_cache = {}
         self.cdr_plot_img.value = b""
+        self.cdr_plot_img.layout.display = "none"
         self.cdr_plot_status.value = ""
         self.cdr_plot_release_dd.options = []
         self.cdr_plot_release_dd.layout.display = "none"
@@ -5892,6 +6081,7 @@ class ForgeBlueprintWizard:
             cached = buf.getvalue()
             self._cdr_plot_cache[key] = cached
         self.cdr_plot_img.value = cached
+        self.cdr_plot_img.layout.display = ""
 
     def _on_cdr_plot_generate(self, _btn):
         self.cdr_plot_status.value = "<i>building…</i>"
@@ -6310,17 +6500,19 @@ class ForgeBlueprintWizard:
             self.config = None
             self.derived.value = "<i>Set start and end dates…</i>"
             self.download_link.value = ""
+            self.download_link_review.value = ""
+            self._update_status(None)
             return
         try:
             cfg = build_forge_blueprint(**self._gather())
         except Exception as exc:  # validation or input error → show, don't crash
             self.config = None
-            self.derived.value = (
-                f"<b style='color:#b00'>Invalid:</b> {type(exc).__name__}"
-            )
             self.download_link.value = ""
+            self.download_link_review.value = ""
             with self.preview:
                 print(f"{type(exc).__name__}: {exc}")
+            error = f"{type(exc).__name__}: {exc}".splitlines()[0][:200]
+            self._update_status(None, error=error)
             return
 
         # v_sponge is cheap (pure arithmetic on grid spacing, no grid build) --
@@ -6473,7 +6665,10 @@ class ForgeBlueprintWizard:
                     Path(self.save_path.value).parent
                     / f"{cfg.name}.forge_blueprint.yaml"
                 )
-        self.download_link.value = self._download_html(cfg)
+        self.download_link.value = self._download_html(
+            cfg, caption="Download blueprint"
+        )
+        self.download_link_review.value = self._download_html(cfg)
         # Surface (never silently ship) provisional open-boundary defaults: the
         # checkboxes currently reflect whatever's live, but that's only a real
         # mask-derived value once _boundaries_derived is True or the user has
@@ -6487,8 +6682,7 @@ class ForgeBlueprintWizard:
             and not self.derive_status.value
         ):
             self.derive_status.value = (
-                "<span style='color:#b58900'>⚠ boundaries not derived yet — "
-                'click "Derive from grid" (Save/Run derive automatically)</span>'
+                "<span style='color:#b58900'>⚠ not derived yet</span>"
             )
         # Suppressed for the same reason as _wizard_settings_cls_for_ref above --
         # _rebuild runs on every keystroke, including typing into the roms_ref
@@ -6499,12 +6693,15 @@ class ForgeBlueprintWizard:
                 cfg.model_settings, roms_ref=effective_roms_ref
             )
         if problems:
-            self.validation.value = (
-                "<b style='color:#b00'>⚠ settings validation:</b><br>"
-                + "<br>".join(f"&nbsp;&nbsp;{p}" for p in problems[:10])
+            self.validation.value = components.banner(
+                "err",
+                "<b>Settings validation:</b><br>"
+                + "<br>".join(f"&nbsp;&nbsp;{p}" for p in problems[:10]),
             )
         else:
-            self.validation.value = "<span style='color:#080'>✓ settings valid</span>"
+            self.validation.value = components.banner(
+                "ok", "<b>Blueprint is valid.</b> All settings pass validation."
+            )
         comp = cfg.composition
         self.derived.value = (
             f"<b>name</b>: <code>{cfg.name}</code> &nbsp; "
@@ -6515,18 +6712,159 @@ class ForgeBlueprintWizard:
         )
         with self.preview:
             print(cfg.to_yaml_str())
+        self._update_status(cfg)
+
+    def _forcing_summary(self, cat: str) -> str:
+        """A short (<= 60 char) summary of the current state of forcing
+        category ``cat``, for its accordion title (see `_update_status`).
+        """
+        fe = self._forcing_editor
+        if fe is None:
+            return ""
+        if cat in ("initial_conditions", "boundary"):
+            is_ic = cat == "initial_conditions"
+            name_w = fe.ic_name if is_ic else fe.boundary_name
+            path_w = fe.ic_path if is_ic else fe.boundary_path
+            none_val = _IC_NONE if is_ic else _BOUNDARY_NONE
+            if name_w.value == none_val:
+                summary = "none"
+            else:
+                loc = "custom path" if path_w.value.strip() else "default path"
+                summary = f"{name_w.value} · {loc}"
+        else:
+            names = [row["name"].value for row in fe._rows.get(cat, [])]
+            summary = " · ".join(names) if names else "none"
+        return summary[:60]
+
+    def _retitle_advanced_editor(self) -> None:
+        """Refresh each Advanced-settings pane's accordion title with its field
+        count and how many of its fields carry a manual override (see
+        `_SettingsEditor._pane_sections`/`_section_fields`).
+        """
+        editor = self.editor
+        if editor is None:
+            return
+        for i, (title, sections) in enumerate(editor._pane_sections.items()):
+            fields_by_section = [editor._section_fields.get(s, []) for s in sections]
+            n_fields = sum(len(fields) for fields in fields_by_section)
+            pane_keys = {
+                (s, f) for s, fields in zip(sections, fields_by_section) for f in fields
+            }
+            n_mod = sum(1 for k in self._overrides if k in pane_keys)
+            editor.accordion.set_title(
+                i,
+                components.accordion_title(
+                    title,
+                    f"{n_fields} settings",
+                    f"{n_mod} modified" if n_mod else "all defaults",
+                ),
+            )
+
+    def _update_status(
+        self, cfg: ForgeBlueprint | None, error: str | None = None
+    ) -> None:
+        """Refresh the sticky bar, per-card status chips, and the forcing/advanced
+        accordion titles from the outcome of a `_rebuild` call.
+
+        Called at the end of every `_rebuild` path: on success with the
+        resolved ``cfg``; on a missing-dates or build/validation failure with
+        ``cfg=None`` (and, for a real exception, a one-line ``error``
+        description that becomes `derived`'s banner).
+        """
+        valid = cfg is not None
+        if error is not None:
+            self.derived.value = components.banner(
+                "err", f"<b>Invalid blueprint.</b> {error}"
+            )
+
+        model_name = self.model_dd.value or "—"
+        step_links = "".join(
+            f"<a class='step' href='#forge-sec-{key}'>{i} {title}</a>"
+            for i, (key, title) in enumerate(_STICKY_STEPS, start=1)
+        )
+        if valid:
+            domain_label = cfg.composition.domain.name or "custom"
+            summary = (
+                f"Model <b>{model_name}</b> &middot; "
+                f"Domain <b>{domain_label}</b> ({cfg.composition.domain.origin}) "
+                f"&middot; Run <b>{self.start.value} &rarr; {self.end.value}</b>"
+            )
+            status_chip = components.chip("● Valid", "ok")
+        else:
+            summary = f"Model <b>{model_name}</b>"
+            status_chip = components.chip("● Invalid", "warn")
+        # `sp` (flex:1, see WIZARD_CSS) eats the remaining width so the status
+        # chip sits at the row's true right edge, next to the download button.
+        self.sticky_bar.value = (
+            f"{step_links}<span class='summary'>{summary}</span>"
+            "<span class='sp'></span>"
+            f"{status_chip}"
+        )
+
+        chips = self.card_chips
+        complete_or_invalid = (
+            components.chip("● Complete", "ok")
+            if valid
+            else components.chip("● Invalid", "warn")
+        )
+        chips["model"].value = complete_or_invalid
+        chips["run"].value = complete_or_invalid
+        chips["review"].value = (
+            components.chip("● Ready", "ok")
+            if valid
+            else components.chip("● Invalid", "warn")
+        )
+        if not self._boundaries_derived and not self._boundaries_touched:
+            n = 1 + (1 if not self._v_sponge_touched else 0)
+            chips["grid"].value = components.chip(f"● {n} fields to check", "warn")
+        else:
+            chips["grid"].value = components.chip("● Complete", "ok")
+        forcing_modified = bool(valid and cfg.composition.forcing.modified)
+        chips["forcing"].value = (
+            components.chip("● Modified", "info")
+            if forcing_modified
+            else components.chip("At preset defaults", "def")
+        )
+        chips["advanced"].value = (
+            components.chip(f"● {len(self._overrides)} modified", "info")
+            if self._overrides
+            else components.chip("All defaults", "def")
+        )
+
+        preset_name = (
+            getattr(self.forcing_dd, "label", None) or self.forcing_dd.value or "—"
+        )
+        self.forcing_banner.value = components.banner(
+            "info",
+            f"Defaults come from the forcing preset <b>{preset_name}</b>. Expand "
+            "a section only to override its source or options; collapsed "
+            "sections show their current values.",
+        )
+        if self._forcing_editor is not None:
+            self._forcing_editor.retitle(self._forcing_summary)
+        self._retitle_advanced_editor()
 
     @staticmethod
-    def _download_html(cfg: ForgeBlueprint) -> str:
+    def _download_html(cfg: ForgeBlueprint, caption: str | None = None) -> str:
         """A data-URI download link for the resolved YAML — works in the browser
         (Voilà / JupyterLab) with no server-side file access.
+
+        ``caption`` overrides the link text with a fixed, short caption (the
+        filename moves into ``title=`` instead) -- used by the sticky bar,
+        which has no room for a full filename. The default keeps the Review
+        card's "Download <code>fname</code>" copy.
         """
         payload = cfg.to_yaml_str().encode("utf-8")
         b64 = base64.b64encode(payload).decode("ascii")
         fname = f"{cfg.name}.forge_blueprint.yaml"
+        if caption is None:
+            text, title_attr = f"Download <code>{fname}</code>", ""
+        else:
+            text, title_attr = caption, f' title="{fname}"'
         return (
-            f'⬇ <a download="{fname}" href="data:text/yaml;base64,{b64}">'
-            f"Download <code>{fname}</code></a>"
+            f'⬇ <a class="forge-dl-btn" download="{fname}"{title_attr} '
+            f'href="data:text/yaml;base64,{b64}">'
+            f"{text}</a>"
         )
 
     # ---- actions -------------------------------------------------------------
@@ -6699,6 +7037,7 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.plot_img.value = buf.read()
+            self.plot_img.layout.display = ""
             self.plot_status.value = "<span style='color:#080'>✓</span>" + getattr(
                 self, "_grid_build_topo_note", ""
             )
@@ -6771,6 +7110,7 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.nest_plot_img.value = buf.read()
+            self.nest_plot_img.layout.display = ""
             self.nest_plot_status.value = (
                 "<span style='color:#080'>✓</span>" + note_self + note_child
             )
@@ -6843,6 +7183,7 @@ class ForgeBlueprintWizard:
 
             buf.seek(0)
             self.parent_plot_img.value = buf.read()
+            self.parent_plot_img.layout.display = ""
             self.parent_plot_status.value = (
                 "<span style='color:#080'>✓</span>" + note_parent + note_self
             )
@@ -7290,6 +7631,7 @@ class ForgeBlueprintWizard:
         Returns
         -------
         cstar.orchestration.models.Workplan
+
         """
         try:
             from cstar.orchestration.models import (
@@ -7376,289 +7718,446 @@ class ForgeBlueprintWizard:
     # ---- layout / display ----------------------------------------------------
     @property
     def widget(self):
+        """The wizard's root widget: a ``forge-app``/``forge-wizard`` ``W.VBox``
+        of a sticky status bar, an intro line, and the seven cards (Start,
+        Model, Grid, Forcing, Run, Advanced, Review). Built once and cached in
+        ``self._root`` -- repeated access returns the same tree, so widgets
+        placed in it keep their identity across a rebuild.
+        """
+        if self._root is not None:
+            return self._root
         W = self.W
 
-        def section(title, *rows):
-            return W.VBox(
-                [W.HTML(f"<b>{title}</b>"), *rows],
-                layout=W.Layout(
-                    border="1px solid #e0e0e0", padding="8px", margin="4px 0"
-                ),
+        # Danger-styled destructive actions.
+        self.grid_file_detach_btn.button_style = "danger"
+        self.cdr_clear_btn.button_style = "danger"
+        self.cdr_file_clear_btn.button_style = "danger"
+
+        sticky = W.HBox([self.sticky_bar, self.download_link])
+        sticky.add_class("forge-sticky")
+        # sticky_bar fills the remaining width (its own content -- step links,
+        # summary, spacer, status chip -- pushes the chip to its right edge,
+        # see _update_status); download_link stays sized to its fixed caption.
+        self.sticky_bar.layout.flex = "1 1 auto"
+        self.download_link.layout.flex = "0 0 auto"
+
+        intro = W.HTML(
+            "<p>Pick a model and a domain, adjust the grid, boundaries, "
+            "partitioning and run window, then review and download the "
+            "blueprint.</p>"
+            "<p><span class='req'>*</span> Required &middot; everything else "
+            "has a model default</p>"
+        )
+
+        start_card = components.card(
+            W,
+            "start",
+            components.field_row(
+                W,
+                "load_catalog_dd",
+                self.load_catalog_dd,
+                extra=(self.load_catalog_btn,),
+            ),
+            components.field_row(
+                W, "load_path", self.load_path, extra=(self.load_btn, self.upload)
+            ),
+            self.load_status,
+        )
+
+        model_card = components.card(
+            W,
+            "model",
+            components.field_row(W, "model_dd", self.model_dd),
+            # bgc_dd's grid is placed before roms_ref/marbl_ref's so marbl_ref
+            # (only relevant once bgc mode is "marbl") reads after bgc_dd.
+            components.field_grid(
+                W,
+                [
+                    components.field_row(W, "bgc_dd", self.bgc_dd),
+                    components.field_row(W, "output_dd", self.output_dd),
+                ],
+            ),
+            components.field_grid(
+                W,
+                [
+                    components.field_row(W, "roms_ref", self.roms_ref),
+                    components.field_row(W, "marbl_ref", self.marbl_ref),
+                ],
+            ),
+            components.field_row(W, "forcing_dd", self.forcing_dd),
+            num=1,
+            chips_widget=self.card_chips["model"],
+        )
+
+        # --- grid card ---
+        geometry_rows = [
+            components.field_row(
+                W, f"grid.{k}", self.grid_w[k], width="110px", label_width="170px"
             )
-
-        grid_box = W.GridBox(
-            [self.grid_w[k] for k in (_GRID_INT + _GRID_FLOAT + _SCOORD)],
-            layout=W.Layout(grid_template_columns="repeat(3, 210px)"),
+            for k in (_GRID_INT + _GRID_FLOAT)
+        ]
+        # Fixed-width preview column so the button caption and the empty-state
+        # hint never get squeezed by the two-column field grid beside them.
+        grid_plot_col = W.VBox(
+            [self.plot_btn, self.plot_status, self.plot_img],
+            layout=W.Layout(padding="0 0 0 20px", flex="0 0 380px"),
         )
-        child_box = W.GridBox(
-            [self.child_w[k] for k in (_GRID_INT + _GRID_FLOAT + _SCOORD)],
-            layout=W.Layout(grid_template_columns="repeat(3, 210px)"),
+        geometry_grid = components.field_grid(W, geometry_rows)
+        geometry_grid.layout.flex = "1 1 auto"
+        geometry_sub = components.subsection(
+            W,
+            "grid.geometry",
+            W.HBox([geometry_grid, grid_plot_col]),
         )
-        parent_box = W.GridBox(
-            [self.parent_w[k] for k in (_GRID_INT + _GRID_FLOAT + _SCOORD)],
-            layout=W.Layout(grid_template_columns="repeat(3, 210px)"),
+        vertical_sub = components.subsection(
+            W,
+            "grid.vertical",
+            self.scoord_chk,
+            components.field_grid(
+                W,
+                [
+                    components.field_row(W, f"grid.{k}", self.grid_w[k], width="110px")
+                    for k in _SCOORD
+                ],
+            ),
         )
-
-        nesting_accordion = W.Accordion(
+        bathymetry_sub = components.subsection(
+            W,
+            "grid.bathymetry",
+            components.field_grid(
+                W,
+                [
+                    components.field_row(W, "topo_source", self.topo_source),
+                    components.field_row(W, "topo_path", self.topo_path),
+                    components.field_row(W, "hmin", self.hmin),
+                    components.field_row(W, "close_narrow_chk", self.close_narrow_chk),
+                ],
+            ),
+            components.field_row(W, "mask_shapefile", self.mask_shapefile),
+        )
+        self.gridfile_accordion = W.Accordion(
             children=[
                 W.VBox(
                     [
-                        section(
-                            "Child grid",
-                            W.HBox(
-                                [
-                                    W.VBox(
-                                        [
-                                            self.nest_enable,
-                                            self.nest_help,
-                                            self.nest_domain_dd,
-                                            child_box,
-                                            W.HBox(
-                                                [
-                                                    self.child_topo_source,
-                                                    self.child_topo_path,
-                                                ]
-                                            ),
-                                            W.HBox(
-                                                [
-                                                    self.nest_period,
-                                                    self.nest_pressure_fluxes,
-                                                ]
-                                            ),
-                                        ]
-                                    ),
-                                    W.VBox(
-                                        [
-                                            W.HBox(
-                                                [
-                                                    self.nest_plot_btn,
-                                                    self.nest_plot_status,
-                                                ]
-                                            ),
-                                            self.nest_plot_img,
-                                        ],
-                                        layout=W.Layout(padding="0 0 0 20px"),
-                                    ),
-                                ]
-                            ),
+                        W.HBox(
+                            [
+                                self.grid_file_path,
+                                self.grid_file_attach_btn,
+                                self.grid_file_detach_btn,
+                            ]
                         ),
-                        section(
-                            "Parent grid",
-                            W.HBox(
-                                [
-                                    W.VBox(
-                                        [
-                                            self.parent_enable,
-                                            self.parent_help,
-                                            self.parent_domain_dd,
-                                            parent_box,
-                                            W.HBox(
-                                                [
-                                                    self.parent_topo_source,
-                                                    self.parent_topo_path,
-                                                ]
-                                            ),
-                                        ]
-                                    ),
-                                    W.VBox(
-                                        [
-                                            W.HBox(
-                                                [
-                                                    self.parent_plot_btn,
-                                                    self.parent_plot_status,
-                                                ]
-                                            ),
-                                            self.parent_plot_img,
-                                        ],
-                                        layout=W.Layout(padding="0 0 0 20px"),
-                                    ),
-                                ]
-                            ),
-                        ),
+                        self.grid_file_upload,
+                        self.grid_file_status,
                     ]
-                ),
+                )
             ],
             selected_index=None,
         )
-        nesting_accordion.set_title(0, "Parent and child grid settings")
-        return W.VBox(
+        self.gridfile_accordion.set_title(0, section_for("grid.gridfile").title)
+        derived_sub = components.subsection(
+            W,
+            "grid.derived",
+            components.banner_widget(
+                W,
+                "info",
+                "Open boundaries, sponge viscosity and the time step are "
+                "derived from the grid when you save or run. Derive them now "
+                "to check or edit the values.",
+            ),
+            components.field_row(W, "bnd", W.HBox(list(self.bnd.values()))),
+            components.field_row(
+                W,
+                "v_sponge",
+                self.v_sponge,
+                extra=(self.derive_btn, self.derive_status),
+            ),
+            components.field_row(W, "dt", self.dt, extra=(self.dt_btn, self.dt_status)),
+        )
+
+        child_grid_rows = [
+            components.field_row(W, f"grid.{k}", self.child_w[k], width="110px")
+            for k in (_GRID_INT + _GRID_FLOAT + _SCOORD)
+        ]
+        parent_grid_rows = [
+            components.field_row(W, f"grid.{k}", self.parent_w[k], width="110px")
+            for k in (_GRID_INT + _GRID_FLOAT + _SCOORD)
+        ]
+        child_plot_col = W.VBox(
+            [W.HBox([self.nest_plot_btn, self.nest_plot_status]), self.nest_plot_img],
+            layout=W.Layout(padding="0 0 0 20px"),
+        )
+        child_section = components.subsection(
+            W,
+            "grid.nesting.child",
+            self.nest_enable,
+            self.nest_help,
+            W.HBox(
+                [
+                    W.VBox(
+                        [
+                            components.field_row(
+                                W, "nest_domain_dd", self.nest_domain_dd
+                            ),
+                            components.field_grid(W, child_grid_rows),
+                            components.field_row(
+                                W, "child_topo_source", self.child_topo_source
+                            ),
+                            components.field_row(
+                                W, "child_topo_path", self.child_topo_path
+                            ),
+                            components.field_row(W, "nest_period", self.nest_period),
+                            components.field_row(
+                                W, "nest_pressure_fluxes", self.nest_pressure_fluxes
+                            ),
+                        ]
+                    ),
+                    child_plot_col,
+                ]
+            ),
+            default_title="Child grid",
+        )
+        parent_plot_col = W.VBox(
             [
-                W.HTML(
-                    "<h3>ForgeBlueprint wizard</h3>"
-                    "<i>Pick a Model and (optionally) a Domain, tweak fields, review, save. "
-                    "Or load an existing forge_blueprint.yaml to edit it. Fine-tune model "
-                    "settings under “Advanced settings”.</i>"
-                ),
-                section(
-                    "Load existing (optional)",
-                    W.HBox([self.load_catalog_dd, self.load_catalog_btn]),
-                    W.HBox([self.load_path, self.load_btn]),
-                    self.upload,
-                    self.load_status,
-                ),
-                section(
-                    "Specs",
-                    W.HBox([self.model_dd, self.roms_ref, self.bgc_dd, self.marbl_ref]),
-                    self.forcing_dd,
-                    self.output_dd,
-                    self.domain_dd,
-                    self.grid_name,
-                ),
-                section(
-                    "Grid",
-                    W.HBox(
+                W.HBox([self.parent_plot_btn, self.parent_plot_status]),
+                self.parent_plot_img,
+            ],
+            layout=W.Layout(padding="0 0 0 20px"),
+        )
+        parent_section = components.subsection(
+            W,
+            "grid.nesting.parent",
+            self.parent_enable,
+            self.parent_help,
+            W.HBox(
+                [
+                    W.VBox(
                         [
-                            W.VBox(
-                                [
-                                    grid_box,
-                                    self.scoord_chk,
-                                    W.HBox([self.hmin, self.close_narrow_chk]),
-                                    self.mask_shapefile,
-                                    self.topo_source,
-                                    self.topo_path,
-                                    section(
-                                        "Attach a pre-made grid file (optional)",
-                                        W.HBox(
-                                            [
-                                                self.grid_file_path,
-                                                self.grid_file_attach_btn,
-                                                self.grid_file_detach_btn,
-                                            ]
-                                        ),
-                                        self.grid_file_upload,
-                                        self.grid_file_status,
-                                    ),
-                                ]
+                            components.field_row(
+                                W, "parent_domain_dd", self.parent_domain_dd
                             ),
-                            W.VBox(
-                                [
-                                    W.HBox([self.plot_btn, self.plot_status]),
-                                    self.plot_img,
-                                ],
-                                layout=W.Layout(padding="0 0 0 20px"),
+                            components.field_grid(W, parent_grid_rows),
+                            components.field_row(
+                                W, "parent_topo_source", self.parent_topo_source
+                            ),
+                            components.field_row(
+                                W, "parent_topo_path", self.parent_topo_path
                             ),
                         ]
                     ),
+                    parent_plot_col,
+                ]
+            ),
+            default_title="Parent grid",
+        )
+        nesting_accordion = W.Accordion(
+            children=[W.VBox([child_section, parent_section])],
+            selected_index=None,
+        )
+        nesting_accordion.set_title(0, section_for("grid.nesting").title)
+
+        grid_card = components.card(
+            W,
+            "grid",
+            components.field_grid(
+                W,
+                [
+                    components.field_row(W, "domain_dd", self.domain_dd),
+                    components.field_row(W, "grid_name", self.grid_name),
+                ],
+            ),
+            self.grid_lock_banner,
+            geometry_sub,
+            vertical_sub,
+            bathymetry_sub,
+            self.gridfile_accordion,
+            derived_sub,
+            nesting_accordion,
+            num=2,
+            chips_widget=self.card_chips["grid"],
+        )
+
+        forcing_card = components.card(
+            W,
+            "forcing",
+            self.forcing_banner,
+            self.forcing_box,
+            num=3,
+            chips_widget=self.card_chips["forcing"],
+        )
+
+        run_card = components.card(
+            W,
+            "run",
+            components.subsection(
+                W,
+                "run.window",
+                components.field_grid(
+                    W,
+                    [
+                        components.field_row(W, "start", self.start),
+                        components.field_row(W, "end", self.end),
+                        components.field_row(W, "model_ref_date", self.model_ref_date),
+                        components.field_row(W, "description", self.description),
+                    ],
                 ),
-                section(
-                    "Domain-derived properties",
-                    W.HBox([self.v_sponge, self.derive_btn, self.derive_status]),
-                    W.HBox([self.dt, self.dt_btn, self.dt_status]),
-                    section("Open boundaries", W.HBox(list(self.bnd.values()))),
+            ),
+            components.subsection(
+                W,
+                "run.partitioning",
+                components.field_grid(
+                    W,
+                    [
+                        components.field_row(W, "npx", self.npx),
+                        components.field_row(W, "npy", self.npy),
+                        components.field_row(W, "n_cores", self.n_cores),
+                        components.field_row(
+                            W, "auto_tiling_chk", self.auto_tiling_chk
+                        ),
+                    ],
                 ),
-                nesting_accordion,
-                section("Forcing", self.forcing_box),
-                section(
-                    "Partitioning",
-                    W.HBox(
-                        [
-                            self.npx,
-                            self.npy,
-                            self.n_cores,
-                            self.use_pio_chk,
-                            self.auto_tiling_chk,
-                        ]
-                    ),
+                components.field_row(W, "use_pio_chk", self.use_pio_chk),
+            ),
+            components.subsection(
+                W,
+                "run.cdr",
+                components.field_grid(
+                    W,
+                    [
+                        components.field_row(W, "cdr_dd", self.cdr_dd),
+                        components.field_row(W, "cdr_mode_dd", self.cdr_mode_dd),
+                    ],
                 ),
-                section(
-                    "Run window",
-                    self.start,
-                    self.end,
-                    self.model_ref_date,
-                    self.description,
+                # Per-mode panels on the left, plot column on the right --
+                # the same side-by-side arrangement as the Grid card.
+                W.HBox(
+                    [
+                        W.VBox(
+                            [
+                                self.cdr_simple_box,
+                                self.cdr_yaml_box,
+                                self.cdr_netcdf_box,
+                                self.cdr_upscaled_box,
+                            ]
+                        ),
+                        self.cdr_plot_box,
+                    ]
                 ),
-                section(
-                    "CDR forcing",
-                    self.cdr_dd,
-                    self.cdr_mode_dd,
-                    # Per-mode panels on the left, plot column on the right --
-                    # the same side-by-side arrangement as the Grid section.
-                    W.HBox(
-                        [
-                            W.VBox(
-                                [
-                                    self.cdr_simple_box,
-                                    self.cdr_yaml_box,
-                                    self.cdr_netcdf_box,
-                                    self.cdr_upscaled_box,
-                                ]
-                            ),
-                            self.cdr_plot_box,
-                        ]
-                    ),
-                ),
-                section(
-                    "Advanced settings (model defaults — collapsed; click to edit)",
-                    self.editor_box,
-                ),
-                section(
-                    "Review (resolved ForgeBlueprint)",
-                    self.derived,
-                    self.validation,
-                    self.preview,
-                ),
-                section(
-                    "Save modified specs to catalog",
-                    W.HTML(
-                        "<i>Promote an edited spec to a new named catalog entry. "
-                        "Only marked unmodified if the saved file re-resolves to "
-                        "the identical blueprint.</i>"
-                    ),
-                    W.HBox(
-                        [
-                            self.save_output_name,
-                            self.save_output_btn,
-                            self.save_output_status,
-                        ]
-                    ),
-                    W.HBox(
-                        [
-                            self.save_model_name,
-                            self.save_model_btn,
-                            self.save_model_status,
-                        ]
-                    ),
-                    W.HBox(
-                        [
-                            self.save_domain_name,
-                            self.save_domain_btn,
-                            self.save_domain_status,
-                        ]
-                    ),
-                    W.HBox(
-                        [
-                            self.save_forcing_name,
-                            self.save_forcing_btn,
-                            self.save_forcing_status,
-                        ]
-                    ),
-                    W.HBox(
-                        [self.save_cdr_name, self.save_cdr_btn, self.save_cdr_status]
-                    ),
-                ),
-                section(
-                    "Export",
-                    self.name,
-                    self.download_link,
-                    W.HBox([self.save_path, self.save_btn]),
-                    self.save_status,
-                ),
-                section(
-                    "Run",
-                    self.run_warning,
-                    self.run_later_note,
-                    W.HBox([self.run_btn, self.run_status]),
-                    self._run_log_style,
-                    self.run_output,
-                ),
-                section(
-                    "Workplan (experimental)",
-                    self.workplan_note,
-                    W.HBox([self.workplan_btn]),
-                    self.workplan_status,
-                ),
+            ),
+            num=4,
+            chips_widget=self.card_chips["run"],
+        )
+
+        advanced_card = components.card(
+            W,
+            "advanced",
+            self.editor_box,
+            num=5,
+            chips_widget=self.card_chips["advanced"],
+        )
+
+        self.save_specs_accordion = W.Accordion(
+            children=[
+                W.VBox(
+                    [
+                        W.HTML(
+                            "<i>Promote an edited spec to a new named catalog "
+                            "entry. Only marked unmodified if the saved file "
+                            "re-resolves to the identical blueprint.</i>"
+                        ),
+                        W.HBox(
+                            [
+                                self.save_output_name,
+                                self.save_output_btn,
+                                self.save_output_status,
+                            ]
+                        ),
+                        W.HBox(
+                            [
+                                self.save_model_name,
+                                self.save_model_btn,
+                                self.save_model_status,
+                            ]
+                        ),
+                        W.HBox(
+                            [
+                                self.save_domain_name,
+                                self.save_domain_btn,
+                                self.save_domain_status,
+                            ]
+                        ),
+                        W.HBox(
+                            [
+                                self.save_forcing_name,
+                                self.save_forcing_btn,
+                                self.save_forcing_status,
+                            ]
+                        ),
+                        W.HBox(
+                            [
+                                self.save_cdr_name,
+                                self.save_cdr_btn,
+                                self.save_cdr_status,
+                            ]
+                        ),
+                    ]
+                )
+            ],
+            selected_index=None,
+        )
+        self.save_specs_accordion.set_title(0, section_for("review.save_specs").title)
+
+        review_card = components.card(
+            W,
+            "review",
+            self.validation,
+            self.derived,
+            self.preview,
+            components.field_row(W, "name", self.name),
+            self.download_link_review,
+            components.field_row(
+                W, "save_path", self.save_path, extra=(self.save_btn,)
+            ),
+            self.save_status,
+            self.save_specs_accordion,
+            components.subsection(
+                W,
+                "review.run",
+                self.run_warning,
+                self.run_later_note,
+                W.HBox([self.run_btn, self.run_status]),
+                self._run_log_style,
+                self.run_output,
+            ),
+            components.subsection(
+                W,
+                "review.workplan",
+                self.workplan_note,
+                W.HBox([self.workplan_btn]),
+                self.workplan_status,
+            ),
+            num=6,
+            chips_widget=self.card_chips["review"],
+            required_chip=False,
+        )
+
+        root = W.VBox(
+            [
+                components.style_widget(W),
+                sticky,
+                intro,
+                start_card,
+                model_card,
+                grid_card,
+                forcing_card,
+                run_card,
+                advanced_card,
+                review_card,
             ]
         )
+        root.add_class("forge-app")
+        root.add_class("forge-wizard")
+        self._root = root
+        return root
 
     def display(self):
         from IPython.display import display
@@ -7695,27 +8194,21 @@ class ForgeBlueprintWizardApp:
         self.W = W
         self.inner: ForgeBlueprintWizard | None = None
 
-        self._cat_input = W.Text(
-            value="",
-            placeholder="catalog path(s), ':'-separated top-first, or GitHub URL "
-            "(blank = your catalog over the bundled one)",
-            description="Catalog:",
-            style={"description_width": "110px"},
-            layout=W.Layout(width="520px"),
-        )
-        self._cat_reload_btn = W.Button(description="Reload catalog", icon="refresh")
-        self._cat_status = W.HTML("")
-        self._cat_reload_btn.on_click(self._reload)
+        self._bar = CatalogBar(W, on_reload=self._load)
 
         self._outer = W.VBox([])
         self._load(catalog_root)
+
+    @property
+    def widget(self) -> Any:
+        """The app's root widget: the catalog bar above the wizard's own widget."""
+        return self._outer
 
     def _load(self, catalog_root_value: str | None) -> None:
         import os
 
         from cstar_forge.domain_catalog import (
             DomainCatalog,
-            LayeredCatalog,
             _is_github_catalog_url,
             build_catalog_stack,
             default_catalog_stack,
@@ -7747,56 +8240,12 @@ class ForgeBlueprintWizardApp:
                     cat = build_catalog_stack(entries)
             inner = ForgeBlueprintWizard(catalog=cat)
         except Exception as exc:
-            self._cat_status.value = (
-                f"<span style='color:#b00'>Failed to load catalog "
-                f"{val or '(default)'!r}: {exc}</span>"
-            )
+            self._bar.set_error(val, exc)
             return
 
         self.inner = inner
-        if isinstance(cat, LayeredCatalog):
-            layers = " over ".join(
-                f"{store.label} {store.catalog_root} ({len(store.domain_names)} domains)"
-                if store is cat.top
-                else f"{store.label} ({len(store.domain_names)} domains)"
-                for store in cat.stores
-            )
-            self._cat_status.value = (
-                f"<span style='color:#2a2'>Loaded {layers} -- "
-                f"{len(cat.model_names)} models, "
-                f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>"
-            )
-        else:
-            # Single stores can be read-only (a remote URL or "local"): the
-            # save-path defaults then silently fall back to CWD-relative
-            # filenames, so say so instead of leaving the fallback invisible.
-            ro_note = (
-                " <span style='color:#b60'>(read-only catalog -- saves default "
-                "to the current directory)</span>"
-                if getattr(cat, "read_only", False)
-                else ""
-            )
-            self._cat_status.value = (
-                f"<span style='color:#2a2'>Loaded {cat.catalog_root} -- "
-                f"{len(cat.model_names)} models, "
-                f"{len(cat.roms_marbl_blueprint_names)} blueprints</span>{ro_note}"
-            )
-        self._outer.children = [
-            self.W.VBox(
-                [
-                    self.W.HTML("<h4>Catalog location</h4>"),
-                    self.W.HBox([self._cat_input, self._cat_reload_btn]),
-                    self._cat_status,
-                ],
-                layout=self.W.Layout(
-                    border="1px solid #e0e0e0", padding="8px", margin="4px 0"
-                ),
-            ),
-            inner.widget,
-        ]
-
-    def _reload(self, _btn):
-        self._load(self._cat_input.value)
+        self._bar.set_status_for(cat)
+        self._outer.children = [self._bar.widget, inner.widget]
 
     def display(self):
         from IPython.display import display
