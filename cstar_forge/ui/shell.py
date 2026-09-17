@@ -68,6 +68,7 @@ class AppShell:
 
         self.root = W.VBox([*style_children, header, self.nav, self.stack])
         self.root.add_class("forge-app")
+        self.root.add_class("forge-shell")
 
     def display(self) -> None:
         """Display the shell's root widget."""

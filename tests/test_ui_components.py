@@ -207,3 +207,18 @@ def test_accordion_title_joins_non_empty_parts():
 def test_accordion_title_skips_empty_parts():
     assert C.accordion_title("Title") == "Title"
     assert C.accordion_title("Title", "", "chip") == "Title   ·   chip"
+
+
+def test_open_accordion_panes_are_independent_and_retitleable():
+    """open_accordion: one single-pane Accordion per pane, all may stay open,
+    and set_title/get_title address panes by index like a plain Accordion.
+    """
+    box = C.open_accordion(W, [W.HTML("a"), W.HTML("b")], ["A", "B"])
+    assert "forge-open-acc" in box._dom_classes
+    assert len(box.panes) == 2
+    box.panes[0].selected_index = 0
+    box.panes[1].selected_index = 0
+    assert (box.panes[0].selected_index, box.panes[1].selected_index) == (0, 0)
+    box.set_title(1, "B · summary")
+    assert box.get_title(1) == "B · summary"
+    assert box.get_title(0) == "A"

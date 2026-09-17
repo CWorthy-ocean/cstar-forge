@@ -3,10 +3,10 @@
 Deviation from a strict `labels.py` + `labels/__init__.py` layout: a module and
 a package of the same name cannot coexist in one directory (the package would
 shadow the module), so this package's `__init__.py` carries the code directly
-and `blueprint.yml` sits beside it -- `importlib.resources.files(__package__)`
+and `blueprint-wizard.yaml` sits beside it -- `importlib.resources.files(__package__)`
 then resolves both from the same package.
 
-Each "page" (currently only "blueprint") is a YAML file with two top-level
+Each "page" (currently only "blueprint-wizard") is a YAML file with two top-level
 keys: ``sections`` (mapping a card/subsection id to a title/desc/required) and
 ``fields`` (mapping a widget key to a label/symbol/unit/hint/required). Keys
 use dotted namespaces -- bare wizard attribute names (``model_dd``), grid
@@ -126,18 +126,18 @@ def _parse(data: dict[str, Any]) -> dict[str, Any]:
 
 
 @functools.cache
-def glossary(page: str = "blueprint") -> dict[str, Any]:
-    """Load and cache the parsed glossary for ``page`` (e.g. ``"blueprint"``).
+def glossary(page: str = "blueprint-wizard") -> dict[str, Any]:
+    """Load and cache the parsed glossary for ``page`` (e.g. ``"blueprint-wizard"``).
 
-    ``page`` names a YAML file (``<page>.yml``) bundled next to this module.
+    ``page`` names a YAML file (``<page>.yaml``) bundled next to this module.
     """
-    raw_text = resources.files(__package__).joinpath(f"{page}.yml").read_text()
+    raw_text = resources.files(__package__).joinpath(f"{page}.yaml").read_text()
     data = yaml.safe_load(raw_text) or {}
     return _parse(data)
 
 
 def label_for(
-    key: str, default: str | None = None, *, page: str = "blueprint"
+    key: str, default: str | None = None, *, page: str = "blueprint-wizard"
 ) -> Label:
     """Look up the :class:`Label` for ``key``.
 
@@ -151,7 +151,7 @@ def label_for(
 
 
 def section_for(
-    key: str, default_title: str = "", *, page: str = "blueprint"
+    key: str, default_title: str = "", *, page: str = "blueprint-wizard"
 ) -> Section:
     """Look up the :class:`Section` for ``key``.
 
@@ -164,11 +164,11 @@ def section_for(
     return Section(title=default_title or key)
 
 
-def known_keys(page: str = "blueprint") -> set[str]:
+def known_keys(page: str = "blueprint-wizard") -> set[str]:
     """The set of field keys defined for ``page``."""
     return set(glossary(page)["fields"])
 
 
-def known_sections(page: str = "blueprint") -> set[str]:
+def known_sections(page: str = "blueprint-wizard") -> set[str]:
     """The set of section ids defined for ``page``."""
     return set(glossary(page)["sections"])

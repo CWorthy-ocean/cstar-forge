@@ -220,7 +220,7 @@ cstar_forge = [
     "catalog/**/.gitkeep",
     "ui/assets/*.png",
     "ui/*.ipynb",
-    "ui/labels/*.yml",
+    "ui/labels/*.yaml",
 ]
 
 # Configuration for the ruff linter and formatter.

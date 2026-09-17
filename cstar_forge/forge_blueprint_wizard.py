@@ -1048,6 +1048,358 @@ _ADVANCED_CATEGORIES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+# Output-stream tables for the Advanced-settings panes: each namelist section
+# that models one-or-more "write this stream / how often / how many records
+# per file" triples renders those fields as a small table (see
+# _SettingsEditor._build_section) instead of 3-6 flat rows apiece. Row order
+# here is the table's row order. ``write``/``period``/``records`` are field
+# names on the section's sub-model (None when the section has no single
+# master write flag for that stream, e.g. surf_flux/diagnostics, whose
+# per-variable or per-mode flags render elsewhere); ``extra`` lists any other
+# small toggles for that stream (rendered as a checkbox/dropdown group in the
+# table's last column). A row only forms when every field it names was
+# actually built for the active settings_cls/include/exclude -- otherwise its
+# fields fall through to the plain flat list unchanged (see
+# test_ui_labels.py::test_output_table_fields_exist for schema coverage).
+_OUTPUT_TABLES: dict[str, list[dict[str, Any]]] = {
+    "ocean_vars": [
+        {
+            "label": "Instantaneous history",
+            "write": "wrt_file_his",
+            "period": "output_period_his",
+            "records": "nrpf_his",
+            "extra": [],
+        },
+        {
+            "label": "Averages",
+            "write": "wrt_file_avg",
+            "period": "output_period_avg",
+            "records": "nrpf_avg",
+            "extra": [],
+        },
+        {
+            "label": "Restarts",
+            "write": "wrt_file_rst",
+            "period": "output_period_rst",
+            "records": "nrpf_rst",
+            "extra": ["monthly_restarts"],
+        },
+    ],
+    "bgc": [
+        {
+            "label": "BGC history",
+            "write": "wrt_his",
+            "period": "output_period_his",
+            "records": "nrpf_his",
+            "extra": [],
+        },
+        {
+            "label": "BGC averages",
+            "write": "wrt_avg",
+            "period": "output_period_avg",
+            "records": "nrpf_avg",
+            "extra": [],
+        },
+        {
+            "label": "BGC diagnostics history",
+            "write": "wrt_his_dia",
+            "period": "output_period_his_dia",
+            "records": "nrpf_his_dia",
+            "extra": [],
+        },
+        {
+            "label": "BGC diagnostics averages",
+            "write": "wrt_avg_dia",
+            "period": "output_period_avg_dia",
+            "records": "nrpf_avg_dia",
+            "extra": [],
+        },
+    ],
+    "cdr_output": [
+        {
+            "label": "CDR output",
+            "write": "do_cdr_output",
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": ["do_avg", "monthly_averages"],
+        },
+    ],
+    "surf_flux": [
+        {
+            "label": "Surface fluxes",
+            "write": None,
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": ["sflx_avg"],
+        },
+    ],
+    "diagnostics": [
+        {
+            "label": "Diagnostics",
+            "write": None,
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": ["diag_avg", "diag_uv", "diag_trc"],
+        },
+    ],
+    "frc_output": [
+        {
+            "label": "Forcing fields",
+            "write": "wrt_frc",
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": ["wrt_frc_avg"],
+        },
+    ],
+    "upscale_output": [
+        {
+            "label": "Upscaled output",
+            "write": "do_upscale",
+            "period": "output_period_uscl",
+            "records": "nrpf_uscl",
+            "extra": [],
+        },
+    ],
+    "random_output": [
+        {
+            "label": "Random output",
+            "write": "do_random",
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": [],
+        },
+    ],
+    "zslice": [
+        {
+            "label": "Depth slices",
+            "write": "do_zslice",
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": ["zslice_avg"],
+        },
+    ],
+    "sponge_tune": [
+        {
+            "label": "Sponge fields",
+            "write": "wrt_sponge",
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": [],
+        },
+    ],
+    "particles": [
+        {
+            "label": "Particle output",
+            "write": "floats",
+            "period": "output_period",
+            "records": "nrpf",
+            "extra": [],
+        },
+    ],
+    "extract_data": [
+        {
+            "label": "Child-grid extraction",
+            "write": "do_extract",
+            "period": "extract_period",
+            "records": "nrpf",
+            "extra": [],
+        },
+    ],
+}
+
+# Per-variable write-flag checkbox grids for the Advanced-settings panes: a
+# (title, field_names) pair renders as a small header plus a 4-column grid of
+# checkboxes instead of one flat row per variable. As with _OUTPUT_TABLES, a
+# grid only consumes the fields that were actually built; any missing field is
+# simply omitted (a section can list more fields here than a given
+# settings_cls models).
+_VARIABLE_GRIDS: dict[str, list[tuple[str, list[str]]]] = {
+    "ocean_vars": [
+        (
+            "Variables in history files",
+            [
+                "wrt_z",
+                "wrt_ub",
+                "wrt_vb",
+                "wrt_u",
+                "wrt_v",
+                "wrt_r",
+                "wrt_o",
+                "wrt_w",
+                "wrt_akv",
+                "wrt_akt",
+                "wrt_aks",
+                "wrt_hbls",
+                "wrt_hbbl",
+            ],
+        ),
+        (
+            "Variables in average files",
+            [
+                "wrt_avg_z",
+                "wrt_avg_ub",
+                "wrt_avg_vb",
+                "wrt_avg_u",
+                "wrt_avg_v",
+                "wrt_avg_r",
+                "wrt_avg_o",
+                "wrt_avg_w",
+                "wrt_avg_akv",
+                "wrt_avg_akt",
+                "wrt_avg_aks",
+                "wrt_avg_hbls",
+                "wrt_avg_hbbl",
+            ],
+        ),
+    ],
+    "surf_flux": [
+        ("Fluxes written", ["wrt_smflx", "wrt_stflx", "wrt_rstflx", "wrt_swflx"]),
+    ],
+    "ts_output": [
+        ("Fields written", ["wrt_temp", "wrt_salt", "wrt_temp_dia", "wrt_salt_dia"]),
+    ],
+    "zslice": [
+        ("Fields written", ["wrt_t_zsl", "wrt_u_zsl", "wrt_v_zsl"]),
+    ],
+}
+
+
+def _build_output_table(
+    W, section: str, built: dict[str, Any], consumed: set[str]
+) -> Any | None:
+    """A ``W.GridBox`` (class ``forge-out-table``) collecting ``section``'s
+    eligible :data:`_OUTPUT_TABLES` rows into one Write / Period / Records
+    table, or ``None`` if no row qualifies.
+
+    A row qualifies when its ``period`` field (and its ``write`` flag, when
+    it names one) is present in ``built`` -- i.e. was actually constructed
+    for the active ``settings_cls``/include/exclude (see
+    ``_SettingsEditor._build_section``); a missing ``records``/``extra`` field
+    just leaves that cell empty.
+    Qualifying rows have their keys added to ``consumed`` so the caller's
+    plain flat-list fallback skips them. Widgets are REUSED, never rebuilt:
+    the write/period/records widget's ``description``/``layout.width`` are
+    tweaked in place (registry identity in ``self._widgets`` is untouched).
+    """
+    # A row qualifies when its period field (and its write flag, if it names
+    # one) was built; records/extra cells are optional because some fields
+    # only exist for certain settings tiers (e.g. ocean_vars.nrpf_rst is
+    # pre-0.5.0 only) -- a missing one leaves that cell empty.
+    rows = [
+        row
+        for row in _OUTPUT_TABLES.get(section, [])
+        if row["period"] in built and (row["write"] is None or row["write"] in built)
+    ]
+    if not rows:
+        return None
+
+    header_cells = [
+        W.HTML("&nbsp;"),
+        W.HTML("Write"),
+        W.HTML("Period (s)"),
+        W.HTML("Records / file"),
+        W.HTML("&nbsp;"),
+    ]
+    for cell in header_cells:
+        cell.add_class("forge-out-th")
+    header_cells[1].add_class("forge-out-center")
+    cells: list[Any] = list(header_cells)
+
+    for row in rows:
+        write_key, period_key, records_key, extra_keys = (
+            row["write"],
+            row["period"],
+            row["records"],
+            row["extra"],
+        )
+        symbols = " · ".join(
+            k for k in (write_key, period_key, records_key) if k and k in built
+        )
+        label_cell = W.HTML(f"{row['label']}<span class='sym'>{symbols}</span>")
+        label_cell.add_class("forge-out-label")
+        cells.append(label_cell)
+
+        present_extras = [k for k in extra_keys if k in built]
+        if write_key is not None:
+            write_widget = built[write_key]
+            write_widget.description = ""
+            write_widget.add_class("forge-out-center")
+            cells.append(write_widget)
+            consumed.add(write_key)
+        else:
+            # No single write switch (surface fluxes, diagnostics): the row's
+            # labelled flags ARE the write column, stacked, so nothing lands
+            # in the unlabelled extras cell.
+            write_cell = W.VBox([built[k] for k in present_extras])
+            write_cell.add_class("forge-out-write-stack")
+            cells.append(write_cell)
+            consumed.update(present_extras)
+            present_extras = []
+
+        period_widget = built[period_key]
+        period_widget.description = ""
+        period_widget.layout.width = "120px"
+        cells.append(period_widget)
+        consumed.add(period_key)
+
+        if records_key is not None and records_key in built:
+            records_widget = built[records_key]
+            records_widget.description = ""
+            records_widget.layout.width = "120px"
+            cells.append(records_widget)
+            consumed.add(records_key)
+        else:
+            cells.append(W.HTML("<span class='sym'>—</span>"))
+
+        extras = [built[k] for k in present_extras]
+        consumed.update(present_extras)
+        cells.append(W.HBox(extras))
+
+    table = W.GridBox(
+        cells,
+        layout=W.Layout(
+            grid_template_columns=(
+                "minmax(200px, 1.4fr) minmax(70px, auto) 140px 140px minmax(0, 1.2fr)"
+            ),
+            grid_gap="4px 12px",
+            align_items="center",
+        ),
+    )
+    table.add_class("forge-out-table")
+    return table
+
+
+def _build_variable_grids(
+    W, section: str, built: dict[str, Any], consumed: set[str]
+) -> list[Any]:
+    """A title + ``W.GridBox`` (class ``forge-var-grid``) pair per
+    :data:`_VARIABLE_GRIDS` entry with at least one field present in
+    ``built``, as a flat ``[title, grid, title, grid, ...]`` list.
+
+    Only the fields actually present are rendered (a grid can list more
+    fields than a given ``settings_cls`` models); consumed keys are added to
+    ``consumed`` so the caller's flat-list fallback skips them. Checkboxes
+    keep their existing widget objects and glossary descriptions unchanged.
+    """
+    out: list[Any] = []
+    for title, keys in _VARIABLE_GRIDS.get(section, []):
+        present = [k for k in keys if k in built and k not in consumed]
+        if not present:
+            continue
+        out.append(W.HTML(f"<div class='forge-var-title'>{title}</div>"))
+        grid = W.GridBox(
+            [built[k] for k in present],
+            layout=W.Layout(
+                grid_template_columns="repeat(4, minmax(0, 1fr))",
+                grid_gap="2px 16px",
+            ),
+        )
+        grid.add_class("forge-var-grid")
+        out.append(grid)
+        consumed.update(present)
+    return out
+
+
 # Section names modeled by at least one registered run-time settings tier (e.g.
 # pio_settings, only on RunTimeSettingsV0_6_0) -- used by _SettingsEditor to skip
 # a section that's version-gated behind a namelist schema boundary but absent
@@ -1177,22 +1529,23 @@ class _SettingsEditor:
                     continue
                 self._pane_sections.setdefault(title, []).append(section)
                 sec_meta = section_for(f"settings.{section}", default_title=section)
-                blocks.append(
-                    W.HTML(
-                        "<div class='forge-settings-sec'>"
-                        f"<span class='ttl'>{sec_meta.title}</span> "
-                        f"<span class='sym'>{section}</span></div>"
-                    )
+                sec_header = W.HTML(
+                    "<div class='forge-settings-sec'>"
+                    f"<span class='ttl'>{sec_meta.title}</span> "
+                    f"<span class='sym'>{section}</span></div>"
                 )
+                # Widget-level class: the CSS draws a bold divider above every
+                # section header except the pane's first (:first-child).
+                sec_header.add_class("forge-settings-sec-w")
+                blocks.append(sec_header)
                 blocks.append(box)
                 self._section_fields[section] = fields
             if not blocks:
                 continue
             panes.append(W.VBox(blocks))
             titles.append(title)
-        self.accordion = W.Accordion(children=panes, selected_index=None)
-        for i, title in enumerate(titles):
-            self.accordion.set_title(i, title)
+        # Independently collapsible panes: opening one no longer closes another.
+        self.accordion = components.open_accordion(W, panes, titles)
         if on_edit is not None:
             for (section, field), (widget, _base) in self._widgets.items():
                 widget.observe(
@@ -1361,7 +1714,8 @@ class _SettingsEditor:
             self._widgets[(section, None)] = (w, base)
             return W.VBox([w]), [None]
         excluded = _ACCORDION_EXCLUDED_FIELDS.get(section, frozenset())
-        rows, fields = [], []
+        built: dict[str, Any] = {}
+        fields: list[str] = []
         for key, val in value.items():
             if key in excluded or key in exclude:
                 continue
@@ -1385,9 +1739,25 @@ class _SettingsEditor:
                 W, label, base, val, tooltip=tip, bool_dropdown=bool_dropdown
             )
             self._widgets[(section, key)] = (w, base)
-            rows.append(w)
+            built[key] = w
             fields.append(key)
-        return W.VBox(rows), fields
+
+        # Re-arrange (never re-build) the widgets just created: output-stream
+        # tables and per-variable checkbox grids consume the widgets they
+        # cover (by mutating only their description/layout, never their
+        # identity or registry entry -- see _build_output_table/
+        # _build_variable_grids), and whatever's left over renders as the
+        # plain flat list, exactly as before this pane grouping existed.
+        consumed: set[str] = set()
+        table = _build_output_table(W, section, built, consumed)
+        grids = _build_variable_grids(W, section, built, consumed)
+        rest = [w for key, w in built.items() if key not in consumed]
+        body: list[Any] = []
+        if table is not None:
+            body.append(table)
+        body.extend(grids)
+        body.extend(rest)
+        return W.VBox(body), fields
 
 
 # Dropdown option lists derived from the enums so the wizard and schema stay in sync.
@@ -2823,7 +3193,15 @@ class _ForcingEditor:
         if "type" in keys:
             keys = ["type", *[k for k in keys if k != "type"]]
         w["_remove_btn"].layout.display = ""
-        return self.W.HBox([w["_remove_btn"], *(w[k] for k in keys)])
+        # Wrap onto further lines instead of overflowing horizontally: a fully
+        # populated row (source, path, climatology, constants, ESPER, options…)
+        # is wider than any sensible page.
+        row = self.W.HBox(
+            [w["_remove_btn"], *(w[k] for k in keys)],
+            layout=self.W.Layout(flex_flow="row wrap", align_items="flex-start"),
+        )
+        row.add_class("forge-frow")  # divider + spacing between wrapped rows
+        return row
 
     def _render(self, cat: str):
         W = self.W
@@ -3222,9 +3600,9 @@ class _ForcingEditor:
         ]
         pane_boxes = {"initial_conditions": ic_box, "boundary": boundary_box}
         panes = [pane_boxes.get(cat, self._containers.get(cat)) for cat in cat_order]
-        acc = W.Accordion(children=panes, selected_index=None)
-        for i, cat in enumerate(cat_order):
-            acc.set_title(i, _CATEGORY_TITLES.get(cat, cat))
+        acc = components.open_accordion(
+            W, panes, [_CATEGORY_TITLES.get(cat, cat) for cat in cat_order]
+        )
         # The IC<->boundary bgc sync buttons now live at the bottom of the
         # "ic_bgc"/"boundary_bgc" panes themselves (see `_render`), not here.
         self._acc = acc
@@ -7965,11 +8343,11 @@ class ForgeBlueprintWizard:
                     components.field_row(W, "grid_name", self.grid_name),
                 ],
             ),
+            self.gridfile_accordion,
             self.grid_lock_banner,
             geometry_sub,
             vertical_sub,
             bathymetry_sub,
-            self.gridfile_accordion,
             derived_sub,
             nesting_accordion,
             num=2,

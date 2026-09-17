@@ -1,4 +1,4 @@
-# Label glossary for the wizard's "blueprint" page.
+# Label glossary for the blueprint-wizard page (the wizard UI, not the blueprint schema).
 #
 # See cstar_forge/ui/labels/__init__.py for the schema and namespace rules.
 # `forcing.row.*`, `settings.*`, and `buttons.*` are only lightly seeded here
@@ -1043,3 +1043,57 @@ fields:
   settings.cppdefs.nox_forcing:
     label: NOx deposition forcing
     symbol: nox_forcing
+  settings.ocean_vars.wrt_avg_z:
+    label: Sea surface height (zeta)
+    symbol: wrt_avg_z
+  settings.ocean_vars.wrt_avg_ub:
+    label: Barotropic u (ubar)
+    symbol: wrt_avg_ub
+  settings.ocean_vars.wrt_avg_vb:
+    label: Barotropic v (vbar)
+    symbol: wrt_avg_vb
+  settings.ocean_vars.wrt_avg_u:
+    label: Velocity u
+    symbol: wrt_avg_u
+  settings.ocean_vars.wrt_avg_v:
+    label: Velocity v
+    symbol: wrt_avg_v
+  settings.ocean_vars.wrt_avg_r:
+    label: Density (rho)
+    symbol: wrt_avg_r
+  settings.ocean_vars.wrt_avg_o:
+    label: Vertical velocity (omega)
+    symbol: wrt_avg_o
+  settings.ocean_vars.wrt_avg_w:
+    label: Vertical velocity (w)
+    symbol: wrt_avg_w
+  settings.ocean_vars.wrt_avg_akv:
+    label: Vertical viscosity (Akv)
+    symbol: wrt_avg_akv
+  settings.ocean_vars.wrt_avg_akt:
+    label: Vertical diffusivity (Akt)
+    symbol: wrt_avg_akt
+  settings.ocean_vars.wrt_avg_aks:
+    label: Salinity diffusivity (Aks)
+    symbol: wrt_avg_aks
+  settings.ocean_vars.wrt_avg_hbls:
+    label: Surface boundary-layer depth (hbls)
+    symbol: wrt_avg_hbls
+  settings.ocean_vars.wrt_avg_hbbl:
+    label: Bottom boundary-layer depth (hbbl)
+    symbol: wrt_avg_hbbl
+  settings.zslice.wrt_t_zsl:
+    label: Temperature
+    symbol: wrt_t_zsl
+  settings.zslice.wrt_u_zsl:
+    label: Velocity u
+    symbol: wrt_u_zsl
+  settings.zslice.wrt_v_zsl:
+    label: Velocity v
+    symbol: wrt_v_zsl
+  settings.zslice.nt_z:
+    label: Number of tracers to slice
+    symbol: nt_z
+  settings.zslice.trc2zsc:
+    label: Tracer indices to slice
+    symbol: trc2zsc

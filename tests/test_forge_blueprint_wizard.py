@@ -26,10 +26,13 @@ from cstar_forge.forge.namelist_model import (
     RunTimeSettingsV0_7_0,
 )
 from cstar_forge.forge_blueprint_wizard import (
+    _ACCORDION_EXCLUDED_FIELDS,
     _BOUNDARY_NONE,
+    _OUTPUT_TABLES,
     ForgeBlueprintWizard,
     _drain_stream_buffer,
     _ForcingEditor,
+    _section_submodel,
     _SettingsEditor,
 )
 
@@ -2437,6 +2440,93 @@ def test_forcing_modified_reflects_deviation_from_catalog_pick():
     assert wiz.config.composition.forcing.modified is False
 
 
+# ---------------------------------------------------------------------------
+# Advanced settings: output-stream tables / per-variable checkbox grids
+# (_SettingsEditor._build_section grouping -- see _OUTPUT_TABLES/_VARIABLE_GRIDS)
+# ---------------------------------------------------------------------------
+
+
+def _iter_widget_tree(widget):
+    """Depth-first walk of a widget and its ``.children`` (Box/GridBox/HBox/VBox)."""
+    yield widget
+    for child in getattr(widget, "children", ()):
+        yield from _iter_widget_tree(child)
+
+
+def _is_descendant_of_class(root, target, css_class: str) -> bool:
+    """True if ``target`` sits under some node in ``root``'s tree carrying
+    ``css_class`` (as added via ``add_class``).
+    """
+    for node in _iter_widget_tree(root):
+        if css_class in getattr(node, "_dom_classes", ()) and any(
+            t is target for t in _iter_widget_tree(node)
+        ):
+            return True
+    return False
+
+
+def test_ocean_vars_output_table_widgets_have_blank_description_and_live_in_table():
+    """The ocean_vars Write/Period/Records-per-file widgets for each output
+    stream row (see ``_OUTPUT_TABLES["ocean_vars"]``) render with a blank
+    ``description`` (the table's own header carries the column labels) and
+    sit inside a ``W.GridBox`` carrying the ``forge-out-table`` class.
+    """
+    wiz = ForgeBlueprintWizard()
+    editor = wiz.editor
+    row = next(
+        r for r in _OUTPUT_TABLES["ocean_vars"] if r["label"] == "Instantaneous history"
+    )
+    for key in (row["write"], row["period"], row["records"]):
+        widget, _base = editor._widgets[("ocean_vars", key)]
+        assert widget.description == ""
+        assert _is_descendant_of_class(editor.accordion, widget, "forge-out-table")
+
+
+def test_ocean_vars_variable_checkbox_lives_in_grid_with_glossary_description():
+    """``wrt_z`` (one of ``_VARIABLE_GRIDS["ocean_vars"]``'s history-file
+    variables) renders inside a ``forge-var-grid`` GridBox and keeps its
+    normal glossary-derived (non-blank) checkbox description -- only the
+    output-stream table's write/period/records widgets get blanked.
+    """
+    wiz = ForgeBlueprintWizard()
+    editor = wiz.editor
+    widget, _base = editor._widgets[("ocean_vars", "wrt_z")]
+    assert widget.description != ""
+    assert _is_descendant_of_class(editor.accordion, widget, "forge-var-grid")
+
+
+def test_ocean_vars_section_fields_unchanged_by_table_grid_layout():
+    """The table/grid layout is display-only: ``_section_fields["ocean_vars"]``
+    (which drives the pane-title "N settings" count) must still list every
+    field ``_build_section`` would have built as a plain flat list -- i.e.
+    every ``ocean_vars`` field on the active settings_cls's sub-model, minus
+    ``_ACCORDION_EXCLUDED_FIELDS``, in the same order.
+    """
+    wiz = ForgeBlueprintWizard()
+    editor = wiz.editor
+    sub = _section_submodel("ocean_vars", wiz._editor_settings_cls)
+    excluded = _ACCORDION_EXCLUDED_FIELDS.get("ocean_vars", frozenset())
+    expected = [
+        key
+        for key in wiz.config.model_settings["ocean_vars"]
+        if key not in excluded and key in sub.model_fields
+    ]
+    assert expected  # sanity: the section isn't accidentally empty
+    assert editor._section_fields["ocean_vars"] == expected
+
+
+def test_ocean_vars_table_widget_read_reflects_edit():
+    """A value set directly on a table-rendered widget (same object as in the
+    ``_widgets`` registry -- the table only rearranges it) must read back via
+    ``editor.read()`` exactly like any other advanced-settings field.
+    """
+    wiz = ForgeBlueprintWizard()
+    editor = wiz.editor
+    widget, _base = editor._widgets[("ocean_vars", "nrpf_his")]
+    widget.value = 77
+    assert editor.read("ocean_vars", "nrpf_his") == 77
+
+
 def test_model_and_output_modified_from_accordion_overrides():
     """Model/output share the accordion overrides layer; modified is derived per-
     spec by whether a deviating override key belongs to OUTPUT_SECTIONS/
@@ -4087,7 +4177,8 @@ def test_ic_pane_first_field_row_is_ic_name(editor):
     path, validate, in that order -- see ``_ForcingEditor.widget``).
     """
     acc = editor.widget
-    ic_box = acc.children[0]  # cat_order[0] == "initial_conditions"
+    # `open_accordion` returns a VBox of single-pane Accordions (`.panes`).
+    ic_box = acc.panes[0].children[0]  # cat_order[0] == "initial_conditions"
     ic_fields = ic_box.children[0]
     first_row = ic_fields.children[0]
     assert first_row.forge_key == "ic.ic_name"
@@ -4099,7 +4190,7 @@ def test_ic_layout_display_none_hides_its_row(editor):
     does for a non-GLORYS source) hides the whole row, not just the dropdown.
     """
     acc = editor.widget
-    ic_box = acc.children[0]
+    ic_box = acc.panes[0].children[0]
     ic_fields = ic_box.children[0]
     layout_row = next(r for r in ic_fields.children if r.forge_key == "ic.ic_layout")
     assert layout_row.layout.display == _display(editor.ic_layout)

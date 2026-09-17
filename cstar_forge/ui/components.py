@@ -24,7 +24,9 @@ from cstar_forge.ui.labels import label_for, section_for
 WIZARD_CSS = f"""
 /* page background only in Voila (body[data-voila]); JupyterLab keeps its theme */
 body[data-voila] {{ background: {branding.GREY}; }}
-body[data-voila] .forge-app {{ max-width: 1180px; margin: 0 auto; padding: 0 24px; }}
+/* the page column: shell root only -- the wizard root also carries .forge-app
+   (so the notebook path is styled) and must not get its own max-width/padding */
+body[data-voila] .forge-shell {{ max-width: 1180px; margin: 0 auto; padding: 0 24px; }}
 
 .forge-app, .forge-app .widget-label, .forge-app .widget-html-content,
 .forge-app .jupyter-button, .forge-app input, .forge-app select,
@@ -172,16 +174,16 @@ body[data-voila] .forge-app {{ max-width: 1180px; margin: 0 auto; padding: 0 24p
 }}
 
 /* sticky bar (sticks in Voila's page scroll; harmless no-op inside a Lab cell).
-   `margin: 0 -24px; padding: 8px 24px` cancels the `.forge-app` side padding
-   so the bar's background/hairline span the full column width. */
+   No negative margins here: ipywidgets boxes scroll their overflow, so a bar
+   wider than the content column shows up as a horizontal scrollbar. */
 .forge-app .forge-sticky {{
     position: sticky;
     top: 0;
     z-index: 5;
     background: #fff;
     border-bottom: 1px solid {branding.LINE};
-    margin: 0 -24px;
-    padding: 8px 24px;
+    margin: 0;
+    padding: 8px 0;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -304,6 +306,55 @@ body[data-voila] .forge-app {{ max-width: 1180px; margin: 0 auto; padding: 0 24p
     font-weight: 600;
     box-shadow: none;
 }}
+
+/* Advanced-settings output-stream table (grouped write/period/records rows).
+   Header cells share one fixed height so their underline forms a single
+   guideline (the empty corner cells carry &nbsp; and the same rule). */
+.forge-app .forge-out-table {{ margin: 6px 0 12px; }}
+.forge-app .forge-out-th {{ align-self: end; }}
+.forge-out-th .widget-html-content {{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: {branding.INK_2};
+    height: 22px;
+    line-height: 18px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid {branding.LINE};
+    box-sizing: border-box;
+}}
+.forge-out-center .widget-html-content {{ text-align: center; }}
+.forge-app .forge-out-write-stack .widget-checkbox {{ width: auto; margin: 0; }}
+.forge-app .forge-out-table .widget-checkbox.forge-out-center {{
+    width: auto;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+}}
+/* bold divider between namelist sections inside one Advanced pane; the pane's
+   first header has none (widget-level class set in _SettingsEditor) */
+.forge-app .forge-settings-sec-w {{
+    border-top: 2px solid {branding.BLUE};
+    margin-top: 18px;
+    padding-top: 12px;
+}}
+.forge-app .forge-settings-sec-w:first-child {{ border-top: 0; margin-top: 0; padding-top: 0; }}
+/* wrapped forcing rows: breathing room and a hairline between rows */
+.forge-app .forge-frow {{
+    padding: 8px 0 10px;
+    row-gap: 6px;
+    border-bottom: 1px solid {branding.LINE_2};
+}}
+.forge-app .forge-frow:last-of-type {{ border-bottom: 0; }}
+.forge-out-label .widget-html-content {{ font-size: 13px; }}
+.forge-out-label .sym {{
+    display: block;
+    font-family: Menlo, Consolas, monospace;
+    font-size: 11px;
+    color: {branding.INK_3};
+}}
+.forge-var-title {{ font-size: 12.5px; font-weight: 600; margin: 10px 0 4px; }}
+.forge-app .forge-var-grid .widget-checkbox {{ width: auto; }}
 """
 
 
@@ -350,7 +401,7 @@ def field_row(
     width: str | None = None,
     extra: tuple = (),
     label_width: str = "200px",
-    page: str = "blueprint",
+    page: str = "blueprint-wizard",
 ) -> Any:
     """A labeled field row: a two-column ``W.GridBox`` (label | widget + hint).
 
@@ -423,7 +474,7 @@ def subsection(
     default_title: str = "",
     symbols: str | None = None,
     trailing: Any = None,
-    page: str = "blueprint",
+    page: str = "blueprint-wizard",
 ) -> Any:
     """A subsection header (``forge-sub``, from :func:`~cstar_forge.ui.labels.section_for`) plus ``children``."""
     section = section_for(key, default_title, page=page)
@@ -447,7 +498,7 @@ def card(
     default_title: str = "",
     anchor: bool = True,
     required_chip: bool = True,
-    page: str = "blueprint",
+    page: str = "blueprint-wizard",
 ) -> Any:
     """A section card (``forge-card``): numbered header (title/desc/Required-or-Optional chip) plus a body.
 
@@ -506,3 +557,25 @@ def accordion_title(title: str, summary: str = "", chip_text: str = "") -> str:
     """Join ``title``/``summary``/``chip_text`` with " · " separators, skipping empties."""
     parts = [p for p in (title, summary, chip_text) if p]
     return "   ·   ".join(parts)
+
+
+def open_accordion(W: Any, panes: list, titles: list[str]) -> Any:
+    """A stack of independently collapsible panes (class ``forge-open-acc``).
+
+    ``W.Accordion`` allows one open pane at a time, so opening a second pane
+    collapses the first and the page jumps. This returns a ``W.VBox`` of
+    single-pane ``W.Accordion`` widgets instead -- any number may stay open --
+    while keeping the ``set_title(i, title)`` / ``get_title(i)`` surface callers
+    use to refresh titles. ``box.panes`` lists the inner accordions.
+    """
+    inner = []
+    for pane, title in zip(panes, titles):
+        acc = W.Accordion(children=[pane], selected_index=None)
+        acc.set_title(0, title)
+        inner.append(acc)
+    box = W.VBox(inner)
+    box.add_class("forge-open-acc")
+    box.panes = inner
+    box.set_title = lambda i, title: inner[i].set_title(0, title)
+    box.get_title = lambda i: inner[i].get_title(0)
+    return box
