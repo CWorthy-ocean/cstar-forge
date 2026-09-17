@@ -4,6 +4,8 @@
 
 ### Breaking Changes
 
+* `GLOFAS_FILENAME` (the single source of truth in `source_registry.py`) now expects `glofas_v4_rivers_daily_w_rivr2o.nc` at `self.source_data_dir / "GLOFAS" /`, not `glofas_v4_rivers_daily.nc`. Any host with only the old plain file staged will now fail `_prepare_glofas`'s existence check until the enriched file is staged under the new name. ([#172](https://github.com/CWorthy-ocean/cstar-forge/pull/172))
+
 ### New Features
 
 ### Bug Fixes
@@ -11,8 +13,13 @@
 ### Improvements
 
 * New forcing specs show working solutions for tracer variable combinations among the multiple BGC sources. ([#171](https://github.com/CWorthy-ocean/cstar-forge/pull/171))
+* The specific roms tag for the bundled roms 0.6 spec is now 0.6.4 (was 0.6.1) ([#173](https://github.com/CWorthy-ocean/cstar-forge/pull/173))
 
 ### Miscellaneous
+
+* `tests/test_source_data.py::TestPrepareGlofas::test_verified_when_file_present` now imports and asserts against the `GLOFAS_FILENAME` constant instead of hardcoding the old filename literal, so it can't silently drift from the registry again. ([#172](https://github.com/CWorthy-ocean/cstar-forge/pull/172))
+* Updated the one stale filename reference in `docs/source-data-developer.md`. ([#172](https://github.com/CWorthy-ocean/cstar-forge/pull/172))
+* Known follow-up, not addressed here: Forge's `_prepare_rivr2o` handler still unconditionally requires a separately-staged directory of RIVR2O yearly `.nc` files whenever `bgc_source: RIVR2O` has no explicit `path` — even when paired with GLOFAS, where `total_discharge` mode never reads them. Not a correctness bug (just an unnecessary staging step), but relaxing it would require threading the paired discharge-source name through the shared `_resolve_source_block`/`_build_input_args` path-resolution logic in `input_data.py`, which has no existing test coverage for this path and touches machinery shared by every dataset type Forge stages. Left for a separate PR. ([#172](https://github.com/CWorthy-ocean/cstar-forge/pull/172))
 
 ## 0.8.0
 
