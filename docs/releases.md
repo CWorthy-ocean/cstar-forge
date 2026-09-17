@@ -1,5 +1,19 @@
 # Release notes
 
+## Unreleased
+
+### Breaking Changes
+
+### New Features
+
+### Bug Fixes
+
+### Improvements
+
+* New forcing specs show working solutions for tracer variable combinations among the multiple BGC sources. ([#171](https://github.com/CWorthy-ocean/cstar-forge/pull/171))
+
+### Miscellaneous
+
 ## 0.8.0
 
 ### Breaking Changes
