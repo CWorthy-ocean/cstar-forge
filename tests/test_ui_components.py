@@ -222,3 +222,8 @@ def test_open_accordion_panes_are_independent_and_retitleable():
     box.set_title(1, "B · summary")
     assert box.get_title(1) == "B · summary"
     assert box.get_title(0) == "A"
+
+
+def test_open_accordion_rejects_mismatched_panes_and_titles():
+    with pytest.raises(ValueError, match="2 panes but 1 titles"):
+        C.open_accordion(W, [W.HTML("a"), W.HTML("b")], ["A"])

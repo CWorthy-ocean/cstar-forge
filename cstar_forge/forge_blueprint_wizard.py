@@ -110,7 +110,7 @@ HELP_TEXT: dict[str, str] = {
     (
         "run",
         "dt",
-    ): "Barotropic time step in seconds. Leave blank to compute from the CFL criterion "
+    ): "Baroclinic time step in seconds. Leave blank to compute from the CFL criterion "
     "(click 'Compute dt (CFL)' — requires roms_tools).",
     ("run", "description"): "Human-readable description of this blueprint.",
     ("export", "name"): "Canonical blueprint name. Drives the save filename, "
@@ -1264,6 +1264,21 @@ _VARIABLE_GRIDS: dict[str, list[tuple[str, list[str]]]] = {
 }
 
 
+def _as_table_cell(widget, *, width: str | None = None, css_class: str | None = None):
+    """Prepare an already-built settings widget for a table cell.
+
+    Clears its own ``description`` (the row label column names the stream) and
+    optionally pins a width / adds a CSS class -- one place for the tweak every
+    Write/Period/Records cell needs, so the columns cannot drift apart.
+    """
+    widget.description = ""
+    if width is not None:
+        widget.layout.width = width
+    if css_class is not None:
+        widget.add_class(css_class)
+    return widget
+
+
 def _build_output_table(
     W, section: str, built: dict[str, Any], consumed: set[str]
 ) -> Any | None:
@@ -1321,9 +1336,9 @@ def _build_output_table(
 
         present_extras = [k for k in extra_keys if k in built]
         if write_key is not None:
-            write_widget = built[write_key]
-            write_widget.description = ""
-            write_widget.add_class("forge-out-center")
+            write_widget = _as_table_cell(
+                built[write_key], css_class="forge-out-center"
+            )
             cells.append(write_widget)
             consumed.add(write_key)
         else:
@@ -1336,17 +1351,11 @@ def _build_output_table(
             consumed.update(present_extras)
             present_extras = []
 
-        period_widget = built[period_key]
-        period_widget.description = ""
-        period_widget.layout.width = "120px"
-        cells.append(period_widget)
+        cells.append(_as_table_cell(built[period_key], width="120px"))
         consumed.add(period_key)
 
         if records_key is not None and records_key in built:
-            records_widget = built[records_key]
-            records_widget.description = ""
-            records_widget.layout.width = "120px"
-            cells.append(records_widget)
+            cells.append(_as_table_cell(built[records_key], width="120px"))
             consumed.add(records_key)
         else:
             cells.append(W.HTML("<span class='sym'>—</span>"))

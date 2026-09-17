@@ -568,8 +568,10 @@ def open_accordion(W: Any, panes: list, titles: list[str]) -> Any:
     while keeping the ``set_title(i, title)`` / ``get_title(i)`` surface callers
     use to refresh titles. ``box.panes`` lists the inner accordions.
     """
+    if len(panes) != len(titles):
+        raise ValueError(f"open_accordion: {len(panes)} panes but {len(titles)} titles")
     inner = []
-    for pane, title in zip(panes, titles):
+    for pane, title in zip(panes, titles, strict=True):
         acc = W.Accordion(children=[pane], selected_index=None)
         acc.set_title(0, title)
         inner.append(acc)
