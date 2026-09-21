@@ -35,78 +35,56 @@ from typing import Any, Literal
 
 import yaml
 
-# Dual import: package context (production) or standalone file (lightweight / UI / test).
-try:  # pragma: no cover - exercised both ways
-    from cstar_forge.forge.forge_blueprint import (
-        BgcSourceItem,
-        BoundaryForcing,
-        CdrSpec,
-        Code,
-        CodeRepo,
-        Composition,
-        Domain,
-        Forcing,
-        ForgeBlueprint,
-        InitialConditions,
-        OpenBoundaries,
-        Partitioning,
-        Provenance,
-        ResolvedDataset,
-        RiverForcingItem,
-        RunWindow,
-        SourceSpec,
-        SpecRef,
-        SurfaceForcingItem,
-        TemplateRepo,
-        TidalForcingItem,
-        TopographySource,
-        UserProvidedFile,
-        infer_cdr_mode,
-        sanitize_name,
-        vert_kwargs_from_grid_kwargs,
-    )
-except ImportError:  # pragma: no cover
-    from forge_blueprint import (  # type: ignore
-        BgcSourceItem,
-        BoundaryForcing,
-        CdrSpec,
-        Code,
-        CodeRepo,
-        Composition,
-        Domain,
-        Forcing,
-        ForgeBlueprint,
-        InitialConditions,
-        OpenBoundaries,
-        Partitioning,
-        Provenance,
-        ResolvedDataset,
-        RiverForcingItem,
-        RunWindow,
-        SourceSpec,
-        SpecRef,
-        SurfaceForcingItem,
-        TemplateRepo,
-        TidalForcingItem,
-        TopographySource,
-        infer_cdr_mode,
-        sanitize_name,
-    )
+from cstar_forge.forge.forge_blueprint import (
+    BgcSourceItem,
+    BoundaryForcing,
+    CdrSpec,
+    Code,
+    CodeRepo,
+    Composition,
+    Domain,
+    Forcing,
+    ForgeBlueprint,
+    InitialConditions,
+    OpenBoundaries,
+    Partitioning,
+    Provenance,
+    ResolvedDataset,
+    RiverForcingItem,
+    RunWindow,
+    SourceSpec,
+    SpecRef,
+    SurfaceForcingItem,
+    TemplateRepo,
+    TidalForcingItem,
+    TopographySource,
+    UserProvidedFile,
+    infer_cdr_mode,
+    sanitize_name,
+    vert_kwargs_from_grid_kwargs,
+)
+
+# Canonical CDR-output diagnostics helper lives in namelist_model (forge side) so
+# the executor can share it.
+from cstar_forge.forge.namelist_model import (
+    RunTimeSettings,
+    canonical_output_sections_for_precheck,
+    check_extract_divides_rst,
+    check_output_streams_divide_rst,
+    check_rst_period_divisible,
+    cppdefs_for_precheck,
+    ensure_cdr_output_marbl_diagnostics,
+    run_time_settings_for_ref,
+    version_gated_section_names,
+)
 
 # Source-name resolution (alias map, metadata, streamable) — single source of truth,
-# dependency-free. Dual import to keep the resolver standalone-importable.
-try:  # pragma: no cover - exercised both ways
-    from cstar_forge.forge.source_registry import (
-        DERIVED_BGC_SOURCES,
-        resolve_dataset_key,
-        resolve_source,
-    )
-except ImportError:  # pragma: no cover
-    from source_registry import (  # type: ignore
-        DERIVED_BGC_SOURCES,
-        resolve_dataset_key,
-        resolve_source,
-    )
+# dependency-free.
+from cstar_forge.forge.source_registry import (
+    DERIVED_BGC_SOURCES,
+    resolve_dataset_key,
+    resolve_source,
+)
 
 # Default repo serving the render templates (now at the forge repo root `templates/`,
 # decoupled from the ModelSpec). A ModelSpec pins the serving commit via
@@ -114,26 +92,6 @@ except ImportError:  # pragma: no cover
 DEFAULT_TEMPLATE_REPO = CodeRepo(
     location="https://github.com/CWorthy-ocean/cstar-forge.git", branch="main"
 )
-
-# Canonical CDR-output diagnostics helper lives in namelist_model (forge side) so
-# the executor can share it. Dual import keeps the resolver standalone-importable.
-try:  # pragma: no cover - exercised both ways
-    from cstar_forge.forge.namelist_model import (
-        RunTimeSettings,
-        canonical_output_sections_for_precheck,
-        check_extract_divides_rst,
-        check_output_streams_divide_rst,
-        check_rst_period_divisible,
-        cppdefs_for_precheck,
-        ensure_cdr_output_marbl_diagnostics,
-        run_time_settings_for_ref,
-        version_gated_section_names,
-    )
-except ImportError:  # pragma: no cover
-    from namelist_model import (  # type: ignore
-        check_rst_period_divisible,
-        ensure_cdr_output_marbl_diagnostics,
-    )
 
 
 # Source-name resolution is single-sourced in ``source_registry`` (a lightweight,
