@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.8.2
 
 ### Breaking Changes
 
@@ -15,10 +15,6 @@
 ### Bug Fixes
 
 * Fix a bug where the Voila app failed to render due to a conflicting JupyterLab extension ([#176](https://github.com/CWorthy-ocean/cstar-forge/pull/176))
-
-### Improvements
-
-### Miscellaneous
 
 ## 0.8.1
 
