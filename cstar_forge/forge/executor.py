@@ -54,7 +54,7 @@ from cstar_forge.forge.namelist_model import (
 )
 from cstar_forge.forge.settings import render_roms_settings, write_roms_namelist
 from cstar_forge.forge.user_files import verify_user_file
-from cstar_forge.utils import mem_log
+from cstar_forge.forge.util import mem_log
 
 log = logging.getLogger(__name__)
 

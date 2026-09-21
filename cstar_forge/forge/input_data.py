@@ -34,8 +34,8 @@ from cstar_forge.forge import source_data
 from cstar_forge.forge.forge_blueprint import OpenBoundaries, UserProvidedFile
 from cstar_forge.forge.source_registry import ROMS_TOOLS_SOURCE_NAME
 from cstar_forge.forge.user_files import stage_user_netcdf, verify_user_file
+from cstar_forge.forge.util import mem_log
 from cstar_forge.forge.xarray_lockfix import apply_combinedlock_leak_fix
-from cstar_forge.utils import mem_log
 
 log = logging.getLogger(__name__)
 
