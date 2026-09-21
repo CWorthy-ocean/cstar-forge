@@ -23,7 +23,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # without spinning. Respect a pre-set value; batch ROMS runs launched outside
 # this script keep their own default.
 export FI_PROVIDER="${FI_PROVIDER:-tcp}"
+# Hide notebook 7.x's JupyterLab extension from Voila's frontend. Voila 0.5.12
+# bundles JupyterLab core 4.2.5, but @jupyter-notebook/lab-extension as shipped
+# by notebook >=7.3 is built against JupyterLab 4.4+/4.6 APIs. Module federation
+# then fails to construct it ("The getter for the shared module is not a
+# function"), which kills the whole frontend bundle before it attaches the
+# kernel websocket -- the symptom is a blank page plus a stream of
+# "Kernel does not exist" 404s in this terminal. The extension is useless under
+# Voila anyway. Revisit once Voila ships a JupyterLab 4.4+ frontend.
 exec voila "${HERE}/cstar_forge/ui/_voila_app.ipynb" \
   --port=8866 \
   --Voila.tornado_settings='{"allow_origin": "*"}' \
+  --VoilaConfiguration.extension_denylist='["@jupyter-notebook/lab-extension"]' \
   "$@"
