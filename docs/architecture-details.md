@@ -79,7 +79,7 @@ cstar-forge/
 │   │   ├── glorys_subchunk.py  # Just-in-time kerchunk subchunking for GLORYS
 │   │   ├── settings.py         # Template rendering
 │   │   └── namelist_model.py   # RunTimeSettings + build_namelist
-│   └── catalog/                # Bundled spec catalog (+ BlueprintCatalog API)
+│   └── catalog/                # Bundled spec catalog
 │       ├── ModelSpec/{model}/model.yaml    # Code repos, templates, settings, defaults
 │       ├── DomainSpec/{grid}/Domain.yaml   # Grid definitions
 │       ├── ForcingSpec/{name}/Forcing.yaml # Forcing source configurations
