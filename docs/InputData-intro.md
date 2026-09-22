@@ -1,7 +1,7 @@
 # Input Data Generation Overview
 
 > **This subsystem is driven by the forge application** (`cstar forge run <forge_blueprint.yaml>`, or equivalently
-> `python -m cstar_forge.run`), which loads a `ForgeBlueprint` and calls `ForgeExecutor.generate_inputs()`
+> `cstar forge run`), which loads a `ForgeBlueprint` and calls `ForgeExecutor.generate_inputs()`
 > (`cstar_forge/forge/executor.py`). That method constructs a `RomsMarblInputData`
 > instance and calls `generate_all()` on it. Constructing `RomsMarblInputData` directly
 > (as shown later in this doc) is for developers debugging or extending input generation

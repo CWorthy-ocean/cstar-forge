@@ -24,7 +24,7 @@ reference and hand its path through the existing ``source["path"]`` plumbing
 
 This remains an *interim, experimental* module (not something roms-tools documents or
 guarantees) rather than a permanent feature, pending review from the roms-tools
-maintainers. It is nonetheless *on by default* (``python -m cstar_forge.run``;
+maintainers. It is nonetheless *on by default* (``cstar forge run``;
 disable with ``--no-subchunk``), so its dependencies are ordinary runtime
 dependencies of forge, not optional extras.
 

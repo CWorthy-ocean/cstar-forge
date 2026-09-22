@@ -7922,15 +7922,15 @@ class ForgeBlueprintWizard:
         Uses the ``cstar`` console script installed alongside the running
         interpreter, so the subprocess stays in this environment rather than
         taking whatever is first on PATH. Where that script is absent (C-Star's
-        CLI not installed), falls back to ``python -m cstar_forge.run``, which
-        drives the same executor without needing C-Star's CLI at all.
+        CLI not installed), falls back to ``python -m cstar_forge.cli run``,
+        forge's own typer entry onto the same executor.
         """
         import sys
 
         cstar_exe = Path(sys.executable).with_name("cstar")
         if cstar_exe.exists():
             return [str(cstar_exe), "blueprint", "run", blueprint_path]
-        return [sys.executable, "-m", "cstar_forge.run", blueprint_path]
+        return [sys.executable, "-m", "cstar_forge.cli", "run", blueprint_path]
 
     def _on_run(self, _):
         if not self._ensure_boundaries_derived():

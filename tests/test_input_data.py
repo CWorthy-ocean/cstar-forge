@@ -27,9 +27,7 @@ import roms_tools as rt
 import xarray as xr
 from cstar.orchestration.models import Resource
 
-from cstar_forge import config
 from cstar_forge import models as forge_models
-from cstar_forge.config import DataPaths
 from cstar_forge.forge import source_datasets
 from cstar_forge.forge.input_data import (
     CDR_FORCING_NETCDF_STEM,
@@ -67,20 +65,6 @@ def _patch_xarray_open_dataset_for_input_data(mock_ds):
         patch("xarray.open_dataset", side_effect=_fake_open),
     ):
         yield
-
-
-def _create_mock_paths(tmp_path):
-    """Helper to create a mock DataPaths with tmp_path as input_data."""
-    return DataPaths(
-        here=config.paths.here,
-        source_data=config.paths.source_data,
-        input_data=tmp_path,
-        scratch=config.paths.scratch,
-        catalog=config.paths.catalog,
-        blueprints=config.paths.blueprints,
-        models_yaml=config.paths.models_yaml,
-        builds_yaml=config.paths.builds_yaml,
-    )
 
 
 @pytest.fixture
@@ -3552,6 +3536,7 @@ class TestGlorysSubchunkIntegration:
         mock_sd.streamable_for_source = MagicMock(return_value=False)
         mock_sd.derived_for_source = MagicMock(return_value=False)
         mock_sd.source_data_dir = tmp_path / "cache"
+        mock_sd.cache_root = tmp_path / "cache"
         mock_sd.start_time = datetime(2020, 1, 1)
         mock_sd.end_time = datetime(2020, 1, 3)
 
@@ -3645,25 +3630,22 @@ class TestSubchunkDefaults:
     def test_run_cli_default_and_opt_out(self):
         import argparse
 
-        # Reach into main()'s parser indirectly: parse just the flag pair the
-        # way argparse.BooleanOptionalAction wires it.
+        # Reach into run_blueprint's parser indirectly: parse just the flag pair
+        # the way argparse.BooleanOptionalAction wires it.
         parser = argparse.ArgumentParser()
         parser.add_argument(
             "--subchunk", action=argparse.BooleanOptionalAction, default=True
         )
         assert parser.parse_args([]).subchunk is True
         assert parser.parse_args(["--no-subchunk"]).subchunk is False
-        # And the real module no longer exposes the dropped experiment flag.
-        import subprocess
-        import sys
+        # And the real CLI no longer exposes the dropped experiment flag.
+        from typer.testing import CliRunner
 
-        helptext = subprocess.run(
-            [sys.executable, "-m", "cstar_forge.run", "--help"],
-            capture_output=True,
-            text=True,
-        ).stdout
-        assert "--no-subchunk" in helptext
-        assert "--stage-ic-sources" not in helptext
+        from cstar_forge import cli
+
+        result = CliRunner().invoke(cli.app, ["run", "--help"])
+        assert "--no-subchunk" in result.output
+        assert "--stage-ic-sources" not in result.output
 
 
 def _make_input_data(

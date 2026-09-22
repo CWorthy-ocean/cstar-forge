@@ -72,7 +72,7 @@ dependencies = [
 # Registers the `cstar forge ...` subcommand group with C-Star's CLI
 # (discovered via the `cstar.cli` entry-point group; needs a C-Star release
 # that includes the discovery hook). Absent cstar, `python -m cstar_forge.cli`
-# and `python -m cstar_forge.run` remain the standalone entrypoints.
+# remains the standalone entrypoint.
 [project.entry-points."cstar.cli"]
 forge = "cstar_forge.cli:app"
 

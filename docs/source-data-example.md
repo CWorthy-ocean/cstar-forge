@@ -1,6 +1,6 @@
 # Source Data Example
 
-Normally you don't call `SourceDatasets` directly: `cstar forge run <forge_blueprint.yaml>` (or `python -m cstar_forge.run …`) runs source-data preparation as one step of executing a `ForgeBlueprint`, auto-detecting the host's shared download cache for you. The snippet below is the lower-level API that `ForgeExecutor` calls internally — useful for pre-staging data outside of a full blueprint run.
+Normally you don't call `SourceDatasets` directly: `cstar forge run <forge_blueprint.yaml>` (or `cstar blueprint run …`) runs source-data preparation as one step of executing a `ForgeBlueprint`, auto-detecting the host's shared download cache for you. The snippet below is the lower-level API that `ForgeExecutor` calls internally — useful for pre-staging data outside of a full blueprint run.
 
 `SourceDatasets` no longer resolves its cache location from `cstar_forge.config` internally; the caller must inject it via `source_data_dir`. `cstar_forge.config.resolve_host()` builds the same `HostPaths` the forge application would use, whose `source_data_cache` is the shared download cache root.
 
