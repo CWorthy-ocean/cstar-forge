@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cstar-forge"
 dynamic = ["version"]
-description = "A utility for generating regional oceanographic modeling domains and spawning reproducible C-Star workflows"
+description = "Compatibility shim: C-Star Forge now ships inside cstar-ocean (cstar.applications.forge)"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
@@ -13,7 +13,7 @@ authors = [
     {name = "C-Worthy Ocean"}
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 7 - Inactive",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
@@ -21,252 +21,52 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering",
 ]
+# The whole of C-Star Forge lives in cstar-ocean from 0.15.0 on; this package only
+# forwards the old ``cstar_forge.*`` import paths to it. No ``cstar.cli`` /
+# ``cstar.applications`` entry points: the core ``cstar forge`` command is the real
+# one, and a plugin of the same name would be skipped by C-Star as a conflict.
 dependencies = [
-    # -- direct imports in cstar_forge/ package code (see import audit) --
-    "jinja2",
-    "pandas",
-    "pyyaml>=6.0",
-    "copernicusmarine",
-    "gdown",
-    "dask",
-    "distributed",
-    "threadpoolctl",
-    # numba is imported directly in cstar_forge/forge/input_data.py (BLAS/numba
-    # thread-count clamping around dask writes) -- not just a roms-tools
-    # transitive dependency.
-    "numba",
-    "fsspec",
-    "pydantic",
-    "numpy",
-    "xarray",
-    "nbformat",
-    "psutil",
-    "typer",
-    # GLORYS just-in-time subchunking (cstar_forge/forge/glorys_subchunk.py), on by
-    # default for multi-file GLORYS sources -- so these are runtime, not optional.
-    # ujson is listed explicitly (kerchunk also pulls it) because glorys_subchunk
-    # imports it directly; fastparquet backs the ".parquet" reference format.
-    "kerchunk",
-    "nest-asyncio",
-    "ujson",
-    "fastparquet",
-    # -- sibling C-Worthy/C-Star packages forge builds on directly --
-    # >=0.14.0: the September 2026 breaking release forge is released alongside
-    # (per-step `output` layout replacing `joined_output`, `nest-from` path/step
-    # semantics). Forge imports nothing new from it, but the floor keeps a forge that
-    # writes blueprints for 0.14.0-layout runs from being solved next to an older
-    # C-Star. Earlier hard requirements: 0.13.7 ships RomsNamelistV0_7_0 (ucla-roms
-    # >= 0.7.0's &CDR_TRACER_OUTPUT_SETTINGS / &CDR_GAS_EXCH_OUTPUT_SETTINGS), which
-    # cstar_forge.forge.namelist_model imports unconditionally; 0.13.6 was the first
-    # release whose roms_tools pin admits 5.x.
-    "cstar-ocean>=0.14.0",
-    # >=5.0: the BoundaryForcing/InitialConditions monolithic wrapper API (multiple
-    # BGC sources in one constructor call) forge now builds on directly -- a breaking
-    # because it doesn't use these classes).
-    # roms-tools 5.0.0 is unreleased (and C-Star still pins roms_tools<5) --
-    # environment.yml and pixi.lock regeneration is deferred until 5.0.0 is on
-    # conda-forge; do not hand-edit either generated file in the meantime.
-    "roms_tools>=5.0,<6",
+    "cstar-ocean>=0.15.0",
 ]
 
-# Registers the `cstar forge ...` subcommand group with C-Star's CLI
-# (discovered via the `cstar.cli` entry-point group; needs a C-Star release
-# that includes the discovery hook). Absent cstar, `python -m cstar_forge.cli`
-# remains the standalone entrypoint.
-[project.entry-points."cstar.cli"]
-forge = "cstar_forge.cli:app"
-
-# Makes the forge *application* discoverable to C-Star's registry, so
-# `cstar blueprint run <forge_blueprint.yaml>` (and workplan steps, schema
-# generation, deferred-blueprint resolution) resolve `application: forge` from
-# an installed cstar-forge alone. The value is a bare module path: C-Star imports
-# it so the module's @register_application decorator runs. This is the only
-# supported registration mechanism, and it needs a C-Star release that consults
-# the group -- on an older C-Star, use `cstar forge run` (or the module CLI).
-[project.entry-points."cstar.applications"]
-forge = "cstar_forge.forge.app"
+[project.urls]
+Homepage = "https://github.com/CWorthy-ocean/cstar-forge"
+Documentation = "https://c-star.readthedocs.io/en/latest/forge/index.html"
+"C-Star" = "https://github.com/CWorthy-ocean/C-Star"
 
 [project.optional-dependencies]
-# The wizard/notebook app stack: running cstar_forge/ui/_voila_app.ipynb
-# under voila (see run-wizard-app.sh), or interactively in Jupyter.
-app = [
-    "jupyterlab",
-    "voila",
-    "papermill",
-    "ipywidgets",
-    "matplotlib",
-]
 dev = [
     "pytest",
-    "pytest-asyncio",
-    "pytest-cov",
-    "pytest-xdist",
-    "ruff>=0.12.2",
     "pre-commit>=3.8",
-    "mystmd",
-    # netCDF4 lets xarray open real .nc files when tests or roms_tools are not
-    # fully mocked (folded in from the former `test` extra).
-    "netCDF4",
-    # f90nml is imported directly by tests/test_write_namelist.py; forge itself
-    # no longer imports it (namelist writing moved to cstar.roms.namelist in
-    # C-Star), so it's a test-only, not runtime, dependency.
-    "f90nml",
-    # tests/test_forge_blueprint_wizard.py imports ipywidgets unconditionally; without
-    # it a `pip install -e ".[dev]"` cannot run the suite (it is otherwise only in the
-    # `app` extra).
-    "ipywidgets",
+    "ruff>=0.12.2",
+    # ci/ release-notes scripts and their tests
+    "requests",
+    "packaging",
 ]
-
-[tool.pixi.workspace]
-channels = ["conda-forge"]
-platforms = ["osx-arm64", "linux-64"]
-
-# The editable install of forge itself is a feature (not workspace-wide) so
-# the `user` environment below can take cstar-forge from conda-forge instead.
-[tool.pixi.feature.editable.pypi-dependencies]
-cstar-forge = { path = ".", editable = true }
-
-[tool.pixi.dependencies]
-# Conda side of the solve — pixi prefers a conda-forge package over a
-# same-named pypi dependency, so anything listed here is sourced from
-# conda-forge rather than PyPI. roms-tools (and the heavy scientific
-# stack it and forge depend on) go here so xesmf/esmf and friends come
-# from conda-forge, which is the only place they build reliably.
-python = ">=3.12,<3.14"
-roms-tools = ">=5.0,<6"
-# Kept in sync with the [project.dependencies] cstar-ocean floor above -- a conda solve
-# landing below it makes cstar_forge.forge.namelist_model unimportable, not just degraded.
-cstar-ocean = ">=0.14.0"
-dask = "*"
-distributed = "*"
-numpy = "*"
-xarray = "*"
-pandas = "*"
-netcdf4 = "*"
-# GLORYS just-in-time subchunking (see cstar_forge/forge/glorys_subchunk.py) —
-# also listed in [project] dependencies (subchunking is on by default); repeated
-# here so pixi/conda solves take them from conda-forge rather than PyPI.
-kerchunk = "*"
-fastparquet = "*"
-nest-asyncio = "*"
-ujson = "*"
-
-# Pure-conda end state: everything, including cstar-forge
-# itself (which bundles the app/wizard stack in its conda run deps), comes from
-# conda-forge. The `user` environment's explicit-spec export is therefore a
-# complete environment with NO companion pip step — the blessed HPC replay
-# artifact for non-developers.
-[tool.pixi.feature.user.dependencies]
-cstar-forge = ">=0.6.0"
-
-# Laptop/workstation build toolchain — the pixi analog of dev-setup.sh's
-# --with-compilers, mirroring conda-forge cstar-ocean-standalone's list.
-# Deliberately NOT part of any HPC-facing environment: the conda compiler
-# packages export CC/CXX/FC on activation and their bin/ shadows module
-# toolchains on PATH, silently hijacking ucla-roms builds on clusters.
-[tool.pixi.feature.compilers.dependencies]
-compilers = "*"
-# mpich-mpicc/mpich-mpifort pin the exact mpich build plus the activation
-# package providing the compiler its wrappers hardcode; bare mpich + raw
-# compilers 2.0 can otherwise solve to a broken mpicc on osx-arm64
-# (conda-forge/mpich-feedstock#142)
-mpich = "*"
-mpich-mpicc = "*"
-mpich-mpifort = "*"
-netcdf-fortran = "*"
-libpnetcdf = "*"
-cmake = "*"
-make = "*"
-# ucla-roms Makefiles need GNU-flavored rsync; macOS's system rsync lacks the flags
-rsync = "*"
-
-[tool.pixi.environments]
-default = { features = ["editable"], solve-group = "default" }
-dev = { features = ["editable", "dev", "app"], solve-group = "default" }
-# no-default-feature: the default feature carries the [project] dependencies as
-# pypi requirements (pixi adds them automatically for a pyproject manifest) plus the
-# workspace conda pins, both of which track the *unreleased* forge in this checkout.
-# The pure-conda user environment must instead follow the released conda-forge
-# cstar-forge's own metadata, or it becomes unsolvable whenever a dependency floor
-# runs ahead of the last release (e.g. roms-tools >=5.0 vs the released <5 pin).
-user = { features = ["user"], no-default-feature = true }
-# dev + local build toolchain, for laptops/workstations compiling ROMS.
-# Own solve (NOT solve-group "default"): mpich/netcdf-fortran would otherwise
-# steer the shared solve toward MPI variants of hdf5/netcdf for plain dev too.
-dev-laptop = { features = ["editable", "dev", "app", "compilers"] }
 
 [tool.setuptools_scm]
-fallback_version = "0.1.0"
+fallback_version = "0.9.0"
 
 [tool.setuptools]
-# Only include the cstar_forge package
-# tests and workflows directories are at root level and automatically excluded
 packages = ["cstar_forge"]
 
-[tool.setuptools.package-data]
-# *.ipynb ships the user-facing wizard notebook (cstar_forge/forge-blueprint-wizard.ipynb)
-# that runs in Jupyter — needed for the `app` extra to be usable from a plain
-# pip/wheel install. The Voilà app notebook now lives under cstar_forge/ui/ and is
-# shipped by the explicit entry below.
-"*" = ["*.yml", "*.yaml", "*.ipynb"]
-# Explicit: the bundled read-only catalog layer (cstar_forge/catalog/) and the
-# wizard UI layer (cstar_forge/ui/: the Voilà app notebook + branding logo)
-# previously shipped only implicitly, via setuptools_scm's file-finder picking up
-# already-tracked files (the "*" glob above is non-recursive and never matched
-# anything under those subdirs); spelled out here so packaging doesn't depend on
-# that implicit behavior.
-cstar_forge = [
-    "catalog/**/*.yaml",
-    "catalog/**/.gitkeep",
-    "ui/assets/*.png",
-    "ui/*.ipynb",
-    "ui/labels/*.yaml",
-]
-
-# Configuration for mypy (same settings as C-Star; the pre-commit hook runs it in an
-# isolated env with only types-* stubs, so third-party packages resolve as Any).
 [tool.mypy]
 ignore_missing_imports = true
-exclude = "legacy|docs|build"
 
-# Configuration for the ruff linter and formatter.
-# Rule selection is C-Star's (I, F, E, W, D, UP, TCH) plus RUF: forge is being relocated
-# into C-Star, and both repos converge on this set. TCH is safe here only because of the
-# [tool.ruff.lint.flake8-type-checking] block below: Pydantic evaluates field annotations
-# at runtime, so annotation-only imports used by BaseModel subclasses must stay real imports.
 [tool.ruff]
 fix = true
 show-fixes = true
 line-length = 88
-target-version = "py311"
-# Vendored/generated trees are not ours to lint.
-extend-exclude = ["external", "docs", "workflows"]
+target-version = "py312"
 
 [tool.ruff.lint]
 extend-select = ["I", "E", "W", "F", "D", "RUF", "UP", "TCH"]
 ignore = [
-    "E501",   # line length — the formatter owns wrapping
-    # Missing-docstring codes: not auto-fixable, so left as non-blocking (matches
-    # roms-tools + the looser C-Star set: D400/D106/D107 also silenced).
+    "E501",
     "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107",
     "D205", "D400", "D401",
-    # RUF/UP rules that both sibling repos found too noisy.
-    "UP040",   # PEP 695 `type` aliases — not adopted yet
     "RUF043", "RUF059",
-    # Ambiguous-unicode: our user-facing strings use intentional glyphs
-    # (ℹ info markers, × in "npx × npy"); don't flag them.
-    "RUF001",
 ]
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
-
-[tool.ruff.lint.flake8-type-checking]
-# Names used in field annotations of these bases are evaluated at runtime by Pydantic;
-# TCH must not move their imports into `if TYPE_CHECKING:` blocks. Dataclasses count
-# too: Pydantic evaluates a dataclass's field annotations when it appears as a model
-# field type (e.g. ForgeExecutor.host: HostPaths).
-runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
-runtime-evaluated-decorators = ["dataclasses.dataclass"]
-
-
