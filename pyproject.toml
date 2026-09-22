@@ -72,7 +72,7 @@ dependencies = [
 # Registers the `cstar forge ...` subcommand group with C-Star's CLI
 # (discovered via the `cstar.cli` entry-point group; needs a C-Star release
 # that includes the discovery hook). Absent cstar, `python -m cstar_forge.cli`
-# and `python -m cstar_forge.run` remain the standalone entrypoints.
+# remains the standalone entrypoint.
 [project.entry-points."cstar.cli"]
 forge = "cstar_forge.cli:app"
 
@@ -223,11 +223,17 @@ cstar_forge = [
     "ui/labels/*.yaml",
 ]
 
+# Configuration for mypy (same settings as C-Star; the pre-commit hook runs it in an
+# isolated env with only types-* stubs, so third-party packages resolve as Any).
+[tool.mypy]
+ignore_missing_imports = true
+exclude = "legacy|docs|build"
+
 # Configuration for the ruff linter and formatter.
-# Rule selection follows roms-tools (the library Forge wraps): I, E, W, F, D, RUF, UP.
-# TCH (flake8-type-checking) is intentionally NOT enabled — it moves annotation-only
-# imports into `TYPE_CHECKING` blocks, which breaks Pydantic's runtime annotation
-# evaluation, and this codebase is Pydantic-heavy (models.py, forge_blueprint.py).
+# Rule selection is C-Star's (I, F, E, W, D, UP, TCH) plus RUF: forge is being relocated
+# into C-Star, and both repos converge on this set. TCH is safe here only because of the
+# [tool.ruff.lint.flake8-type-checking] block below: Pydantic evaluates field annotations
+# at runtime, so annotation-only imports used by BaseModel subclasses must stay real imports.
 [tool.ruff]
 fix = true
 show-fixes = true
@@ -237,7 +243,7 @@ target-version = "py311"
 extend-exclude = ["external", "docs", "workflows"]
 
 [tool.ruff.lint]
-extend-select = ["I", "E", "W", "F", "D", "RUF", "UP"]
+extend-select = ["I", "E", "W", "F", "D", "RUF", "UP", "TCH"]
 ignore = [
     "E501",   # line length — the formatter owns wrapping
     # Missing-docstring codes: not auto-fixable, so left as non-blocking (matches
@@ -247,9 +253,6 @@ ignore = [
     # RUF/UP rules that both sibling repos found too noisy.
     "UP040",   # PEP 695 `type` aliases — not adopted yet
     "RUF043", "RUF059",
-    # str-enum → enum.StrEnum is a deliberate, behaviour-sensitive migration
-    # (str(StrEnum.X) yields the value, not "Class.X"); defer rather than force.
-    "UP042",
     # Ambiguous-unicode: our user-facing strings use intentional glyphs
     # (ℹ info markers, × in "npx × npy"); don't flag them.
     "RUF001",
@@ -257,5 +260,13 @@ ignore = [
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
+
+[tool.ruff.lint.flake8-type-checking]
+# Names used in field annotations of these bases are evaluated at runtime by Pydantic;
+# TCH must not move their imports into `if TYPE_CHECKING:` blocks. Dataclasses count
+# too: Pydantic evaluates a dataclass's field annotations when it appears as a model
+# field type (e.g. ForgeExecutor.host: HostPaths).
+runtime-evaluated-base-classes = ["pydantic.BaseModel", "pydantic_settings.BaseSettings"]
+runtime-evaluated-decorators = ["dataclasses.dataclass"]
 
 
