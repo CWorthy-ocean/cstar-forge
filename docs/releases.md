@@ -1,5 +1,39 @@
 # Release notes
 
+## Unreleased
+
+### Breaking Changes
+
+* `python -m cstar_forge.run <blueprint>` is gone; it now exits with a message pointing at `cstar forge run <blueprint>` (or `python -m cstar_forge.cli run <blueprint>` without C-Star's CLI). `cstar blueprint run` remains the defaults-only path. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* `cstar forge run --only-inputs` is a repeatable option that also accepts comma-separated values (`--only-inputs grid,surface --only-inputs tidal`); the old space-separated `nargs="+"` form is not accepted. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* Python API: `cstar_forge.forge.source_data.SourceData` is now `cstar_forge.forge.source_datasets.SourceDatasets` (and `cstar_forge.source_datasets` as the lazy package export); constructor keywords such as `source_data=` are unchanged. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* Python API: forge's enums (`SurfaceType`, `TidalSource`, …) are `StrEnum`, so `str(member)` and f-strings yield the value (`"physics"`) instead of `"SurfaceType.PHYSICS"`; every serialization path already used the value, and the namelist goldens are byte-identical. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* Machine identity comes from C-Star's `HostNameEvaluator`: `cstar forge show-paths` and the wizard now report C-Star's system names (`darwin_arm64`, `anvil`, `perlmutter`, `bouchet`, …) instead of `MacOS`/`RCAC_anvil`/`NERSC_perlmutter`/`YCRC_bouchet`. Perlmutter is identified via the LMOD variables as C-Star does; scratch roots honour C-Star's `CSTAR_SCRATCH_DIRS` list (`SCRATCH`, `SCRATCH_DIR`, `LOCAL_SCRATCH`) in addition to forge's previous `$SCRATCH`-only check. On-disk data paths are unchanged. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* Removed unused public surface: `cstar_forge.parsers`, `cstar_forge.catalog` (the `BlueprintCatalog` back-compat wrapper), `cstar_forge.diagnostics`, `cstar_forge.utils` (its `mem_log` lives in `cstar_forge.forge.util`), `config.EnvironmentInfo`/`get_environment_info`/`ClusterType`/`with_catalog`, the `python -m cstar_forge.config` CLI, and the `DataPaths` fields nothing read (`here`, `input_data`, `scratch`, `blueprints`, `models_yaml`, `builds_yaml`). ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+
+### New Features
+
+### Bug Fixes
+
+* Two write-only `SourceDatasets` attributes (`bgc_forcing_path`, `mblco2_path`) that were assigned but never declared or read are gone. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* A GLORYS subchunk test with an under-specified mock wrote its reference JSON into the repository root (`MagicMock/...`); the mock is fixed and the files untracked. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* `cstar forge run --help` assertions in the test suite now compare against escape-stripped output, so they pass under CI's forced-colour terminal. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+
+### Improvements
+
+* mypy runs in pre-commit with the same hook and configuration C-Star uses (`mirrors-mypy` v1.19.1, `ignore_missing_imports`, `types-ujson`); the package type-checks clean with zero `# type: ignore` and one documented `cast`. Fixes are annotations and narrowing helpers that raise a clear error where the code would previously have crashed on `None`. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* Ruff rule set is now C-Star's plus RUF (`I, E, W, F, D, RUF, UP, TCH`), with `flake8-type-checking` configured so TCH is safe alongside Pydantic (`runtime-evaluated-base-classes` for `BaseModel`/`BaseSettings`, `runtime-evaluated-decorators` for `dataclasses.dataclass`). ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* `cstar forge run` is a native typer command with the full option set, so its `--help` composes with the rest of the `cstar` CLI; `run.py` keeps `process()`, `_capture_output` and `_Tee` and exposes `run_blueprint()` behind explicit keyword arguments. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* `config.py` delegates machine detection and scratch discovery to C-Star (`HostNameEvaluator`, `hpc_data_directory`) instead of maintaining a second set of hostname/env heuristics, keeping the anvil `$PROJECT` and bouchet `scratch_pi_*` fallbacks. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* The resolver and `namelist_model` no longer carry `try/except ImportError` fallbacks for standalone import or for cstar releases predating `cstar.roms.precheck` (the `cstar-ocean>=0.14` floor guarantees it). ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* The boundary-guarded `forge/` package no longer imports the top-level `cstar_forge.utils`. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* The test conftest sets the writable catalog override in `pytest_configure` rather than at import time, drops the redundant `sys.path` insert, and removes three fixtures nothing used. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+
+### Miscellaneous
+
+* Docs updated for the renamed module, the removed module CLI, and the directory map; architecture guide §3a lists two ways to run a forge blueprint instead of three. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* `pyproject.toml`: `[tool.mypy]` and `[tool.ruff.lint.flake8-type-checking]` blocks added; `UP042` no longer ignored. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+
 ## 0.8.2
 
 ### Breaking Changes
