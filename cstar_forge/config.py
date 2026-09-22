@@ -20,7 +20,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
-from cstar.base.env import hpc_data_directory
 from cstar.system.manager import HostNameEvaluator
 
 from cstar_forge.domain_catalog import user_catalog_root
@@ -266,31 +265,32 @@ paths = get_data_paths()
 system = detect_system()
 
 
-_HPC_SYSTEMS: tuple[str, ...] = ("anvil", "perlmutter", "bouchet")
-
-
-def _hpc_scratch_root(system_tag: str, env: dict, home: Path) -> Path | None:
+def _hpc_scratch_root(
+    system_tag: str, env: Mapping[str, str], home: Path
+) -> Path | None:
     """Bare scratch root for HPC systems, ``None`` elsewhere.
 
-    Non-HPC system names (e.g. ``"darwin_arm64"``) always return ``None`` here,
-    even if the real process happens to have ``$SCRATCH`` set for unrelated
-    reasons. For the three HPC systems, tries C-Star's
-    :func:`cstar.base.env.hpc_data_directory` first (the
-    ``$SCRATCH``/``$SCRATCH_DIR``/``$LOCAL_SCRATCH`` search driven by
-    ``CSTAR_SCRATCH_DIRS``, against the real process environment), then falls
-    back to the system-specific heuristics that still need one: ``$PROJECT/scratch``
-    (or ``~/work/scratch``) on Anvil, and the globbed ``scratch_pi_*/<user>`` root
-    on Bouchet, which exports no scratch env var at all. ``$SCRATCH`` is per-user
-    on all of these machines, so no extra username layer is inserted.
+    Per-system conventions, unchanged from before the C-Star system layer was
+    adopted for machine identity: ``$SCRATCH`` (falling back to ``~/scratch``) on
+    Perlmutter; ``$SCRATCH`` falling back to ``$PROJECT/scratch`` (or
+    ``~/work/scratch``) on Anvil; ``$SCRATCH`` falling back to the globbed
+    ``scratch_pi_*/<user>`` root on Bouchet, which exports no scratch env var at
+    all. ``$SCRATCH`` is per-user on all of these machines, so no extra username
+    layer is inserted. Non-HPC names (``"darwin_arm64"``, ``"linux_x86_64"``)
+    return ``None`` even if the environment happens to carry ``$SCRATCH``.
+
+    Adopting C-Star's ``CSTAR_SCRATCH_DIRS`` search (``$SCRATCH_DIR``,
+    ``$LOCAL_SCRATCH``) is deferred to the relocation, when the forge data
+    locations move under ``CSTAR_DATA_HOME`` anyway.
     """
-    if system_tag not in _HPC_SYSTEMS:
-        return None
-    if scratch := hpc_data_directory():
-        return Path(scratch)
+    if system_tag == "perlmutter":
+        return Path(env.get("SCRATCH", home / "scratch"))
     if system_tag == "anvil":
         project = Path(env.get("PROJECT", home / "work"))
-        return project / "scratch"
+        return Path(env.get("SCRATCH", project / "scratch"))
     if system_tag == "bouchet":
+        if "SCRATCH" in env:
+            return Path(env["SCRATCH"])
         return _bouchet_scratch_root(home)
     return None
 
