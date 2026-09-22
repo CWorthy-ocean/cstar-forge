@@ -12,6 +12,7 @@ Tests cover:
 - Edge cases and error handling
 """
 
+import re
 import shutil
 import sys
 from contextlib import contextmanager
@@ -3644,8 +3645,10 @@ class TestSubchunkDefaults:
         from cstar_forge import cli
 
         result = CliRunner().invoke(cli.app, ["run", "--help"])
-        assert "--no-subchunk" in result.output
-        assert "--stage-ic-sources" not in result.output
+        # Escape-stripped: rich colours the help under a colour-forcing CI environment.
+        output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--no-subchunk" in output
+        assert "--stage-ic-sources" not in output
 
 
 def _make_input_data(

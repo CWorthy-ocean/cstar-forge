@@ -1,5 +1,6 @@
 """Tests for the `cstar forge` CLI sub-app (cstar_forge/cli.py)."""
 
+import re
 from unittest.mock import patch
 
 import pytest
@@ -8,6 +9,15 @@ from typer.testing import CliRunner
 from cstar_forge import cli
 
 runner = CliRunner()
+
+# rich colours the help when the environment forces colour (GitHub Actions does),
+# and its option highlighter emits style changes inside a flag name, so assertions
+# on help text compare against the escape-stripped output.
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    return _ANSI.sub("", text)
 
 
 class TestRun:
@@ -18,6 +28,7 @@ class TestRun:
             cli.app, ["run", "--help"], env={"COLUMNS": "250", "LINES": "50"}
         )
         assert result.exit_code == 0
+        output = _plain(result.output)
         for option in (
             "--no-data",
             "--no-generate",
@@ -41,8 +52,8 @@ class TestRun:
             "--no-dask-processes",
             "--dask-dashboard-address",
         ):
-            assert option in result.output, option
-        assert "python -m cstar_forge.run" not in result.output
+            assert option in output, option
+        assert "python -m cstar_forge.run" not in output
 
     def test_options_map_to_run_blueprint_kwargs(self):
         with patch(
