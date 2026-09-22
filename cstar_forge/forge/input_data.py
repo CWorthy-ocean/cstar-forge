@@ -29,7 +29,7 @@ from cstar.orchestration.models import Resource
 from pydantic import BaseModel, ConfigDict, Field
 from threadpoolctl import threadpool_limits
 
-from cstar_forge.forge import source_data
+from cstar_forge.forge import source_datasets
 from cstar_forge.forge.forge_blueprint import OpenBoundaries, UserProvidedFile
 from cstar_forge.forge.source_registry import ROMS_TOOLS_SOURCE_NAME
 from cstar_forge.forge.user_files import stage_user_netcdf, verify_user_file
@@ -131,7 +131,7 @@ def filter_paths_by_time_window(
     """
     Subset per-day source files to those whose filename date falls in [start, end].
 
-    Daily-staged sources (e.g. GLORYS, see ``SourceData._construct_glorys_path``)
+    Daily-staged sources (e.g. GLORYS, see ``SourceDatasets._construct_glorys_path``)
     encode the date as a trailing ``YYYYMMDD`` in the stem. Dates are compared at
     day resolution, inclusive on both ends. If any filename has no parseable date,
     or the filter would leave nothing, the original list is returned unchanged —
@@ -394,7 +394,7 @@ class RomsMarblInputData(InputData):
 
     grid: rt.Grid
     boundaries: OpenBoundaries
-    source_data: source_data.SourceData
+    source_data: source_datasets.SourceDatasets
     roms_marbl_blueprint_dir: Path
     partitioning: cstar_models.PartitioningParameterSet
     cdr_mode: str = "none"
@@ -1250,7 +1250,7 @@ class RomsMarblInputData(InputData):
     ) -> dict[str, Any]:
         """
         Normalize a "source"/"bgc_source" block and inject a 'path'
-        based on SourceData.
+        based on SourceDatasets.
 
         ``block`` is typed ``object``, not ``str | dict[str, Any]``, because a
         caller may hand this an unresolved ``dict.get(...)`` result (e.g. a
@@ -1298,7 +1298,7 @@ class RomsMarblInputData(InputData):
 
         # Streamable sources are not staged locally -- nothing to inject.
         # streamable_for_source prefers the pinned ForgeBlueprint resolved_datasets
-        # snapshot over a live source_registry check (see SourceData.streamable_for_source).
+        # snapshot over a live source_registry check (see SourceDatasets.streamable_for_source).
         if self.source_data.streamable_for_source(name, glorys_layout=glorys_layout):
             return _rename_for_roms_tools(out, name)
 
@@ -1373,14 +1373,14 @@ class RomsMarblInputData(InputData):
     def _require_glorys_subchunk_inputs(self) -> tuple[Path, datetime, datetime]:
         """``self.source_data``'s cache dir and time window, narrowed to non-``None``.
 
-        ``SourceData.cache_root`` owns the cache-dir check; the time window is set
+        ``SourceDatasets.cache_root`` owns the cache-dir check; the time window is set
         alongside it before any GLORYS day is staged, so a subchunked reference --
         only ever built from already-staged per-day files -- can assume both here.
         """
         sd = self.source_data
         if sd.start_time is None or sd.end_time is None:
             raise ValueError(
-                "SourceData.start_time/end_time must be set before building a "
+                "SourceDatasets.start_time/end_time must be set before building a "
                 "subchunked GLORYS reference."
             )
         return sd.cache_root, sd.start_time, sd.end_time
@@ -1397,7 +1397,7 @@ class RomsMarblInputData(InputData):
 
         Uses base_kwargs (always provided from input_list).
         Resolves "source", "bgc_source", and "surface_forcing_source" through
-        SourceData.
+        SourceDatasets.
         Merges with extra, where extra overrides defaults.
         """
         # base_kwargs always comes from input_list entries.
@@ -1459,7 +1459,7 @@ class RomsMarblInputData(InputData):
         bgc_sources: list[dict[str, Any]] | None,
         time_window: tuple[datetime, datetime] | None = None,
     ) -> list[dict[str, Any]]:
-        """Resolve each ``bgc_sources[i]["source"]`` block through ``SourceData``
+        """Resolve each ``bgc_sources[i]["source"]`` block through ``SourceDatasets``
         (see ``_resolve_source_block``), passing ``use_vars``/
         ``bgc_interpolation_method`` through unchanged -- the per-item shape
         ``rt.InitialConditions``/``rt.BoundaryForcing``'s own ``bgc_sources=``

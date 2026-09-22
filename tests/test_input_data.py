@@ -30,7 +30,7 @@ from cstar.orchestration.models import Resource
 from cstar_forge import config
 from cstar_forge import models as forge_models
 from cstar_forge.config import DataPaths
-from cstar_forge.forge import source_data
+from cstar_forge.forge import source_datasets
 from cstar_forge.forge.input_data import (
     CDR_FORCING_NETCDF_STEM,
     CHILD_IC_PLACEHOLDER_LOCATION,
@@ -184,8 +184,8 @@ def sample_open_boundaries():
 
 @pytest.fixture
 def sample_source_data(tmp_path):
-    """Create a mock SourceData object."""
-    mock_source_data = MagicMock(spec=source_data.SourceData)
+    """Create a mock SourceDatasets object."""
+    mock_source_data = MagicMock(spec=source_datasets.SourceDatasets)
     source_file = tmp_path / "source.nc"
     source_file.touch()  # Ensure file exists
 
@@ -209,7 +209,9 @@ def sample_source_data(tmp_path):
     )
 
     # Mock STREAMABLE_SOURCES
-    with patch("cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES", {"ERA5"}):
+    with patch(
+        "cstar_forge.forge.input_data.source_datasets.STREAMABLE_SOURCES", {"ERA5"}
+    ):
         yield mock_source_data
 
 
@@ -819,7 +821,7 @@ class TestRomsMarblInputDataHelperMethods:
     def test_resolve_source_block_streamable(self, sample_roms_marbl_input_data):
         """Test _resolve_source_block with streamable source."""
         with patch(
-            "cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES", {"ERA5"}
+            "cstar_forge.forge.input_data.source_datasets.STREAMABLE_SOURCES", {"ERA5"}
         ):
             sample_roms_marbl_input_data.source_data.dataset_key_for_source.return_value = "ERA5"
             result = sample_roms_marbl_input_data._resolve_source_block("ERA5")
@@ -850,7 +852,7 @@ class TestRomsMarblInputDataHelperMethods:
     ):
         """A streamable source with a None path stays path-less (no path=None leaked)."""
         with patch(
-            "cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES", {"ERA5"}
+            "cstar_forge.forge.input_data.source_datasets.STREAMABLE_SOURCES", {"ERA5"}
         ):
             sample_roms_marbl_input_data.source_data.dataset_key_for_source.return_value = "ERA5"
             result = sample_roms_marbl_input_data._resolve_source_block(
@@ -865,13 +867,13 @@ class TestRomsMarblInputDataHelperMethods:
         roms-tools auto-downloads CONSTANTS' own default file; Forge has no staging
         handler for it and must recognize it as streamable rather than trying to
         resolve a staged path (which previously raised KeyError). Uses a real
-        SourceData and the real (unpatched) STREAMABLE_SOURCES — the fixture-scoped
+        SourceDatasets and the real (unpatched) STREAMABLE_SOURCES — the fixture-scoped
         patch to {"ERA5"} only reflects other tests' narrower scenarios and would
         mask the bug this test is guarding against.
         """
-        real_sd = source_data.SourceData(datasets=["DAI"])
+        real_sd = source_datasets.SourceDatasets(datasets=["DAI"])
         with patch(
-            "cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES",
+            "cstar_forge.forge.input_data.source_datasets.STREAMABLE_SOURCES",
             _REAL_STREAMABLE_SOURCES,
         ):
             sample_roms_marbl_input_data.source_data = real_sd
@@ -889,10 +891,10 @@ class TestRomsMarblInputDataHelperMethods:
         source_registry.py) -- there is no `self.paths["ESPER"]` entry, so calling
         `path_for_source` previously raised `KeyError: 'ESPER'`. The source's own
         explicit path must survive untouched, the same way a streamable source's
-        does. Uses a real SourceData (unpatched STREAMABLE_SOURCES/DERIVED_BGC_SOURCES)
+        does. Uses a real SourceDatasets (unpatched STREAMABLE_SOURCES/DERIVED_BGC_SOURCES)
         so the real registry logic is exercised, not just the mock.
         """
-        real_sd = source_data.SourceData(datasets=[])
+        real_sd = source_datasets.SourceDatasets(datasets=[])
         sample_roms_marbl_input_data.source_data = real_sd
         result = sample_roms_marbl_input_data._resolve_source_block(
             {"name": "ESPER", "path": "/data/PyESPER"}
@@ -1039,7 +1041,7 @@ class TestRomsMarblInputDataHelperMethods:
         dicts emit) stays path-less rather than leaking path=None.
         """
         with patch(
-            "cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES", {"ERA5"}
+            "cstar_forge.forge.input_data.source_datasets.STREAMABLE_SOURCES", {"ERA5"}
         ):
             base_kwargs = {
                 "source": {"name": "DAI"},
@@ -1057,7 +1059,7 @@ class TestRomsMarblInputDataHelperMethods:
         bgc_source.
         """
         with patch(
-            "cstar_forge.forge.input_data.source_data.STREAMABLE_SOURCES", {"ERA5"}
+            "cstar_forge.forge.input_data.source_datasets.STREAMABLE_SOURCES", {"ERA5"}
         ):
             base_kwargs = {
                 "source": {"name": "DAI"},
@@ -2156,7 +2158,7 @@ class TestCdrCustomFileForcing:
             boundaries=forge_models.OpenBoundaries(
                 north=True, south=True, east=True, west=False
             ),
-            source_data=MagicMock(spec=source_data.SourceData),
+            source_data=MagicMock(spec=source_datasets.SourceDatasets),
             roms_marbl_blueprint_dir=bp_dir,
             partitioning=cstar_models.PartitioningParameterSet(
                 n_procs_x=2, n_procs_y=2
@@ -2406,7 +2408,7 @@ class TestRiverCustomFileForcing:
             boundaries=forge_models.OpenBoundaries(
                 north=True, south=True, east=True, west=False
             ),
-            source_data=MagicMock(spec=source_data.SourceData),
+            source_data=MagicMock(spec=source_datasets.SourceDatasets),
             roms_marbl_blueprint_dir=bp_dir,
             partitioning=cstar_models.PartitioningParameterSet(
                 n_procs_x=2, n_procs_y=2
@@ -3544,7 +3546,7 @@ class TestGlorysSubchunkIntegration:
             hc=250.0,
         )
 
-        mock_sd = MagicMock(spec=source_data.SourceData)
+        mock_sd = MagicMock(spec=source_datasets.SourceDatasets)
         mock_sd.path_for_source = MagicMock(return_value=list(synthetic_glorys_files))
         mock_sd.dataset_key_for_source = MagicMock(return_value="GLORYS_REGIONAL")
         mock_sd.streamable_for_source = MagicMock(return_value=False)
@@ -3794,7 +3796,7 @@ class TestBoundaryBgcSources:
     construction, ESPER/density ``physics_forcing`` wiring, MARBL completion, and
     per-source saving all happen inside roms-tools/the wrapper's own ``.save()``
     now (see ``_generate_boundary_forcing``). Forge's own remaining
-    responsibilities are: resolving each source through ``SourceData``, computing
+    responsibilities are: resolving each source through ``SourceDatasets``, computing
     distinct per-source output filenames, and the all-or-nothing reuse guard.
     """
 
@@ -3847,7 +3849,7 @@ class TestBoundaryBgcSources:
         self, mock_bf_class, multi_bgc_boundary_input_data, tmp_path
     ):
         """One `rt.BoundaryForcing` call carries both bgc sources, each resolved
-        through SourceData; distinct, non-colliding per-source save paths.
+        through SourceDatasets; distinct, non-colliding per-source save paths.
         """
         mock_bf = MagicMock()
         mock_bf.bgc = [MagicMock(), MagicMock()]

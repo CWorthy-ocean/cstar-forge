@@ -22,7 +22,7 @@ _LAZY: dict[str, tuple[str, str | None]] = {
     "config": ("cstar_forge.config", None),
     "models": ("cstar_forge.models", None),
     "settings": ("cstar_forge.forge.settings", None),
-    "source_data": ("cstar_forge.forge.source_data", None),
+    "source_datasets": ("cstar_forge.forge.source_datasets", None),
     "DomainCatalog": ("cstar_forge.domain_catalog", "DomainCatalog"),
     "LayeredCatalog": ("cstar_forge.domain_catalog", "LayeredCatalog"),
     "build_catalog_stack": ("cstar_forge.domain_catalog", "build_catalog_stack"),
@@ -42,7 +42,7 @@ __all__ = [
     "default_catalog_stack",
     "models",
     "settings",
-    "source_data",
+    "source_datasets",
     "user_catalog_root",
 ]
 

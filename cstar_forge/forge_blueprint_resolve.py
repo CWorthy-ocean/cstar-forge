@@ -20,9 +20,9 @@ What this does NOT do (by design — it is host- and artifact-independent):
 * no ``s_coord`` / file paths / ``title`` / ``output_root_name`` (filled at
   processing or derived from the blueprint's own ``name``).
 
-NOTE: the dataset registry below is a *snapshot* of ``cstar_forge.forge.source_data``
+NOTE: the dataset registry below is a *snapshot* of ``cstar_forge.forge.source_datasets``
 mappings, duplicated here to keep this module importable without the heavy stack.
-It should be unified with ``source_data.py`` once the two-phase refactor lands.
+It should be unified with ``source_datasets.py`` once the two-phase refactor lands.
 """
 
 from __future__ import annotations
@@ -1287,12 +1287,12 @@ def _build_forcing(
             return
         # DERIVED_BGC_SOURCES (CONSTANTS/ESPER) are computed at generation time, not
         # fetched/staged by Forge -- noting them here would land them in
-        # resolved_datasets/datasets and raise "Unknown dataset" downstream in SourceData.
+        # resolved_datasets/datasets and raise "Unknown dataset" downstream in SourceDatasets.
         if str(src.name).upper() in DERIVED_BGC_SOURCES:
             return
         # CUSTOM_FILE (river.source) has no registry entry -- the file is
         # verified/staged directly from RiverForcingItem.custom_file, not from
-        # SourceData, so noting it here would either raise "Unknown dataset"
+        # SourceDatasets, so noting it here would either raise "Unknown dataset"
         # downstream or cause bogus staging of a source that is never used.
         if src.name.upper() == "CUSTOM_FILE":
             return
@@ -1317,7 +1317,7 @@ def _build_forcing(
             _note(it.source)
     # River BGC source (a plain dict, not a SourceSpec — separate from it.source, the
     # river discharge source). DERIVED_BGC_SOURCES (CONSTANTS) is not noted: it is
-    # roms-tools' own auto-downloaded default and has no Forge SourceData handler/registry
+    # roms-tools' own auto-downloaded default and has no Forge SourceDatasets handler/registry
     # entry, so staging it here would raise "Unknown dataset" downstream. Only a genuinely
     # Forge-staged BGC source (e.g. RIVR2O) needs to land in resolved_datasets/datasets
     # so the executor verifies it -- and, as in `_note`, not when an explicit path is
@@ -1334,7 +1334,7 @@ def _build_forcing(
             resolved.setdefault(str(bgc_name).upper(), _resolved_dataset(bgc_name))
     # River temperature source (surface_forcing_source, also a plain dict). An
     # explicit path bypasses staging entirely -- same as `_note` -- but ERA5 is
-    # streamable with a no-op SourceData handler (_prepare_era5), so noting it
+    # streamable with a no-op SourceDatasets handler (_prepare_era5), so noting it
     # here keeps resolved_datasets/datasets honest without triggering staging.
     for it in river:
         temp_src = it.surface_forcing_source or {}

@@ -32,7 +32,7 @@ from pydantic import (
     model_validator,
 )
 
-from cstar_forge.forge import input_data, source_data
+from cstar_forge.forge import input_data, source_datasets
 from cstar_forge.forge.forge_blueprint import (
     CDR_MODES,
     DEFAULT_WORKING_ROOT,
@@ -205,7 +205,7 @@ class ForgeExecutor(BaseModel):
     # User inputs
     description: str = "Generated blueprint"
     name: str  # the blueprint's canonical name (ForgeBlueprint.name, stored)
-    grid_name: str  # results-affecting: SourceData keys its cache filenames off it
+    grid_name: str  # results-affecting: SourceDatasets keys its cache filenames off it
     grid_kwargs: dict[str, Any]
     grid_kwargs_parent: dict[str, Any] | None = Field(
         default=None, validate_default=False
@@ -333,7 +333,7 @@ class ForgeExecutor(BaseModel):
         description=(
             "Snapshot of ForgeBlueprint.forcing.resolved_datasets (logical name -> "
             "{dataset_key, dataset_id, url, streamable}). Authoritative for key/"
-            "streamable resolution at processing time (fed into SourceData); "
+            "streamable resolution at processing time (fed into SourceDatasets); "
             "source_registry is the fallback for names not in the snapshot."
         ),
     )
@@ -362,7 +362,7 @@ class ForgeExecutor(BaseModel):
     roms_marbl_blueprint: cstar_models.RomsMarblBlueprint | None = Field(
         default=None, init=False, validate_default=False, validate_assignment=False
     )
-    src_data: source_data.SourceData | None = Field(
+    src_data: source_datasets.SourceDatasets | None = Field(
         default=None, init=False, validate_default=False
     )
     grid: rt.Grid | None = Field(
@@ -492,7 +492,7 @@ class ForgeExecutor(BaseModel):
             return {"name": name, "path": str(path)}
         if name == "ETOPO5":
             return None
-        sd = source_data.SourceData(
+        sd = source_datasets.SourceDatasets(
             datasets=[name],
             source_data_dir=self._require_host().source_data_cache,
         )
@@ -1653,7 +1653,7 @@ class ForgeExecutor(BaseModel):
         if explicit:
             dataset_keys = [k for k in dataset_keys if k.upper() not in explicit]
 
-        self.src_data = source_data.SourceData(
+        self.src_data = source_datasets.SourceDatasets(
             datasets=dataset_keys,
             clobber=False,
             grid=self.grid,
@@ -1771,7 +1771,7 @@ class ForgeExecutor(BaseModel):
             # ensure_source_data (just above) always sets src_data in production;
             # cast rather than raise here so a caller that stubs/mocks it out (as
             # several tests do, along with RomsMarblInputData itself) is unaffected.
-            source_data=cast("source_data.SourceData", self.src_data),
+            source_data=cast("source_datasets.SourceDatasets", self.src_data),
             forcing_override=self.forcing_override,
             model_reference_date=self.model_reference_date,
             roms_marbl_blueprint_dir=self.roms_marbl_blueprint_dir,

@@ -229,7 +229,7 @@ class TestImportCost:
         code = (
             "import sys, cstar_forge.cli; "
             "heavy = sorted(m for m in ('roms_tools', 'xarray', 'dask', "
-            "'copernicusmarine', 'cstar_forge.forge.source_data', "
+            "'copernicusmarine', 'cstar_forge.forge.source_datasets', "
             "'cstar_forge.forge.executor') if m in sys.modules); "
             "print(','.join(heavy))"
         )

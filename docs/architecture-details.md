@@ -74,7 +74,7 @@ cstar-forge/
 │   │   ├── executor.py         # ForgeExecutor — the processing engine
 │   │   ├── host.py             # HostPaths — frozen host-boundary contract injected into the executor
 │   │   ├── input_data.py       # Input file generation
-│   │   ├── source_data.py      # Dataset download and preparation
+│   │   ├── source_datasets.py  # Dataset download and preparation
 │   │   ├── source_registry.py  # Dataset alias map / provenance metadata (stdlib-only)
 │   │   ├── glorys_subchunk.py  # Just-in-time kerchunk subchunking for GLORYS
 │   │   ├── settings.py         # Template rendering
@@ -140,7 +140,7 @@ into a single `BoundaryForcing` section with `source` + `bgc_sources`, mirroring
 `InitialConditions`) to the current shape, reproducing derived names
 bit-for-bit. `model_name`/`grid_name` live in
 `composition.model.name`/`domain.grid_name`; `grid_name` is results-affecting —
-`SourceData` keys cache filenames off it.
+`SourceDatasets` keys cache filenames off it.
 
 - **`working_dir`** (default `~/cstar/_forge_bp_runs`) is the single per-run artifact root —
   everything the executor *produces* lands under it. It's host/location, not

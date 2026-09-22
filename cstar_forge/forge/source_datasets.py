@@ -21,9 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class DatasetHandler:
-    """Container for a dataset handler and its required SourceData attributes."""
+    """Container for a dataset handler and its required SourceDatasets attributes."""
 
-    def __init__(self, func: Callable[["SourceData"], Path], requires: list[str]):
+    def __init__(self, func: Callable[["SourceDatasets"], Path], requires: list[str]):
         self.func = func
         self.requires = requires
 
@@ -75,7 +75,7 @@ def register_dataset(name: str, requires: list[str] | None = None) -> Callable:
         Dataset name (e.g. "GLORYS_REGIONAL", "UNIFIED_BGC", "SRTM15").
         Stored in upper case.
     requires : list of str, optional
-        Names of SourceData attributes that must be non-None for this
+        Names of SourceDatasets attributes that must be non-None for this
         dataset to be prepared (e.g. ["grid", "grid_name", "start_time", "end_time"]).
 
     Usage
@@ -86,7 +86,7 @@ def register_dataset(name: str, requires: list[str] | None = None) -> Callable:
     if requires is None:
         requires = []
 
-    def decorator(func: Callable[["SourceData"], Path]) -> Callable:
+    def decorator(func: Callable[["SourceDatasets"], Path]) -> Callable:
         DATASET_REGISTRY[name.upper()] = DatasetHandler(func=func, requires=requires)
         return func
 
@@ -131,12 +131,12 @@ WOA_FILENAMES: list[str] = [f"woa*_decav_s{month:02d}_04.nc" for month in range(
 
 
 # -----------------------------------------
-# SourceData
+# SourceDatasets
 # -----------------------------------------
 
 
 @dataclass
-class SourceData:
+class SourceDatasets:
     """
     Handles creation and caching of source data files
     (GLORYS_REGIONAL, UNIFIED_BGC, SRTM15, etc.) for ROMS preprocessing.
@@ -169,7 +169,7 @@ class SourceData:
     # (ForgeBlueprint.forcing.resolved_datasets, frozen at blueprint-build time). When
     # present, key/streamable resolution in dataset_key_for_source/streamable_for_source
     # reads this first; source_registry.resolve_dataset_key is the fallback for names
-    # not in the snapshot (e.g. a hand-built SourceData outside the ForgeBlueprint path).
+    # not in the snapshot (e.g. a hand-built SourceDatasets outside the ForgeBlueprint path).
     # This is what makes the executor behave deterministically across hosts/forge
     # versions even if source_registry's tables drift after the blueprint was built.
     resolved_datasets: dict[str, dict] | None = None
@@ -243,11 +243,11 @@ class SourceData:
                 if missing_attrs:
                     raise ValueError(
                         f"Dataset '{name}' requires attributes {missing_attrs}, "
-                        "but they were not provided to SourceData()."
+                        "but they were not provided to SourceDatasets()."
                     )
                 if self.source_data_dir is None:
                     raise ValueError(
-                        f"SourceData.source_data_dir must be set to prepare '{name}' — the "
+                        f"SourceDatasets.source_data_dir must be set to prepare '{name}' — the "
                         "caller must inject the dataset cache root (source_data no longer "
                         "reads cstar_forge.config)."
                     )
@@ -407,7 +407,7 @@ class SourceData:
         """
         if self.source_data_dir is None:
             raise ValueError(
-                "SourceData.source_data_dir must be set before staging datasets — "
+                "SourceDatasets.source_data_dir must be set before staging datasets — "
                 "the caller must inject the dataset cache root."
             )
         return self.source_data_dir
@@ -450,7 +450,7 @@ class SourceData:
         # guarantee explicit for a caller that invokes it directly.
         if self.start_time is None or self.end_time is None:
             raise ValueError(
-                "SourceData.start_time and end_time must be set before staging "
+                "SourceDatasets.start_time and end_time must be set before staging "
                 "GLORYS data."
             )
 
@@ -528,7 +528,7 @@ def _pad_date_range(
     "GLORYS_REGIONAL",
     requires=["grid", "grid_name", "start_time", "end_time"],
 )
-def _prepare_glorys_regional(self: SourceData) -> list[Path]:
+def _prepare_glorys_regional(self: SourceDatasets) -> list[Path]:
     """Download or reuse daily regional GLORYS subsets for this grid and time range."""
     is_regional = True
     bounds = rt.get_glorys_bounds(self.grid)
@@ -547,7 +547,7 @@ def _prepare_glorys_regional(self: SourceData) -> list[Path]:
     "GLORYS_GLOBAL",
     requires=["start_time", "end_time"],
 )
-def _prepare_glorys_global(self: SourceData) -> list[Path]:
+def _prepare_glorys_global(self: SourceDatasets) -> list[Path]:
     """Download or reuse daily global GLORYS subsets for this time range."""
     is_regional = False
     bounds: dict[str, float | None] = {
@@ -592,7 +592,7 @@ def _roms_tools_reads_unified_v2_1() -> bool:
 
 
 @register_dataset("UNIFIED_BGC")
-def _prepare_unified_bgc_dataset(self: SourceData) -> Path:
+def _prepare_unified_bgc_dataset(self: SourceDatasets) -> Path:
     """Ensure the UNIFIED_BGC dataset exists locally."""
     if not _roms_tools_reads_unified_v2_1():
         raise RuntimeError(
@@ -637,7 +637,7 @@ def _prepare_unified_bgc_dataset(self: SourceData) -> Path:
 
 
 @register_dataset("SRTM15")
-def _prepare_srtm15(self: SourceData) -> Path:
+def _prepare_srtm15(self: SourceDatasets) -> Path:
     """
     Ensure the SRTM15 bathymetry dataset exists locally.
 
@@ -680,7 +680,7 @@ def _prepare_srtm15(self: SourceData) -> Path:
 
 
 @register_dataset("MBL_CO2")
-def _prepare_mblco2(self: SourceData) -> Path:
+def _prepare_mblco2(self: SourceDatasets) -> Path:
     """
     Ensure the MBL xco2 dataset exists locally.
 
@@ -717,7 +717,7 @@ def _prepare_mblco2(self: SourceData) -> Path:
 
 
 @register_dataset("ERA5")
-def _prepare_era5(self: SourceData) -> None:
+def _prepare_era5(self: SourceDatasets) -> None:
     """
     No-op handler for ERA5.
 
@@ -743,7 +743,7 @@ def _prepare_era5(self: SourceData) -> None:
 
 
 @register_dataset("TPXO")
-def _prepare_tpxo(self: SourceData) -> dict[str, Path]:
+def _prepare_tpxo(self: SourceDatasets) -> dict[str, Path]:
     """
     Verify that the user has provided TPXO tidal data files.
 
@@ -804,7 +804,7 @@ def _prepare_tpxo(self: SourceData) -> dict[str, Path]:
 
 
 @register_dataset("WOA")
-def _prepare_woa(self: SourceData) -> Path:
+def _prepare_woa(self: SourceDatasets) -> Path:
     """
     Verify that the user has provided 12 monthly WOA climatology files (s01..s12).
 
@@ -874,7 +874,7 @@ def _prepare_woa(self: SourceData) -> Path:
 
 
 @register_dataset("WOA_BGC")
-def _prepare_woa_bgc(self: SourceData) -> Path:
+def _prepare_woa_bgc(self: SourceDatasets) -> Path:
     """
     Ensure the WOA23 1-degree BGC climatology exists locally.
 
@@ -955,7 +955,7 @@ def _prepare_woa_bgc(self: SourceData) -> Path:
 
 
 @register_dataset("GLOFAS")
-def _prepare_glofas(self: SourceData) -> Path:
+def _prepare_glofas(self: SourceDatasets) -> Path:
     """
     Verify that the user has provided a preprocessed GloFAS v4.0 river discharge file.
 
@@ -999,7 +999,7 @@ def _prepare_glofas(self: SourceData) -> Path:
 
 
 @register_dataset("EMOD")
-def _prepare_emod(self: SourceData) -> Path:
+def _prepare_emod(self: SourceDatasets) -> Path:
     """
     Verify that the user has provided an EMODnet bathymetry/topography file.
 
@@ -1044,7 +1044,7 @@ def _prepare_emod(self: SourceData) -> Path:
 
 
 @register_dataset("RIVR2O")
-def _prepare_rivr2o(self: SourceData) -> Path:
+def _prepare_rivr2o(self: SourceDatasets) -> Path:
     """
     Verify that the user has provided RIVR2O river biogeochemistry export files.
 
@@ -1098,7 +1098,7 @@ GLODAP_OPTIONAL_FILES = ("temperature", "salinity")
 
 
 @register_dataset("GLODAP")
-def _prepare_glodap(self: SourceData) -> Path:
+def _prepare_glodap(self: SourceDatasets) -> Path:
     """
     Verify that the user has provided GLODAPv2.2016b mapped-climatology files.
 

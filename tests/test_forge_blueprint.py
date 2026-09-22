@@ -1500,7 +1500,7 @@ def test_build_forge_blueprint_source_path_skips_dataset_noting():
     """An item whose source carries an explicit path bypasses staging entirely
     (mirrors topography_path semantics) -- it must not be noted into
     resolved_datasets/datasets, since input_data._resolve_source_block returns
-    the explicit path verbatim without ever staging/verifying via SourceData.
+    the explicit path verbatim without ever staging/verifying via SourceDatasets.
     """
     import copy
 
@@ -2115,7 +2115,7 @@ def test_resolver_threads_river_surface_forcing_source():
 def test_resolver_river_surface_forcing_source_with_path_not_noted():
     """An explicit path bypasses staging entirely (mirrors SourceSpec.path
     semantics), so ERA5 must not be noted into resolved_datasets/datasets when a
-    path is already given -- it is never fetched via SourceData in that case.
+    path is already given -- it is never fetched via SourceDatasets in that case.
     """
     import copy
 
@@ -2144,10 +2144,10 @@ def test_resolver_river_surface_forcing_source_with_path_not_noted():
 def test_resolver_ic_bgc_esper_source_excluded_from_datasets():
     """Regression: an ESPER-named IC-BGC source (SourceSpec.name == "ESPER") is
     derived from physics T/S via PyESPER at generation time -- Forge has no
-    SourceData handler for it and never will, so it must never land in
+    SourceDatasets handler for it and never will, so it must never land in
     datasets/resolved_datasets (see DERIVED_BGC_SOURCES in source_registry.py);
     doing so previously raised "Unknown dataset(s) requested: ESPER" downstream
-    in SourceData.__post_init__.
+    in SourceDatasets.__post_init__.
     """
     import copy
 
