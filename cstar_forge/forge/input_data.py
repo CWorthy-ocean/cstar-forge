@@ -14,11 +14,10 @@ import os
 import re
 import subprocess
 import warnings
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import cstar.applications.roms_marbl.models as cstar_models
 import dask
@@ -36,6 +35,9 @@ from cstar_forge.forge.source_registry import ROMS_TOOLS_SOURCE_NAME
 from cstar_forge.forge.user_files import stage_user_netcdf, verify_user_file
 from cstar_forge.forge.util import mem_log
 from cstar_forge.forge.xarray_lockfix import apply_combinedlock_leak_fix
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 log = logging.getLogger(__name__)
 

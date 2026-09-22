@@ -43,11 +43,13 @@ from __future__ import annotations
 
 import glob
 import logging
-from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import xarray as xr
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 logger = logging.getLogger(__name__)
 

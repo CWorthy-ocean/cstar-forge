@@ -14,9 +14,10 @@ import sys
 import time
 import warnings
 from contextlib import contextmanager
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-import xarray as xr
+if TYPE_CHECKING:
+    import xarray as xr
 
 log = logging.getLogger(__name__)
 

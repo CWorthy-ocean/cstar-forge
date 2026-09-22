@@ -29,9 +29,8 @@ from __future__ import annotations
 
 import copy
 import warnings
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 
@@ -86,6 +85,9 @@ from cstar_forge.forge.source_registry import (
     resolve_dataset_key,
     resolve_source,
 )
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 # Default repo serving the render templates (now at the forge repo root `templates/`,
 # decoupled from the ModelSpec). A ModelSpec pins the serving commit via

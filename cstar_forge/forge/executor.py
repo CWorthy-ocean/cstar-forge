@@ -1771,7 +1771,7 @@ class ForgeExecutor(BaseModel):
             # ensure_source_data (just above) always sets src_data in production;
             # cast rather than raise here so a caller that stubs/mocks it out (as
             # several tests do, along with RomsMarblInputData itself) is unaffected.
-            source_data=cast(source_data.SourceData, self.src_data),
+            source_data=cast("source_data.SourceData", self.src_data),
             forcing_override=self.forcing_override,
             model_reference_date=self.model_reference_date,
             roms_marbl_blueprint_dir=self.roms_marbl_blueprint_dir,
