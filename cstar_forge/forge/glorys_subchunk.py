@@ -335,4 +335,7 @@ def build_ref_for_files(
         data_vars_4d=DEFAULT_DATA_VARS_4D,
         overwrite=overwrite,
     )
+    # build_subchunk_refs only returns a dict for output_format="in-memory"; with
+    # ".json" (hardcoded above) it always returns the output path as a str.
+    assert isinstance(out_path, str)
     return Path(out_path)

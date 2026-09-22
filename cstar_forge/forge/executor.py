@@ -14,7 +14,7 @@ import warnings
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import cstar.applications.roms_marbl.models as cstar_models
 import roms_tools as rt
@@ -648,10 +648,15 @@ class ForgeExecutor(BaseModel):
                 if label == "self":
                     self.grid_kwargs = self._with_topography(self.grid_kwargs, topo)
                 elif label == "parent":
+                    # "parent" only appears in `pairs` when grid_kwargs_parent is set
+                    # (see _topography_pairs).
+                    assert self.grid_kwargs_parent is not None
                     self.grid_kwargs_parent = self._with_topography(
                         self.grid_kwargs_parent, topo
                     )
                 else:
+                    # Likewise for "child" and grid_kwargs_child.
+                    assert self.grid_kwargs_child is not None
                     self.grid_kwargs_child = self._with_topography(
                         self.grid_kwargs_child, topo
                     )
@@ -982,7 +987,14 @@ class ForgeExecutor(BaseModel):
 
         Only meaningful once ``generate_inputs`` has filled in real data
         (``_inputs_generated``); the placeholder blueprint cannot validate.
+
+        Raises
+        ------
+        ValueError
+            If blueprint is not initialized.
         """
+        if self.roms_marbl_blueprint is None:
+            raise ValueError("Cannot validate: blueprint is not initialized")
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore", message=".*Pydantic.*", category=UserWarning
@@ -1569,13 +1581,9 @@ class ForgeExecutor(BaseModel):
         if not location_list:
             return None
 
-        # Convert locations to strings (handle Path and HttpUrl objects)
-        location_strs = []
-        for location in location_list:
-            if isinstance(location, Path) or hasattr(location, "__str__"):
-                location_strs.append(str(location))
-            else:
-                location_strs.append(location)
+        # Convert locations to strings (handles Path and HttpUrl objects; every
+        # object has __str__ via the base class, so this always applies).
+        location_strs: list[str] = [str(location) for location in location_list]
 
         # Return a list of datasets (one per file) instead of combining them
         # This avoids alignment errors when datasets have incompatible dimensions
@@ -1760,7 +1768,10 @@ class ForgeExecutor(BaseModel):
             settings_run_time=self._settings_run_time,
             has_bgc=self._has_bgc,
             boundaries=self.open_boundaries,
-            source_data=self.src_data,
+            # ensure_source_data (just above) always sets src_data in production;
+            # cast rather than raise here so a caller that stubs/mocks it out (as
+            # several tests do, along with RomsMarblInputData itself) is unaffected.
+            source_data=cast(source_data.SourceData, self.src_data),
             forcing_override=self.forcing_override,
             model_reference_date=self.model_reference_date,
             roms_marbl_blueprint_dir=self.roms_marbl_blueprint_dir,

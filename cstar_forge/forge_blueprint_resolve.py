@@ -68,6 +68,7 @@ from cstar_forge.forge.forge_blueprint import (
 # the executor can share it.
 from cstar_forge.forge.namelist_model import (
     RunTimeSettings,
+    _RunTimeSettingsCommon,
     canonical_output_sections_for_precheck,
     check_extract_divides_rst,
     check_output_streams_divide_rst,
@@ -116,6 +117,7 @@ def _parse_source(block: Any) -> SourceSpec:
     ``forcing_inputs`` caller) actually reaches ``SourceSpec`` instead of being
     silently dropped.
     """
+    name: str | None
     if isinstance(block, str):
         name = block
         d: dict[str, Any] = {}
@@ -277,7 +279,9 @@ def extract_output_settings(model_settings: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _prune_version_gated_sections(settings: dict[str, Any], settings_cls: type) -> None:
+def _prune_version_gated_sections(
+    settings: dict[str, Any], settings_cls: type[_RunTimeSettingsCommon]
+) -> None:
     """Drop ``settings`` keys that are version-gated (modeled by SOME run-time
     settings tier -- :func:`version_gated_section_names`) but not modeled by
     ``settings_cls``, the tier actually selected for this blueprint's pinned
@@ -1074,7 +1078,13 @@ def build_forge_blueprint(
         marbl_ref=marbl_ref,
     )
 
-    default_n_procs = n_cores if auto_tiling else npx * npy
+    if auto_tiling:
+        default_n_procs = n_cores
+    else:
+        # Guaranteed by the "n_procs_x/n_procs_y required unless auto_tiling"
+        # check above; restated so this multiplication narrows cleanly.
+        assert npx is not None and npy is not None
+        default_n_procs = npx * npy
     default_name = sanitize_name(f"{model_name}_{grid_name}_{default_n_procs}procs")
     return ForgeBlueprint(
         name=name or default_name,

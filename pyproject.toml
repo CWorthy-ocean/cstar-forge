@@ -223,6 +223,12 @@ cstar_forge = [
     "ui/labels/*.yaml",
 ]
 
+# Configuration for mypy (same settings as C-Star; the pre-commit hook runs it in an
+# isolated env with only types-* stubs, so third-party packages resolve as Any).
+[tool.mypy]
+ignore_missing_imports = true
+exclude = "legacy|docs|build"
+
 # Configuration for the ruff linter and formatter.
 # Rule selection follows roms-tools (the library Forge wraps): I, E, W, F, D, RUF, UP.
 # TCH (flake8-type-checking) is intentionally NOT enabled — it moves annotation-only

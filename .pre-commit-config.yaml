@@ -34,3 +34,19 @@ repos:
       - id: ruff-check
         args: ["--fix"]
       - id: ruff-format
+
+  # mypy, configured as in C-Star (mirrors-mypy in its own isolated env: only the
+  # types-* stubs below are installed, everything else is ignore_missing_imports).
+  # Forge is being relocated into C-Star; this hook is the same gate that code
+  # will meet there. [tool.mypy] lives in pyproject.toml.
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: 'v1.19.1'
+    hooks:
+      - id: mypy
+        name: mypy
+        additional_dependencies:
+          - types-python-dateutil
+          - types-requests
+          - types-pyyaml
+          - types-ujson
+        types: [python]

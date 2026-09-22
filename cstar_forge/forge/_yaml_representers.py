@@ -23,7 +23,7 @@ import enum
 import yaml
 
 
-def _represent_enum(dumper: yaml.Dumper, data: enum.Enum):
+def _represent_enum(dumper: yaml.SafeDumper, data: enum.Enum) -> yaml.Node:
     """Represent any Enum as its underlying value (str/int/…)."""
     return dumper.represent_data(data.value)
 

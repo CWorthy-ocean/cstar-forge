@@ -8,7 +8,7 @@ import os
 import platform
 import socket
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -149,7 +149,7 @@ def _detect_system() -> str:
 
 # Now each layout returns 3 paths:
 # (source_data, input_data, scratch)
-SystemLayoutFn = Callable[[Path, dict], tuple[Path, Path, Path]]
+SystemLayoutFn = Callable[[Path, Mapping[str, str]], tuple[Path, Path, Path]]
 SYSTEM_LAYOUT_REGISTRY: dict[str, SystemLayoutFn] = {}
 
 
@@ -157,7 +157,7 @@ def register_system(tag: str) -> Callable[[SystemLayoutFn], SystemLayoutFn]:
     """
     Decorator to register a system-specific path layout.
 
-    The decorated function must accept (home: Path, env: dict)
+    The decorated function must accept (home: Path, env: Mapping[str, str])
     and return (source_data, input_data, scratch).
     """
 
@@ -174,7 +174,7 @@ def register_system(tag: str) -> Callable[[SystemLayoutFn], SystemLayoutFn]:
 
 
 @register_system("MacOS")
-def _layout_mac(home: Path, env: dict) -> tuple[Path, Path, Path]:
+def _layout_mac(home: Path, env: Mapping[str, str]) -> tuple[Path, Path, Path]:
     base = home / "cstar-forge-data"
     source_data = base / "source-data"
     input_data = base / "input-data"
@@ -189,7 +189,7 @@ def _layout_mac(home: Path, env: dict) -> tuple[Path, Path, Path]:
 # NOT consulted: a user-overridden $PROJECT must move everything with it);
 # elsewhere users set it.
 @register_system("RCAC_anvil")
-def _layout_RCAC_anvil(home: Path, env: dict) -> tuple[Path, Path, Path]:
+def _layout_RCAC_anvil(home: Path, env: Mapping[str, str]) -> tuple[Path, Path, Path]:
     project = Path(env.get("PROJECT", home / "work"))
     scratch_root = Path(env.get("SCRATCH", project / "scratch"))
 
@@ -201,7 +201,9 @@ def _layout_RCAC_anvil(home: Path, env: dict) -> tuple[Path, Path, Path]:
 
 
 @register_system("NERSC_perlmutter")
-def _layout_NERSC_perlmutter(home: Path, env: dict) -> tuple[Path, Path, Path]:
+def _layout_NERSC_perlmutter(
+    home: Path, env: Mapping[str, str]
+) -> tuple[Path, Path, Path]:
     scratch_root = Path(env.get("SCRATCH", home / "scratch"))
     if "PROJECT" in env:
         base = Path(env["PROJECT"]) / "cstar-forge-data"
@@ -215,7 +217,7 @@ def _layout_NERSC_perlmutter(home: Path, env: dict) -> tuple[Path, Path, Path]:
 
 
 @register_system("YCRC_bouchet")
-def _layout_YCRC_bouchet(home: Path, env: dict) -> tuple[Path, Path, Path]:
+def _layout_YCRC_bouchet(home: Path, env: Mapping[str, str]) -> tuple[Path, Path, Path]:
     """Path layout for Yale's Bouchet cluster.
 
     Bouchet has no ``$SCRATCH`` env var, so the scratch root is discovered via
@@ -226,6 +228,7 @@ def _layout_YCRC_bouchet(home: Path, env: dict) -> tuple[Path, Path, Path]:
     back to the home-anchored layout -- ignoring ``$PROJECT`` -- if no scratch
     root can be found.
     """
+    scratch_root: Path | None
     if "SCRATCH" in env:
         scratch_root = Path(env["SCRATCH"])
     else:
@@ -258,7 +261,7 @@ def _layout_YCRC_bouchet(home: Path, env: dict) -> tuple[Path, Path, Path]:
 
 
 @register_system("unknown")
-def _layout_unknown(home: Path, env: dict) -> tuple[Path, Path, Path]:
+def _layout_unknown(home: Path, env: Mapping[str, str]) -> tuple[Path, Path, Path]:
     base = home / "cstar-forge-data"
     source_data = base / "source-data"
     input_data = base / "input-data"
