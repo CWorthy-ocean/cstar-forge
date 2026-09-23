@@ -56,7 +56,9 @@ The full table is `cstar_forge.MODULE_ALIASES` in this package.
 
 ## History
 
-The complete cstar-forge commit history was imported into C-Star
+The last standalone version of the code (0.8.2, plus the pre-move cleanup) is kept
+on the [`legacy-0.8`](https://github.com/CWorthy-ocean/cstar-forge/tree/legacy-0.8)
+branch of this repository for reference. The complete cstar-forge commit history was imported into C-Star
 ([C-Star #699](https://github.com/CWorthy-ocean/C-Star/pull/699)), so `git blame`
 and `git log --follow` on the relocated files continue to work there. Release
 notes for the standalone package (0.1.0 through 0.8.2) are kept in
