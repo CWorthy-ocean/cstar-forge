@@ -1,6 +1,6 @@
 # Release notes
 
-## Unreleased
+## 0.9.0
 
 ### Breaking Changes
 
@@ -15,8 +15,6 @@
 * Every `cstar_forge` import emits a `DeprecationWarning` naming the new module (for example `cstar_forge.forge.forge_blueprint` -> `cstar.applications.forge.blueprint`, `cstar_forge.domain_catalog` -> `cstar.catalog.domain_catalog`, `cstar_forge.forge_blueprint_wizard` -> `cstar.wizard.wizard`, `cstar_forge.cli` -> `cstar.cli.forge`, `cstar_forge.register_kernel` -> `cstar.cli.environment.register_kernel`); `cstar_forge.MODULE_ALIASES` is the full table. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
 * `python -m cstar_forge.run` is gone (it was already a stub in 0.8.2); use `cstar forge run`. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
 * Documentation, `dev-setup.sh`, `set-repo-versions.sh`, `run-wizard-app.sh`, `environment.yml`, `pixi.lock` and the lock-artifact release assets are removed from this repository; the GitHub Pages site and the Read the Docs project redirect to https://c-star.readthedocs.io/en/latest/forge/. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
-
-### New Features
 
 ### Bug Fixes
 
