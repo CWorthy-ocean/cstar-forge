@@ -10,6 +10,11 @@
 * Python API: forge's enums (`SurfaceType`, `TidalSource`, …) are `StrEnum`, so `str(member)` and f-strings yield the value (`"physics"`) instead of `"SurfaceType.PHYSICS"`; every serialization path already used the value, and the namelist goldens are byte-identical. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
 * Machine identity comes from C-Star's `HostNameEvaluator`: `cstar forge show-paths` and the wizard now report C-Star's system names (`darwin_arm64`, `anvil`, `perlmutter`, `bouchet`, …) instead of `MacOS`/`RCAC_anvil`/`NERSC_perlmutter`/`YCRC_bouchet`. Perlmutter is identified via the LMOD variables as C-Star does; scratch roots honour C-Star's `CSTAR_SCRATCH_DIRS` list (`SCRATCH`, `SCRATCH_DIR`, `LOCAL_SCRATCH`) in addition to forge's previous `$SCRATCH`-only check. On-disk data paths are unchanged. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
 * Removed unused public surface: `cstar_forge.parsers`, `cstar_forge.catalog` (the `BlueprintCatalog` back-compat wrapper), `cstar_forge.diagnostics`, `cstar_forge.utils` (its `mem_log` lives in `cstar_forge.forge.util`), `config.EnvironmentInfo`/`get_environment_info`/`ClusterType`/`with_catalog`, the `python -m cstar_forge.config` CLI, and the `DataPaths` fields nothing read (`here`, `input_data`, `scratch`, `blueprints`, `models_yaml`, `builds_yaml`). ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* `cstar-forge` no longer contains Forge. Installing it installs `cstar-ocean`, which provides `cstar forge ...`, the wizard, the catalog and the executor; the shim itself does no work. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
+* The `cstar.cli` and `cstar.applications` entry points are gone: `cstar forge` and the `forge` application are C-Star built-ins, and a plugin of the same name would be skipped by C-Star as a conflict. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
+* Every `cstar_forge` import emits a `DeprecationWarning` naming the new module (for example `cstar_forge.forge.forge_blueprint` -> `cstar.applications.forge.blueprint`, `cstar_forge.domain_catalog` -> `cstar.catalog.domain_catalog`, `cstar_forge.forge_blueprint_wizard` -> `cstar.wizard.wizard`, `cstar_forge.cli` -> `cstar.cli.forge`, `cstar_forge.register_kernel` -> `cstar.cli.environment.register_kernel`); `cstar_forge.MODULE_ALIASES` is the full table. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
+* `python -m cstar_forge.run` is gone (it was already a stub in 0.8.2); use `cstar forge run`. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
+* Documentation, `dev-setup.sh`, `set-repo-versions.sh`, `run-wizard-app.sh`, `environment.yml`, `pixi.lock` and the lock-artifact release assets are removed from this repository; the GitHub Pages site and the Read the Docs project redirect to https://c-star.readthedocs.io/en/latest/forge/. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
 
 ### New Features
 
@@ -33,6 +38,9 @@
 
 * Docs updated for the renamed module, the removed module CLI, and the directory map; architecture guide §3a lists two ways to run a forge blueprint instead of three. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
 * `pyproject.toml`: `[tool.mypy]` and `[tool.ruff.lint.flake8-type-checking]` blocks added; `UP042` no longer ignored. ([#180](https://github.com/CWorthy-ocean/cstar-forge/pull/180))
+* README rewritten as a moved-notice with command and import migration tables. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
+* The Tests workflow is a plain `pip install -e .[dev]` + `pytest tests/ ci/` matrix (Ubuntu and macOS, Python 3.12 and 3.13); the conda/pixi jobs and the lock-artifacts workflow are removed. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
+* Tests: every alias in `MODULE_ALIASES` is imported and compared attribute-by-attribute against its target, plus from-import identity, submodule import through a package alias, the old top-level lazy exports, and a check that `pyproject.toml` declares no entry points or scripts and depends only on `cstar-ocean>=0.15.0`. ([#181](https://github.com/CWorthy-ocean/cstar-forge/pull/181))
 
 ## 0.8.2
 
