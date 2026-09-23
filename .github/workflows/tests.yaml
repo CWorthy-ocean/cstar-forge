@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -13,160 +13,18 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.12"]
+        python-version: ["3.12", "3.13"]
       fail-fast: false
-
     steps:
     - uses: actions/checkout@v4
-
-    - name: Resolve conda environment name from environment.yml
-      shell: bash
-      run: |
-        CONDA_ENV_NAME="$(awk -F': *' '$1=="name"{print $2; exit}' environment.yml)"
-        if [[ -z "$CONDA_ENV_NAME" ]]; then
-          echo "Could not read name: from environment.yml" >&2
-          exit 1
-        fi
-        echo "CONDA_ENV_NAME=$CONDA_ENV_NAME" >> "$GITHUB_ENV"
-        echo "Using conda/micromamba env: $CONDA_ENV_NAME"
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      with:
+        fetch-depth: 0   # setuptools_scm derives the version from tags
+    - uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-
-    - name: Install dependencies
-      uses: mamba-org/setup-micromamba@v2
-      with:
-        condarc: |
-          channels:
-            - conda-forge
-            - nodefaults
-          channel_priority: strict
-        cache-downloads: true
-        # Key the download cache on environment.yml: the restored pkgs dir carries
-        # micromamba's repodata shard index, which it reuses without refetching.
-        # With the default static key a pin bump to a just-released package failed
-        # with "does not exist" until the stale cache aged out.
-        cache-downloads-key: ${{ hashFiles('environment.yml') }}
-        cache-environment: false
-        micromamba-version: 'latest'
-        environment-file: environment.yml
-        create-args: |
-          python=${{ matrix.python-version }}
-        post-cleanup: none
-        
-    - name: Set up conda for build tests
-      shell: bash -l {0}
+    - name: Install the shim and its dev extras (pulls cstar-ocean from PyPI)
       run: |
-        # Set CONDA_EXE to point to micromamba so conda commands work
-        # This allows the build tests to find conda when use_conda=True
-        # The _get_conda_command() function checks for CONDA_EXE environment variable
-        MICROMAMBA_PATH=$(which micromamba)
-        echo "CONDA_EXE=$MICROMAMBA_PATH" >> $GITHUB_ENV
-        echo "Set CONDA_EXE=$MICROMAMBA_PATH"
-        
-        # Create a conda wrapper script so 'conda' command is available
-        # This is needed because the build function runs 'conda list' and other conda commands
-        mkdir -p $HOME/bin
-        cat > $HOME/bin/conda << 'EOF'
-        #!/bin/bash
-        # Wrapper script to make conda commands work with micromamba
-        exec micromamba "$@"
-        EOF
-        chmod +x $HOME/bin/conda
-        echo "$HOME/bin" >> $GITHUB_PATH
-        echo "Created conda wrapper at $HOME/bin/conda"
-        
-    - name: Install cstar_forge
-      shell: bash -l {0}
-      working-directory: ${{ github.workspace }}
-      run: |
-        eval "$(micromamba shell hook --shell bash)"
-        micromamba activate "$CONDA_ENV_NAME"
-        # roms-tools and C-Star: mirrors dev-setup.sh's pip section (not in
-        # environment.yml). C-Star first with --no-deps --force-reinstall so its
-        # (possibly stale) roms-tools pin is not enforced; roms-tools installed
-        # last, also --no-deps --force-reinstall, so it wins. The local package
-        # is then installed --no-deps too, since all dependencies come from
-        # conda-forge (environment.yml) plus these two git installs.
-        ROMS_TOOLS_GIT_REF="${ROMS_TOOLS_GIT_REF:-main}"
-        C_STAR_GIT_REF="${C_STAR_GIT_REF:-main}"
-        pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/C-Star.git@${C_STAR_GIT_REF}"
-        pip install --no-deps --force-reinstall "git+https://github.com/CWorthy-ocean/roms-tools.git@${ROMS_TOOLS_GIT_REF}"
-        pip install -e . --no-deps
-        
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[dev]"
     - name: Run tests
-      shell: bash -l {0}
-      working-directory: ${{ github.workspace }}
-      run: |
-        micromamba run -n "$CONDA_ENV_NAME" pytest tests/ -v --cov=cstar_forge --cov-report=xml --cov-report=term-missing
-
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v5
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-
-  pixi-tests:
-    # D3: pixi is the pinned, full-stack (conda + pypi) lockfile-driven path.
-    # Runs alongside (not instead of) the micromamba `test` job above.
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-      fail-fast: false
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up pixi
-      uses: prefix-dev/setup-pixi@v0
-      with:
-        cache: true
-
-    - name: Install dev environment
-      run: pixi install -e dev
-
-    - name: Run tests
-      run: pixi run -e dev pytest tests/ -v --cov=cstar_forge --cov-report=xml --cov-report=term-missing
-
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v5
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-
-  env-drift-check:
-    # D3: environment.yml is a GENERATED artifact (`pixi workspace export
-    # conda-environment`). This job regenerates it and fails if the committed
-    # file has drifted from pyproject.toml, so conda-only consumers never get
-    # a stale environment.yml silently.
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up pixi
-      uses: prefix-dev/setup-pixi@v0
-      with:
-        pixi-version: v0.76.1
-        cache: true
-
-    - name: Regenerate environment.yml and check for drift
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        # Lift the leading `#`-comment header off the currently-committed
-        # environment.yml (instead of duplicating it here) so editing the
-        # header alone never turns this job red.
-        HEADER_FILE="$(mktemp)"
-        awk '/^#/{print; next} {exit}' environment.yml > "$HEADER_FILE"
-
-        BODY_FILE="$(mktemp)"
-        pixi workspace export conda-environment -e dev -n cstar-forge-env "$BODY_FILE"
-
-        cat "$HEADER_FILE" "$BODY_FILE" > environment.yml
-
-        git diff --exit-code environment.yml
-
-
+      run: pytest tests/ ci/ -v

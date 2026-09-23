@@ -1,87 +1,65 @@
-# C-Star Forge
+# C-Star Forge has moved into C-Star
 
-A utility for generating new regional oceanographic modeling domains and creating reproducible [C-Star](https://c-star.readthedocs.io) workflows through blueprint descriptors.
+> **This repository is retired.** C-Star Forge -- the wizard, resolver, catalog,
+> executor and `cstar forge` CLI for generating regional ROMS-MARBL domains --
+> ships inside [`cstar-ocean`](https://github.com/CWorthy-ocean/C-Star) from
+> version **0.15.0**. Development, issues and pull requests continue there.
+> Documentation: <https://c-star.readthedocs.io/en/latest/forge/index.html>.
 
-[![Run Tests](https://github.com/CWorthy-ocean/cstar-forge/actions/workflows/tests.yaml/badge.svg)](https://github.com/CWorthy-ocean/cstar-forge/actions/workflows/tests.yaml?query=branch%3Amain)
-[![codecov](https://codecov.io/gh/CWorthy-ocean/cstar-forge/graph/badge.svg)](https://codecov.io/gh/CWorthy-ocean/cstar-forge)
-[![Conda Version](https://img.shields.io/conda/vn/conda-forge/cstar-forge.svg)](https://anaconda.org/conda-forge/cstar-forge)
+<p align="center"><img src="docs/assets/csforge.png" alt="C-Star Forge logo" width="300"></p>
 
-```{image} docs/assets/csforge.png
-:alt: C-Star Forge Logo
-:class: csforge-logo
-:align: center
+## Installing
+
+There is nothing separate to install any more:
+
+```bash
+conda install -c conda-forge cstar-ocean   # or: pip install cstar-ocean
+cstar forge --help
 ```
 
-```{warning}
-This project is still in an early phase of development.
+The `cstar-forge` package on PyPI and conda-forge (0.9.x) is a **compatibility
+shim** that depends on `cstar-ocean >= 0.15.0` and forwards the old
+`cstar_forge.*` import paths to their new homes with a `DeprecationWarning`.
+Nothing in it does any work. Once your imports are updated,
+`pip uninstall cstar-forge` (or `conda remove cstar-forge`).
 
-You are welcome to try out using the package, but be aware that development is ongoing and we cannot yet guarantee backwards compatibility.
-```
+## What changed for users
 
-## What is C-Star Forge?
+| Before (cstar-forge 0.8.x) | Now (cstar-ocean 0.15+) |
+|---|---|
+| `cstar forge run`, `cstar forge wizard`, `cstar forge show-paths`, `cstar forge copy-notebook` | unchanged, built into `cstar` |
+| `cstar forge register-kernel` | `cstar env register-kernel` |
+| `python -m cstar_forge.run <blueprint>` | `cstar forge run <blueprint>` |
+| `CSTAR_FORGE_CATALOG` | `CSTAR_CATALOG` |
+| writable catalog at `~/cstar-forge-data/catalog` | `~/cstar/catalog` (a catalog at the old location is not read; forge logs a hint) |
+| `forge_version` stamp in forge blueprints | `cstar_version` (old files still load) |
 
-[C-Star](https://c-star.readthedocs.io) is built on a system of **applications**
-(a model or computation you want to run) and **blueprints** (the inputs to an
-application that make its result reproducible). C-Star Forge is the application
-for *creating* new ROMS-MARBL domains.
+Source-data cache, working-directory relocation onto HPC scratch, and every
+generated file location are unchanged.
 
-Setting up a regional ocean simulation has traditionally meant weeks of bespoke
-work: designing a grid, collecting and regridding forcing datasets, hand-editing
-model configuration files, and hoping the result is reproducible on the next
-machine. C-Star Forge automates that path for ROMS-MARBL domains. You describe
-*what* you want — a region, a resolution, a time window, forcing sources — and
-Forge produces everything the model needs to run, in a form that
-[C-Star](https://c-star.readthedocs.io) can build and execute anywhere.
+## What changed for Python imports
 
-The whole workflow revolves around two YAML documents:
+| Before | Now |
+|---|---|
+| `cstar_forge.forge.forge_blueprint` | `cstar.applications.forge.blueprint` |
+| `cstar_forge.forge.forge_blueprint_engine` | `cstar.applications.forge.engine` |
+| `cstar_forge.forge.executor`, `.settings`, `.input_data`, `.source_datasets`, `.namelist_model`, ... | `cstar.applications.forge.<same name>` |
+| `cstar_forge.forge_blueprint_resolve` | `cstar.applications.forge.resolve` |
+| `cstar_forge.models`, `cstar_forge.config` | `cstar.applications.forge.models`, `.config` |
+| `cstar_forge.run` | `cstar.applications.forge.runtime` |
+| `cstar_forge.domain_catalog` | `cstar.catalog.domain_catalog` |
+| `cstar_forge.forge_blueprint_wizard`, `cstar_forge.ui.*` | `cstar.wizard.wizard`, `cstar.wizard.ui.*` |
+| `cstar_forge.cli` | `cstar.cli.forge` |
+| `cstar_forge.register_kernel` | `cstar.cli.environment.register_kernel` |
 
-- A **forge blueprint** describes the domain you want. It is the single input to
-  Forge, and it is complete: given the same forge blueprint, Forge generates the
-  same setup.
-- A **ROMS-MARBL blueprint** describes the setup Forge generated — the model
-  code, input files, and runtime settings of a concrete, runnable simulation.
-  It is Forge's output, and C-Star's input.
+The full table is `cstar_forge.MODULE_ALIASES` in this package.
 
-## How it works
+## History
 
-C-Star Forge takes you from "I want a regional ROMS-MARBL domain here" to a
-running simulation in three conceptual steps:
-
-1. **Build a forge blueprint.** An interactive **wizard** — a point-and-click
-   web form, also usable inside Jupyter — walks you through the choices: a model
-   spec, a domain from the bundled catalog (or your own), forcing sources,
-   output settings. The result is saved as a single `forge_blueprint.yaml`.
-   Because the wizard is just a front-end for writing this file, you can also
-   start from an example blueprint and edit it by hand.
-
-2. **Process the blueprint.** The Forge executor consumes the forge blueprint
-   on the machine where the data should live. It fetches and prepares the
-   source datasets, generates every ROMS input file (grid, initial conditions,
-   surface and boundary forcing, rivers, tides), renders the model settings,
-   and emits the ROMS-MARBL blueprint describing the finished setup.
-
-3. **Run the simulation.** C-Star consumes the ROMS-MARBL blueprint to fetch
-   and compile the model code and execute the simulation — on your laptop or on
-   a supported HPC system. Forge is out of the picture at this point: the
-   handoff is the blueprint file alone.
-
-The input files are generated with
-[ROMS Tools](https://roms-tools.readthedocs.io/en/latest/index.html), drawing on
-GLORYS (ocean reanalysis), ERA5 (atmospheric reanalysis), UNIFIED_BGC
-(biogeochemical climatology), SRTM15 (bathymetry), DAI/GLOFAS (river
-discharge), and TPXO (tides).
-
-Each step can happen on a different machine. A common pattern is building the
-blueprint in a browser on your laptop, processing it on the cluster where the
-forcing data lives, and running the simulation through C-Star's scheduler
-support on that same cluster.
-
-## Where to go next
-
-- **[Getting Started](https://cworthy-ocean.github.io/cstar-forge/getting-started/)** —
-  install with one conda command and take a small toy domain from wizard to
-  running simulation.
-- **[Installation](https://cworthy-ocean.github.io/cstar-forge/installation/)** —
-  HPC installs, developer setups, and reproducible locked environments.
-- **[Documentation](https://cworthy-ocean.github.io/cstar-forge/)** — concepts,
-  the domain catalog, machine configuration, and developer guides.
+The last standalone version of the code (0.8.2, plus the pre-move cleanup) is kept
+on the [`legacy-0.8`](https://github.com/CWorthy-ocean/cstar-forge/tree/legacy-0.8)
+branch of this repository for reference. The complete cstar-forge commit history was imported into C-Star
+([C-Star #699](https://github.com/CWorthy-ocean/C-Star/pull/699)), so `git blame`
+and `git log --follow` on the relocated files continue to work there. Release
+notes for the standalone package (0.1.0 through 0.8.2) are kept in
+[`docs/releases.md`](docs/releases.md) and under *Releases* in the C-Star docs.
